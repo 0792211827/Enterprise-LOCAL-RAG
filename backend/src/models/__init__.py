@@ -1,3 +1,4 @@
+from .api_key import ApplicationApiKey, generate_api_key, hash_api_key
 from .application import RAGApplication, application_knowledge_bases
 from .document import Document, DocumentChunk
 from .enums import (
@@ -18,6 +19,9 @@ __all__ = [
     "DocumentChunk",
     "RAGApplication",
     "application_knowledge_bases",
+    "ApplicationApiKey",
+    "generate_api_key",
+    "hash_api_key",
     "ModelProvider",
     "ModelConfiguration",
     "RetrievalConfiguration",

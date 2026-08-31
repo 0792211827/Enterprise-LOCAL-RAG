@@ -1,0 +1,51 @@
+# Local-only override (not tracked upstream).
+#
+# On this machine, unrelated containers already own host ports 5432
+# (smart-lit-postgres), 3000/8000 (smart-lit-app) and 8010 (a SMART_LIT uvicorn). Remap only the *host*
+# side so the stack can run alongside them. Container-to-container traffic is
+# unchanged: it still uses postgres:5432, langfuse-web:3000 and api:8000 over
+# the compose network.
+services:
+  postgres:
+    ports: !override
+      - "5442:5432"
+
+  langfuse-web:
+    ports: !override
+      - "3010:3000"
+    environment:
+      # Headless bootstrap so the review run has deterministic API keys and can
+      # exercise the *enabled* tracing path, not just the disabled no-op path.
+      LANGFUSE_INIT_ORG_ID: e2e-org
+      LANGFUSE_INIT_ORG_NAME: E2E Org
+      LANGFUSE_INIT_PROJECT_ID: e2e-project
+      LANGFUSE_INIT_PROJECT_NAME: E2E Project
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-e2e-review-key
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-e2e-review-key
+      LANGFUSE_INIT_USER_EMAIL: e2e@example.com
+      LANGFUSE_INIT_USER_NAME: E2E User
+      LANGFUSE_INIT_USER_PASSWORD: e2e-review-password
+
+  api:
+    ports: !override
+      - "8020:8000"
+    environment:
+      # HuggingFace downloads run at ~0.2MB/s from this host (~3h for bge-m3),
+      # so pull the identical model (bge-m3, 1024-dim) through Ollama instead.
+      # Provider selection is env-only by design -- no source change needed.
+      EMBEDDING__PROVIDER: ollama
+      EMBEDDING__MODEL: bge-m3
+      EMBEDDING__ENDPOINT: http://ollama:11434
+      EMBEDDING__DIMENSION: "1024"
+      # Exercise the enabled Langfuse path (keys match the headless init below).
+      LANGFUSE__ENABLED: "true"
+      LANGFUSE__HOST: http://langfuse-web:3000
+      LANGFUSE__PUBLIC_KEY: pk-lf-e2e-review-key
+      LANGFUSE__SECRET_KEY: sk-lf-e2e-review-key
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Must match the remapped host port: this is baked in at build time.
+        NEXT_PUBLIC_API_URL: http://localhost:8020

@@ -1,4 +1,5 @@
 """Unit tests for the generic document ingestion pipeline."""
+
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -23,15 +24,14 @@ def _make_chunk(index: int, text: str) -> TextChunk:
             overlap_with_next=0,
             section_title="Intro",
         ),
-        arxiv_id="x",
-        paper_id="x",
+        document_id="x",
     )
 
 
 @pytest.fixture
 def collaborators():
     chunker = MagicMock()
-    chunker.chunk_paper = MagicMock(return_value=[_make_chunk(0, "hello world"), _make_chunk(1, "second chunk")])
+    chunker.chunk_document = MagicMock(return_value=[_make_chunk(0, "hello world"), _make_chunk(1, "second chunk")])
 
     embeddings = AsyncMock()
     embeddings.embed_passages = AsyncMock(return_value=[[0.1] * 4, [0.2] * 4])
@@ -81,9 +81,7 @@ async def test_ingest_document_marks_failure_on_empty_text(collaborators):
     document = Document(id=uuid.uuid4(), knowledge_base_id=kb_id, title="Empty", raw_text="")
     job = IngestionJob(id=uuid.uuid4(), document_id=document.id, knowledge_base_id=kb_id)
 
-    stats = await service.ingest_document(
-        document, job, MagicMock(), MagicMock(), SimpleNamespace(embedding_model="m")
-    )
+    stats = await service.ingest_document(document, job, MagicMock(), MagicMock(), SimpleNamespace(embedding_model="m"))
 
     assert stats["chunks_indexed"] == 0
     assert document.status == IngestionStatus.FAILED.value
@@ -104,3 +102,65 @@ async def test_ingest_document_embedding_mismatch_fails(collaborators):
     await service.ingest_document(document, job, MagicMock(), MagicMock(), SimpleNamespace(embedding_model="m"))
     assert document.status == IngestionStatus.FAILED.value
     opensearch.bulk_index_chunks.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_ingest_document_commits_each_stage(collaborators):
+    """Stages must be persisted as they happen, not only at the end.
+
+    The wizard shows live per-file progress by polling the ingestion job; if
+    ``stage`` is only committed once the run finishes, that display is dead.
+    """
+    chunker, embeddings, opensearch = collaborators
+    service = IngestionService(chunker, embeddings, opensearch)
+
+    kb_id = uuid.uuid4()
+    document = Document(
+        id=uuid.uuid4(),
+        knowledge_base_id=kb_id,
+        title="Doc",
+        raw_text="hello world second chunk",
+        status=IngestionStatus.QUEUED.value,
+    )
+    job = IngestionJob(id=uuid.uuid4(), document_id=document.id, knowledge_base_id=kb_id)
+    kb = SimpleNamespace(embedding_model="BAAI/bge-m3")
+
+    observed = []
+    ingestion_repo = MagicMock()
+    ingestion_repo.save = MagicMock(side_effect=lambda j: observed.append(j.stage))
+
+    await service.ingest_document(document, job, MagicMock(), ingestion_repo, kb)
+
+    # First save happens before any stage is set; the four stages follow in order.
+    assert observed[0] is None
+    assert observed[1:5] == ["parse", "chunk", "embed", "index"]
+
+
+@pytest.mark.anyio
+async def test_stage_commit_failure_does_not_break_ingestion(collaborators):
+    """A flaky save must not take down the background worker."""
+    chunker, embeddings, opensearch = collaborators
+    service = IngestionService(chunker, embeddings, opensearch)
+
+    kb_id = uuid.uuid4()
+    document = Document(
+        id=uuid.uuid4(),
+        knowledge_base_id=kb_id,
+        title="Doc",
+        raw_text="hello world second chunk",
+        status=IngestionStatus.QUEUED.value,
+    )
+    job = IngestionJob(id=uuid.uuid4(), document_id=document.id, knowledge_base_id=kb_id)
+
+    def flaky_save(j):
+        # Fail only the intra-run stage commits; the terminal save still counts.
+        if j.status == IngestionStatus.PROCESSING.value:
+            raise RuntimeError("db hiccup")
+
+    ingestion_repo = MagicMock()
+    ingestion_repo.save = MagicMock(side_effect=flaky_save)
+
+    stats = await service.ingest_document(document, job, MagicMock(), ingestion_repo, SimpleNamespace(embedding_model="m"))
+    assert stats["chunks_created"] == 2
+    assert document.status == IngestionStatus.COMPLETED.value
+    assert job.status == IngestionStatus.COMPLETED.value

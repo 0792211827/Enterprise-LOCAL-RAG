@@ -51,32 +51,25 @@ def test_search_request_validation_errors():
 def test_search_hit_creation():
     """Test SearchHit creation."""
     hit = SearchHit(
-        arxiv_id="2024.12345v1",
-        title="Test Paper",
-        authors="John Doe, Jane Smith",
-        abstract="This is a test paper about machine learning.",
-        published_date="2024-01-01T00:00:00Z",
-        pdf_url="https://arxiv.org/pdf/2024.12345v1.pdf",
+        document_id="doc-123",
+        knowledge_base_id="kb-1",
+        title="Test Document",
         score=1.5,
-        highlights={"title": ["<mark>Test</mark> Paper"]},
+        highlights={"title": ["<mark>Test</mark> Document"]},
     )
 
-    assert hit.arxiv_id == "2024.12345v1"
-    assert hit.title == "Test Paper"
+    assert hit.document_id == "doc-123"
+    assert hit.title == "Test Document"
     assert hit.score == 1.5
-    assert hit.highlights == {"title": ["<mark>Test</mark> Paper"]}
+    assert hit.highlights == {"title": ["<mark>Test</mark> Document"]}
 
 
 def test_search_response_creation():
     """Test SearchResponse creation."""
     hits = [
         SearchHit(
-            arxiv_id="2024.12345v1",
-            title="Test Paper",
-            authors="John Doe",
-            abstract="Test abstract",
-            published_date="2024-01-01",
-            pdf_url="https://test.pdf",
+            document_id="doc-123",
+            title="Test Document",
             score=1.0,
         )
     ]

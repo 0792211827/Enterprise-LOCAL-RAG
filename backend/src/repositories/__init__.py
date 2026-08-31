@@ -1,3 +1,4 @@
+from .api_key import ApiKeyRepository
 from .application import ApplicationRepository
 from .document import DocumentRepository
 from .ingestion import IngestionJobRepository
@@ -9,6 +10,7 @@ __all__ = [
     "KnowledgeBaseRepository",
     "DocumentRepository",
     "ApplicationRepository",
+    "ApiKeyRepository",
     "ProviderRepository",
     "RetrievalConfigurationRepository",
     "IngestionJobRepository",

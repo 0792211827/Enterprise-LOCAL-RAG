@@ -21,6 +21,7 @@ class QueryBuilder:
         track_total_hits: bool = True,
         latest_papers: bool = False,
         search_chunks: bool = False,
+        knowledge_base_ids: Optional[List[str]] = None,
     ):
         """Initialize query builder.
 
@@ -32,6 +33,7 @@ class QueryBuilder:
         :param track_total_hits: Whether to track total hits accurately
         :param latest_papers: Sort by publication date instead of relevance
         :param search_chunks: Whether searching chunks (True) or papers (False)
+        :param knowledge_base_ids: Restrict results to these knowledge bases
         """
         self.query = query
         self.size = size
@@ -40,6 +42,7 @@ class QueryBuilder:
         self.track_total_hits = track_total_hits
         self.latest_papers = latest_papers
         self.search_chunks = search_chunks
+        self.knowledge_base_ids = knowledge_base_ids
 
         if fields is None:
             if search_chunks:
@@ -119,17 +122,20 @@ class QueryBuilder:
         if self.categories:
             filters.append({"terms": {"categories": self.categories}})
 
+        if self.knowledge_base_ids:
+            filters.append({"terms": {"knowledge_base_id": self.knowledge_base_ids}})
+
         return filters
 
     def _build_source_fields(self) -> Any:
         """Define which fields to return in results.
 
-        :returns: Source field configuration (list for papers, dict for chunks)
+        :returns: Source field configuration (list for documents, dict for chunks)
         """
         if self.search_chunks:
             return {"excludes": ["embedding"]}
         else:
-            return ["arxiv_id", "title", "authors", "abstract", "categories", "published_date", "pdf_url"]
+            return ["document_id", "knowledge_base_id", "title", "section_title"]
 
     def _build_highlight(self) -> Dict[str, Any]:
         """Build highlighting configuration.

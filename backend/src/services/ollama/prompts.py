@@ -1,7 +1,7 @@
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import ValidationError
 from src.schemas.ollama import RAGResponse
@@ -25,42 +25,56 @@ class RAGPromptBuilder:
         if not prompt_file.exists():
             # Fallback to default prompt if file doesn't exist
             return (
-                "You are an AI assistant specialized in answering questions about "
-                "academic papers from arXiv. Base your answer STRICTLY on the provided "
-                "paper excerpts."
+                "You are an AI assistant that answers questions using an organisation's "
+                "own documents. Base your answer STRICTLY on the provided document "
+                "excerpts and cite them by their bracketed number, e.g. [1]."
             )
         return prompt_file.read_text().strip()
 
-    def create_rag_prompt(self, query: str, chunks: List[Dict[str, Any]]) -> str:
+    def create_rag_prompt(self, query: str, chunks: List[Dict[str, Any]], system_prompt: Optional[str] = None) -> str:
         """Create a RAG prompt with query and retrieved chunks.
 
         Args:
             query: User's question
             chunks: List of retrieved chunks with metadata from OpenSearch
+            system_prompt: Overrides the default system prompt when provided
 
         Returns:
             Formatted prompt string
         """
-        prompt = f"{self.system_prompt}\n\n"
-        prompt += "### Context from Papers:\n\n"
+        prompt = f"{system_prompt or self.system_prompt}\n\n"
+        prompt += "### Context from Documents:\n\n"
 
         for i, chunk in enumerate(chunks, 1):
             # Get the actual chunk text
             chunk_text = chunk.get("chunk_text", chunk.get("content", ""))
-            arxiv_id = chunk.get("arxiv_id", "")
 
-            # Only include minimal metadata - just arxiv_id for citation
-            prompt += f"[{i}. arXiv:{arxiv_id}]\n"
+            # Label each excerpt with its ordinal and, when known, the document
+            # title and section. The ordinal is what the model is told to cite,
+            # so it can never invent an identifier it was not given.
+            title = chunk.get("document_title") or chunk.get("title") or ""
+            section = chunk.get("section_title") or ""
+            label = f"{i}"
+            if title:
+                label += f". {title}"
+            if section:
+                label += f" - {section}"
+
+            prompt += f"[{label}]\n"
             prompt += f"{chunk_text}\n\n"
 
         prompt += f"### Question:\n{query}\n\n"
         prompt += (
-            "### Answer:\nProvide a natural, conversational response (not JSON) and cite sources using [arXiv:id] format.\n\n"
+            "### Answer:\nProvide a natural, conversational response (not JSON). Cite the "
+            "excerpts you used by their bracketed number, e.g. [1]. Refer to documents by "
+            "title only; never invent an identifier, URL or reference number.\n\n"
         )
 
         return prompt
 
-    def create_structured_prompt(self, query: str, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def create_structured_prompt(
+        self, query: str, chunks: List[Dict[str, Any]], system_prompt: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Create a prompt for Ollama with structured output format.
 
         Args:
@@ -70,7 +84,7 @@ class RAGPromptBuilder:
         Returns:
             Dictionary with prompt and format schema for Ollama
         """
-        prompt_text = self.create_rag_prompt(query, chunks)
+        prompt_text = self.create_rag_prompt(query, chunks, system_prompt=system_prompt)
 
         # Return prompt with Pydantic model schema for structured output
         return {

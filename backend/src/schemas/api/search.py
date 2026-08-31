@@ -19,7 +19,7 @@ class HybridSearchRequest(BaseModel):
     query: str = Field(..., description="Search query text", min_length=1, max_length=500)
     size: int = Field(10, description="Number of results to return", ge=1, le=100)
     from_: int = Field(0, description="Offset for pagination", ge=0, alias="from")
-    categories: Optional[List[str]] = Field(None, description="Filter by arXiv categories (e.g., ['cs.AI', 'cs.LG'])")
+    categories: Optional[List[str]] = Field(None, description="Filter by document categories")
     latest_papers: bool = Field(False, description="Sort by publication date instead of relevance")
     use_hybrid: bool = Field(True, description="Enable hybrid search (BM25 + vector) with automatic embedding generation")
     min_score: float = Field(0.0, description="Minimum score threshold for results", ge=0.0)
@@ -40,19 +40,16 @@ class HybridSearchRequest(BaseModel):
 class SearchHit(BaseModel):
     """Individual search result."""
 
-    arxiv_id: str
+    document_id: str = Field("", description="Identifier of the source document")
+    knowledge_base_id: Optional[str] = Field(None, description="Knowledge base the document belongs to")
     title: str
-    authors: Optional[str]
-    abstract: Optional[str]
-    published_date: Optional[str]
-    pdf_url: Optional[str]
     score: float
     highlights: Optional[dict] = None
 
     # Chunk-specific fields (for unified search)
     chunk_text: Optional[str] = Field(None, description="Text content of the matching chunk")
     chunk_id: Optional[str] = Field(None, description="Unique identifier of the chunk")
-    section_name: Optional[str] = Field(None, description="Section name where the chunk was found")
+    section_title: Optional[str] = Field(None, description="Section the chunk was found in")
 
 
 class SearchResponse(BaseModel):

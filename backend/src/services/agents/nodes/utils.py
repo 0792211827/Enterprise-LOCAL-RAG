@@ -18,7 +18,7 @@ def extract_sources_from_tool_messages(messages: List) -> List[SourceItem]:
 
     for msg in messages:
         if isinstance(msg, ToolMessage) and hasattr(msg, "name"):
-            if msg.name == "retrieve_papers":
+            if msg.name == "retrieve_documents":
                 # Parse tool response for sources
                 # This would need to parse the actual document metadata
                 # For now, return empty list

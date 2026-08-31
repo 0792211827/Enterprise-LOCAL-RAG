@@ -20,7 +20,14 @@ export default function KnowledgeBaseDetailPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const kb = useQuery({ queryKey: ["kb", id], queryFn: () => knowledgeBasesApi.get(id) });
+  // Both poll: ingestion runs in a background task that finishes *after* the
+  // upload response, so the KB counters change with no request to hang an
+  // invalidation off. Without the poll they stay stale until a hard reload.
+  const kb = useQuery({
+    queryKey: ["kb", id],
+    queryFn: () => knowledgeBasesApi.get(id),
+    refetchInterval: 5_000,
+  });
   const docs = useQuery({
     queryKey: ["docs", id],
     queryFn: () => documentsApi.listForKb(id),
@@ -38,11 +45,19 @@ export default function KnowledgeBaseDetailPage() {
 
   const removeDoc = useMutation({
     mutationFn: documentsApi.remove,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["docs", id] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["docs", id] });
+      qc.invalidateQueries({ queryKey: ["kb", id] });
+    },
+    onError: (e) => setError((e as Error).message),
   });
   const reprocess = useMutation({
     mutationFn: documentsApi.reprocess,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["docs", id] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["docs", id] });
+      qc.invalidateQueries({ queryKey: ["kb", id] });
+    },
+    onError: (e) => setError((e as Error).message),
   });
 
   if (kb.isLoading) return <LoadingState />;

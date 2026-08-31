@@ -16,8 +16,8 @@ async def test_create_retriever_tool_basic(mock_opensearch_client, mock_jina_emb
     )
 
     # Verify tool properties
-    assert tool.name == "retrieve_papers"
-    assert "Search and return relevant arXiv research papers" in tool.description
+    assert tool.name == "retrieve_documents"
+    assert "Search and return relevant excerpts from the indexed documents" in tool.description
 
     # Invoke tool
     result = await tool.ainvoke({"query": "machine learning"})
@@ -30,7 +30,7 @@ async def test_create_retriever_tool_basic(mock_opensearch_client, mock_jina_emb
     # Verify first document
     first_doc = result[0]
     assert first_doc.page_content == "Transformers are neural network architectures based on self-attention mechanisms."
-    assert first_doc.metadata["arxiv_id"] == "1706.03762"
+    assert first_doc.metadata["document_id"] == "doc-1706"
     assert first_doc.metadata["title"] == "Attention Is All You Need"
     assert first_doc.metadata["score"] == 0.95
 
@@ -88,11 +88,10 @@ async def test_retriever_tool_metadata_fields(mock_opensearch_client, mock_jina_
         "hits": [
             {
                 "chunk_text": "Test content",
-                "arxiv_id": "2301.00001",
-                "title": "Test Paper",
-                "authors": "Author One, Author Two",
+                "document_id": "doc-2301",
+                "title": "Test Document",
                 "score": 0.95,
-                "section_name": "Introduction",
+                "section_title": "Introduction",
             }
         ]
     })
@@ -105,9 +104,8 @@ async def test_retriever_tool_metadata_fields(mock_opensearch_client, mock_jina_
     result = await tool.ainvoke({"query": "test"})
 
     doc = result[0]
-    assert "arxiv_id" in doc.metadata
+    assert "document_id" in doc.metadata
     assert "title" in doc.metadata
-    assert "authors" in doc.metadata
-    assert "score" in doc.metadata
-    assert "source" in doc.metadata
     assert "section" in doc.metadata
+    assert "score" in doc.metadata
+    assert "search_mode" in doc.metadata

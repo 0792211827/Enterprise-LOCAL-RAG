@@ -1,14 +1,14 @@
 """Generic citation/source helpers shared across LLM providers.
 
-These helpers avoid any product-specific assumptions (such as arXiv URLs) and
-derive citations from generic document metadata attached to retrieved chunks.
+These helpers avoid any product-specific assumptions and derive citations from
+generic document metadata attached to retrieved chunks.
 """
 from typing import Any, Dict, List
 
 
 def _chunk_source_ref(chunk: Dict[str, Any]) -> str:
     """Return the best available human-facing reference for a chunk."""
-    for key in ("source_url", "url", "document_title", "title", "document_id", "arxiv_id"):
+    for key in ("source_url", "url", "document_title", "title", "document_id"):
         value = chunk.get(key)
         if value:
             return str(value)

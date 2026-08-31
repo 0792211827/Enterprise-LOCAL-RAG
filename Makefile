@@ -1,6 +1,10 @@
 .PHONY: help start stop restart status logs health setup format lint test test-cov \
         frontend-setup frontend-dev frontend-build clean
 
+# The virtualenv lives at the repo root, not in backend/. uv resolves this
+# relative to the project root (backend/, where pyproject.toml is).
+export UV_PROJECT_ENVIRONMENT := ../.venv
+
 # Default target
 help: ## Show this help message
 	@echo "Available commands:"
@@ -25,7 +29,7 @@ logs: ## Show service logs
 # Health checks
 health: ## Check all services health
 	@echo "Checking service health..."
-	@curl -s http://localhost:8000/health | jq . || echo "API not responding"
+	@curl -s http://localhost:8000/api/v1/health | jq . || echo "API not responding"
 	@curl -s http://localhost:9200/_cluster/health | jq . || echo "OpenSearch not responding"
 	@curl -s http://localhost:11434/api/version | jq . || echo "Ollama not responding"
 

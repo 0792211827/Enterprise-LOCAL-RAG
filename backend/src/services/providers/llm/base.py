@@ -25,9 +25,7 @@ class LLMProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def generate(
-        self, model: str, prompt: str, stream: bool = False, **kwargs: Any
-    ) -> Optional[Dict[str, Any]]:
+    async def generate(self, model: str, prompt: str, stream: bool = False, **kwargs: Any) -> Optional[Dict[str, Any]]:
         """Generate a completion for a raw prompt."""
         raise NotImplementedError
 
@@ -38,14 +36,23 @@ class LLMProvider(ABC):
 
     @abstractmethod
     async def generate_rag_answer(
-        self, query: str, chunks: List[Dict[str, Any]], model: str, use_structured_output: bool = False
+        self,
+        query: str,
+        chunks: List[Dict[str, Any]],
+        model: str,
+        use_structured_output: bool = False,
+        system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate a grounded RAG answer from retrieved chunks."""
         raise NotImplementedError
 
     @abstractmethod
     def generate_rag_answer_stream(
-        self, query: str, chunks: List[Dict[str, Any]], model: str
+        self,
+        query: str,
+        chunks: List[Dict[str, Any]],
+        model: str,
+        system_prompt: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Stream a grounded RAG answer from retrieved chunks."""
         raise NotImplementedError

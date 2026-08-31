@@ -2,12 +2,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+// Assistants first: it is the object admins actually come here for. The
+// infrastructure pages are grouped under a Settings heading below.
 const NAV = [
+  { href: "/applications", label: "Assistants", icon: "◈" },
   { href: "/", label: "Dashboard", icon: "▦" },
   { href: "/knowledge-bases", label: "Knowledge Bases", icon: "▤" },
   { href: "/documents", label: "Documents", icon: "▧" },
-  { href: "/applications", label: "RAG Applications", icon: "◈" },
-  { href: "/providers", label: "Models & Providers", icon: "◍" },
+  { href: "/providers", label: "Models & Providers", icon: "◍", section: "Settings" },
   { href: "/retrieval", label: "Retrieval", icon: "⇄" },
   { href: "/system", label: "System", icon: "❤" },
 ];
@@ -29,7 +31,7 @@ export function Sidebar() {
         {NAV.map((item) => {
           const active =
             item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-          return (
+          const link = (
             <Link
               key={item.href}
               href={item.href}
@@ -42,6 +44,15 @@ export function Sidebar() {
               <span className="w-4 text-center opacity-70">{item.icon}</span>
               {item.label}
             </Link>
+          );
+          if (!item.section) return link;
+          return (
+            <div key={item.href}>
+              <div className="mb-1 mt-4 px-3 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                {item.section}
+              </div>
+              {link}
+            </div>
           );
         })}
       </nav>

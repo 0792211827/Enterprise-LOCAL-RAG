@@ -106,8 +106,8 @@ async def ainvoke_rewrite_query_step(
         logger.error(f"Failed to rewrite query using LLM: {e}")
         logger.warning("Falling back to simple keyword expansion")
         # Fallback to simple expansion if LLM fails
-        rewritten_query = f"{original_question} research paper arxiv machine learning"
-        reasoning = "Fallback: Simple keyword expansion due to LLM error"
+        rewritten_query = original_question
+        reasoning = "Fallback: reusing the original question due to LLM error"
 
     # Update span with rewriting result
     if span:

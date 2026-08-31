@@ -1,4 +1,5 @@
 """Knowledge Base management endpoints (Admin Control Plane)."""
+
 from typing import List
 from uuid import UUID
 
@@ -16,7 +17,13 @@ from src.services.slug import slugify
 router = APIRouter(prefix="/api/v1/knowledge-bases", tags=["knowledge-bases"])
 
 
-def _refresh_counts(kb: KnowledgeBase, session) -> KnowledgeBase:
+def refresh_counts(kb: KnowledgeBase, session) -> KnowledgeBase:
+    """Recompute the denormalised counters from the documents/chunks tables.
+
+    The columns are only written by the ingestion background task and are never
+    decremented on delete, so anything serving them must refresh first or it
+    reports documents that no longer exist.
+    """
     doc_repo = DocumentRepository(session)
     kb.document_count = doc_repo.count(kb.id)
     kb.chunk_count = doc_repo.count_chunks(kb.id)
@@ -26,7 +33,7 @@ def _refresh_counts(kb: KnowledgeBase, session) -> KnowledgeBase:
 @router.get("", response_model=List[KnowledgeBaseResponse])
 def list_knowledge_bases(session: SessionDep, limit: int = 100, offset: int = 0):
     repo = KnowledgeBaseRepository(session)
-    return [_refresh_counts(kb, session) for kb in repo.get_all(limit=limit, offset=offset)]
+    return [refresh_counts(kb, session) for kb in repo.get_all(limit=limit, offset=offset)]
 
 
 @router.post("", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
@@ -57,7 +64,7 @@ def get_knowledge_base(kb_id: UUID, session: SessionDep):
     kb = repo.get_by_id(kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
-    return _refresh_counts(kb, session)
+    return refresh_counts(kb, session)
 
 
 @router.patch("/{kb_id}", response_model=KnowledgeBaseResponse)

@@ -51,29 +51,35 @@ async def _prepare_chunks_and_sources(
 
         # Extract essential data for LLM
         chunks = []
-        arxiv_ids = []
+        document_ids = []
         sources_set = set()
 
         for hit in search_results.get("hits", []):
-            arxiv_id = hit.get("arxiv_id", "")
+            document_id = hit.get("document_id", "")
+            title = hit.get("title", "")
 
-            # Minimal chunk data for LLM
+            # Minimal chunk data for LLM. The title is what the prompt cites,
+            # so it must travel with the text.
             chunks.append(
                 {
-                    "arxiv_id": arxiv_id,
-                    "chunk_text": hit.get("chunk_text", hit.get("abstract", "")),
+                    "document_id": document_id,
+                    "title": title,
+                    "section_title": hit.get("section_title", ""),
+                    "chunk_text": hit.get("chunk_text", ""),
                 }
             )
 
-            if arxiv_id:
-                arxiv_ids.append(arxiv_id)
-                arxiv_id_clean = arxiv_id.split("v")[0] if "v" in arxiv_id else arxiv_id
-                sources_set.add(f"https://arxiv.org/pdf/{arxiv_id_clean}.pdf")
+            if document_id:
+                document_ids.append(document_id)
+            # Sources are human-facing: prefer the document title, falling back
+            # to its id. Never synthesise an external URL.
+            if title or document_id:
+                sources_set.add(title or document_id)
 
         # End search span with essential metadata
-        rag_tracer.end_search(search_span, chunks, arxiv_ids, search_results.get("total", 0))
+        rag_tracer.end_search(search_span, chunks, document_ids, search_results.get("total", 0))
 
-    return chunks, list(sources_set), arxiv_ids
+    return chunks, list(sources_set), document_ids
 
 
 @ask_router.post("/ask", response_model=AskResponse)

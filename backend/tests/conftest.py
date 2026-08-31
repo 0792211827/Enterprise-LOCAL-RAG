@@ -31,19 +31,19 @@ def mock_opensearch_client():
             "hits": [
                 {
                     "chunk_text": "Transformers are neural network architectures based on self-attention mechanisms.",
-                    "arxiv_id": "1706.03762",
+                    "document_id": "doc-1706",
                     "title": "Attention Is All You Need",
                     "authors": "Vaswani et al.",
                     "score": 0.95,
-                    "section_name": "Introduction",
+                    "section_title": "Introduction",
                 },
                 {
                     "chunk_text": "Self-attention allows modeling dependencies without regard to their distance.",
-                    "arxiv_id": "1706.03762",
+                    "document_id": "doc-1706",
                     "title": "Attention Is All You Need",
                     "authors": "Vaswani et al.",
                     "score": 0.89,
-                    "section_name": "Model",
+                    "section_title": "Model",
                 },
             ]
         }

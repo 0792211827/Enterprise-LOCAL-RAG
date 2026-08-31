@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 from typing import List, Optional
 
 from .base import EmbeddingProvider
@@ -42,22 +43,32 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
         self.passage_prompt = passage_prompt
         self._device = device
         self._model = None
+        # ``embed_passages``/``embed_query`` hand off to ``asyncio.to_thread``, so
+        # concurrent requests race here. Without this lock each racing thread
+        # builds its own SentenceTransformer (~2.3GB for bge-m3).
+        self._model_lock = threading.Lock()
         logger.info(f"HuggingFace embedding provider configured: model={model_name}, dim={dimension}")
 
     def _ensure_model(self):
         """Lazily load the model on first use to keep startup fast."""
-        if self._model is None:
-            from sentence_transformers import SentenceTransformer
+        if self._model is not None:
+            return self._model
 
-            logger.info(f"Loading local embedding model '{self.model_name}' (device={self._device or 'auto'})")
-            self._model = SentenceTransformer(self.model_name, device=self._device)
-            actual_dim = self._model.get_sentence_embedding_dimension()
-            if actual_dim and actual_dim != self.dimension:
-                logger.warning(
-                    f"Configured embedding dimension ({self.dimension}) does not match model "
-                    f"dimension ({actual_dim}); using model dimension."
-                )
-                self.dimension = actual_dim
+        with self._model_lock:
+            # Re-check: another thread may have loaded it while we waited.
+            if self._model is None:
+                from sentence_transformers import SentenceTransformer
+
+                logger.info(f"Loading local embedding model '{self.model_name}' (device={self._device or 'auto'})")
+                model = SentenceTransformer(self.model_name, device=self._device)
+                actual_dim = model.get_sentence_embedding_dimension()
+                if actual_dim and actual_dim != self.dimension:
+                    logger.warning(
+                        f"Configured embedding dimension ({self.dimension}) does not match model "
+                        f"dimension ({actual_dim}); using model dimension."
+                    )
+                    self.dimension = actual_dim
+                self._model = model
         return self._model
 
     def _encode_sync(self, texts: List[str], batch_size: int, prompt: Optional[str]) -> List[List[float]]:

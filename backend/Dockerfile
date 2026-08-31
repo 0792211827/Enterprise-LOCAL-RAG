@@ -36,5 +36,9 @@ COPY --from=base /app /app
 # Add virtual environment to PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Run the application
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"] 
+# Run the application.
+# One worker by default: each uvicorn worker is a separate process that loads
+# its own copy of the embedding model (BAAI/bge-m3 is ~2.3GB resident), so the
+# previous default of 4 workers OOM-killed the container on the first ingest.
+# Raise UVICORN_WORKERS only if the host has memory for N model copies.
+CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-1}"]

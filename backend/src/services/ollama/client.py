@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
 from src.config import Settings
@@ -9,6 +9,9 @@ from src.schemas.ollama import RAGResponse
 from src.services.ollama.prompts import RAGPromptBuilder, ResponseParser
 from src.services.providers.llm.base import LLMProvider
 from src.services.providers.llm.citations import build_citations, build_sources
+
+if TYPE_CHECKING:
+    from langchain_ollama import ChatOllama
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +30,32 @@ class OllamaClient(LLMProvider):
         self.timeout = httpx.Timeout(float(settings.ollama_timeout))
         self.prompt_builder = RAGPromptBuilder()
         self.response_parser = ResponseParser()
+
+    def get_langchain_model(
+        self,
+        model: Optional[str] = None,
+        temperature: float = 0.0,
+        **kwargs: Any,
+    ) -> "ChatOllama":
+        """Return a LangChain chat model bound to this Ollama server.
+
+        The agentic graph nodes need a LangChain-compatible model so they can
+        call ``.ainvoke()`` and ``.with_structured_output()``. Building it here
+        keeps the graph nodes free of transport details and reuses the host and
+        default model this client was configured with.
+
+        :param model: Model name; falls back to the client's default model
+        :param temperature: Sampling temperature for generation
+        :returns: Configured :class:`ChatOllama` instance
+        """
+        from langchain_ollama import ChatOllama
+
+        return ChatOllama(
+            base_url=self.base_url,
+            model=model or self.default_model,
+            temperature=temperature,
+            **kwargs,
+        )
 
     async def health_check(self) -> Dict[str, Any]:
         """
@@ -123,9 +152,8 @@ class OllamaClient(LLMProvider):
 
                     # Calculate total tokens
                     if usage_metadata:
-                        usage_metadata["total_tokens"] = (
-                            usage_metadata.get("prompt_tokens", 0) +
-                            usage_metadata.get("completion_tokens", 0)
+                        usage_metadata["total_tokens"] = usage_metadata.get("prompt_tokens", 0) + usage_metadata.get(
+                            "completion_tokens", 0
                         )
 
                     # Parse timing information (convert nanoseconds to milliseconds)
@@ -203,6 +231,7 @@ class OllamaClient(LLMProvider):
         chunks: List[Dict[str, Any]],
         model: str = "llama3.2",
         use_structured_output: bool = False,
+        system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate a RAG answer using retrieved chunks.
@@ -212,6 +241,7 @@ class OllamaClient(LLMProvider):
             chunks: Retrieved document chunks with metadata
             model: Model to use for generation
             use_structured_output: Whether to use Ollama's structured output feature
+            system_prompt: Overrides the default system prompt when provided
 
         Returns:
             Dictionary with answer, sources, confidence, and citations
@@ -219,7 +249,7 @@ class OllamaClient(LLMProvider):
         try:
             if use_structured_output:
                 # Use structured output with Pydantic model
-                prompt_data = self.prompt_builder.create_structured_prompt(query, chunks)
+                prompt_data = self.prompt_builder.create_structured_prompt(query, chunks, system_prompt=system_prompt)
 
                 # Generate with structured format
                 response = await self.generate(
@@ -231,7 +261,7 @@ class OllamaClient(LLMProvider):
                 )
             else:
                 # Fallback to plain text mode
-                prompt = self.prompt_builder.create_rag_prompt(query, chunks)
+                prompt = self.prompt_builder.create_rag_prompt(query, chunks, system_prompt=system_prompt)
 
                 # Generate without format restrictions
                 response = await self.generate(
@@ -270,6 +300,7 @@ class OllamaClient(LLMProvider):
         query: str,
         chunks: List[Dict[str, Any]],
         model: str = "llama3.2",
+        system_prompt: Optional[str] = None,
     ):
         """
         Generate a streaming RAG answer using retrieved chunks.
@@ -284,7 +315,7 @@ class OllamaClient(LLMProvider):
         """
         try:
             # Create prompt for streaming (simpler than structured)
-            prompt = self.prompt_builder.create_rag_prompt(query, chunks)
+            prompt = self.prompt_builder.create_rag_prompt(query, chunks, system_prompt=system_prompt)
 
             # Stream the response
             async for chunk in self.generate_stream(

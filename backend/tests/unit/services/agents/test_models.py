@@ -70,44 +70,36 @@ class TestSourceItem:
     def test_valid_source_item(self):
         """Test creating valid source item."""
         source = SourceItem(
-            arxiv_id="1706.03762",
-            title="Attention Is All You Need",
-            authors=["Vaswani, A.", "Shazeer, N."],
-            url="https://arxiv.org/abs/1706.03762",
+            document_id="doc-1706",
+            title="Employee Handbook",
+            section="Annual Leave",
             relevance_score=0.95
         )
-        assert source.arxiv_id == "1706.03762"
-        assert source.title == "Attention Is All You Need"
-        assert len(source.authors) == 2
-        assert source.url == "https://arxiv.org/abs/1706.03762"
+        assert source.document_id == "doc-1706"
+        assert source.title == "Employee Handbook"
+        assert source.section == "Annual Leave"
         assert source.relevance_score == 0.95
 
     def test_default_values(self):
         """Test default field values."""
-        source = SourceItem(
-            arxiv_id="1234.5678",
-            title="Test Paper",
-            url="https://arxiv.org/abs/1234.5678"
-        )
-        assert source.authors == []
+        source = SourceItem(document_id="doc-1234", title="Test Document")
+        assert source.section == ""
         assert source.relevance_score == 0.0
 
     def test_to_dict_conversion(self):
         """Test conversion to dictionary."""
         source = SourceItem(
-            arxiv_id="1706.03762",
-            title="Attention Is All You Need",
-            authors=["Vaswani, A."],
-            url="https://arxiv.org/abs/1706.03762",
+            document_id="doc-1706",
+            title="Employee Handbook",
+            section="Annual Leave",
             relevance_score=0.95
         )
         source_dict = source.to_dict()
 
         assert isinstance(source_dict, dict)
-        assert source_dict["arxiv_id"] == "1706.03762"
-        assert source_dict["title"] == "Attention Is All You Need"
-        assert source_dict["authors"] == ["Vaswani, A."]
-        assert source_dict["url"] == "https://arxiv.org/abs/1706.03762"
+        assert source_dict["document_id"] == "doc-1706"
+        assert source_dict["title"] == "Employee Handbook"
+        assert source_dict["section"] == "Annual Leave"
         assert source_dict["relevance_score"] == 0.95
 
 
@@ -117,14 +109,14 @@ class TestToolArtefact:
     def test_valid_tool_artefact(self):
         """Test creating valid tool artefact."""
         artefact = ToolArtefact(
-            tool_name="retrieve_papers",
+            tool_name="retrieve_documents",
             tool_call_id="call_123",
-            content="Retrieved 3 papers",
+            content="Retrieved 3 document excerpts",
             metadata={"count": 3, "source": "opensearch"}
         )
-        assert artefact.tool_name == "retrieve_papers"
+        assert artefact.tool_name == "retrieve_documents"
         assert artefact.tool_call_id == "call_123"
-        assert artefact.content == "Retrieved 3 papers"
+        assert artefact.content == "Retrieved 3 document excerpts"
         assert artefact.metadata["count"] == 3
 
     def test_default_metadata(self):

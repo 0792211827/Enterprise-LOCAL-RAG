@@ -4,10 +4,8 @@ This configuration supports both keyword search (BM25) and vector similarity sea
 using HNSW algorithm for approximate nearest neighbor search.
 """
 
-ARXIV_PAPERS_CHUNKS_INDEX = "arxiv-papers-chunks"
-
-# Index mapping for chunked papers with vector embeddings
-ARXIV_PAPERS_CHUNKS_MAPPING = {
+# Index mapping for document chunks with vector embeddings
+DOCUMENT_CHUNKS_MAPPING = {
     "settings": {
         "number_of_shards": 1,
         "number_of_replicas": 0,
@@ -24,8 +22,11 @@ ARXIV_PAPERS_CHUNKS_MAPPING = {
         "dynamic": "strict",
         "properties": {
             "chunk_id": {"type": "keyword"},
-            "arxiv_id": {"type": "keyword"},
-            "paper_id": {"type": "keyword"},
+            # Document identifiers written by IngestionService. The mapping is
+            # strict, so omitting these rejects every bulk index request with
+            # strict_dynamic_mapping_exception.
+            "document_id": {"type": "keyword"},
+            "knowledge_base_id": {"type": "keyword"},
             "chunk_index": {"type": "integer"},
             "chunk_text": {
                 "type": "text",

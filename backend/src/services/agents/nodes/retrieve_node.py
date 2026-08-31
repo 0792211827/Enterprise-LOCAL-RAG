@@ -96,7 +96,7 @@ async def ainvoke_retrieve_step(
             tool_calls=[
                 {
                     "id": f"retrieve_{new_attempt_count}",
-                    "name": "retrieve_papers",
+                    "name": "retrieve_documents",
                     "args": {"query": question},
                 }
             ],

@@ -129,7 +129,7 @@ class DoclingParser:
             if current_section["content"].strip():
                 sections.append(PaperSection(title=current_section["title"], content=current_section["content"].strip()))
 
-            # Focus on what arXiv API doesn't provide: structured full text content only
+            # Extract structured full-text content only; metadata comes from the caller
             return PdfContent(
                 sections=sections,
                 figures=[],  # Removed: basic metadata not useful
@@ -137,7 +137,7 @@ class DoclingParser:
                 raw_text=doc.export_to_text(),
                 references=[],
                 parser_used=ParserType.DOCLING,
-                metadata={"source": "docling", "note": "Content extracted from PDF, metadata comes from arXiv API"},
+                metadata={"source": "docling", "note": "Content extracted from PDF"},
             )
 
         except PDFValidationError as e:

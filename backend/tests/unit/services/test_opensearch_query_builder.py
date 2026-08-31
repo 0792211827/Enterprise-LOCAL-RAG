@@ -88,7 +88,7 @@ def test_query_builder_source_fields():
     query = builder.build()
 
     source_fields = query["_source"]
-    expected_fields = ["arxiv_id", "title", "authors", "abstract", "categories", "published_date", "pdf_url"]
+    expected_fields = ["document_id", "knowledge_base_id", "title", "section_title"]
 
     for field in expected_fields:
         assert field in source_fields

@@ -20,25 +20,21 @@ def create_retriever_tool(
     :param embeddings_client: Existing Jina embeddings service
     :param top_k: Number of chunks to retrieve
     :param use_hybrid: Use hybrid search (BM25 + vector)
-    :returns: LangChain tool for retrieving papers
+    :returns: LangChain tool for retrieving document excerpts
     """
 
     @tool
-    async def retrieve_papers(query: str) -> list[Document]:
-        """Search and return relevant arXiv research papers.
+    async def retrieve_documents(query: str) -> list[Document]:
+        """Search and return relevant excerpts from the indexed documents.
 
-        Use this tool when the user asks about:
-        - Machine learning concepts or techniques
-        - Deep learning architectures
-        - Natural language processing
-        - Computer vision methods
-        - AI research topics
-        - Specific algorithms or models
+        Use this tool when the user asks about anything that could be covered by
+        the organisation's own documents -- policies, procedures, products,
+        records or other internal knowledge.
 
-        :param query: The search query describing what papers to find
-        :returns: List of relevant paper excerpts with metadata
+        :param query: The search query describing what to find
+        :returns: List of relevant document excerpts with metadata
         """
-        logger.info(f"Retrieving papers for query: {query[:100]}...")
+        logger.info(f"Retrieving documents for query: {query[:100]}...")
         logger.debug(f"Search mode: {'hybrid' if use_hybrid else 'bm25'}, top_k: {top_k}")
 
         # Generate query embedding
@@ -64,12 +60,10 @@ def create_retriever_tool(
             doc = Document(
                 page_content=hit["chunk_text"],
                 metadata={
-                    "arxiv_id": hit["arxiv_id"],
+                    "document_id": hit.get("document_id", ""),
                     "title": hit.get("title", ""),
-                    "authors": hit.get("authors", ""),
                     "score": hit.get("score", 0.0),
-                    "source": f"https://arxiv.org/pdf/{hit['arxiv_id']}.pdf",
-                    "section": hit.get("section_name", ""),
+                    "section": hit.get("section_title", ""),
                     "search_mode": "hybrid" if use_hybrid else "bm25",
                     "top_k": top_k,
                 },
@@ -77,8 +71,8 @@ def create_retriever_tool(
             documents.append(doc)
 
         logger.debug(f"Converted {len(documents)} hits to LangChain Documents")
-        logger.info(f"✓ Retrieved {len(documents)} papers successfully")
+        logger.info(f"✓ Retrieved {len(documents)} document excerpts successfully")
 
         return documents
 
-    return retrieve_papers
+    return retrieve_documents

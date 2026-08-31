@@ -66,13 +66,9 @@ class LangfuseTracer:
 
             # Create handler with trace metadata
             # Note: flush settings are now on the client, not the handler
-            handler = CallbackHandler(
-                trace_name=trace_name,
-                user_id=user_id,
-                session_id=session_id,
-                metadata=metadata,
-                tags=tags,
-            )
+            # The v3 CallbackHandler only accepts ``public_key``/``update_trace``;
+            # trace naming and attribution now travel with the enclosing span.
+            handler = CallbackHandler()
             return handler
         except Exception as e:
             logger.error(f"Error creating CallbackHandler: {e}")
@@ -128,6 +124,109 @@ class LangfuseTracer:
         # The actual trace will be created by the handler
         yield (None, handler)
 
+    @contextmanager
+    def trace_rag_request(
+        self,
+        query: str,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        """Wrap a classic RAG request in a top-level trace span.
+
+        Yields ``None`` when tracing is disabled so callers can use the same
+        ``with`` block regardless of configuration.
+
+        :param query: The user question driving the request
+        :param user_id: Optional user identifier for attribution
+        :param session_id: Optional session identifier for grouping
+        :param metadata: Additional metadata to attach to the trace
+        :yields: The root :class:`LangfuseSpan`, or ``None`` when disabled
+        """
+        if not self.client:
+            yield None
+            return
+
+        span = None
+        try:
+            span = self.client.start_span(
+                name="rag_request",
+                input={"query": query},
+                metadata={**(metadata or {}), "user_id": user_id, "session_id": session_id},
+            )
+            if user_id or session_id:
+                span.update_trace(user_id=user_id, session_id=session_id)
+        except Exception as e:
+            logger.error(f"Error starting RAG request trace: {e}")
+            span = None
+
+        try:
+            yield span
+        finally:
+            if span:
+                try:
+                    span.end()
+                except Exception as e:
+                    logger.error(f"Error ending RAG request trace: {e}")
+
+    def create_span(
+        self,
+        name: str,
+        trace: Optional[Any] = None,
+        input_data: Optional[Any] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        """Create a span, nested under ``trace`` when one is supplied.
+
+        Unlike :meth:`start_span` this returns the span directly rather than
+        acting as a context manager, so callers that create and end spans in
+        separate branches (the agent nodes) can hold on to it.
+
+        :param name: Span name
+        :param trace: Optional parent span to nest under
+        :param input_data: Input payload recorded on the span
+        :param metadata: Additional metadata
+        :returns: The created span, or ``None`` when tracing is unavailable
+        """
+        if not self.client:
+            return None
+
+        try:
+            parent = trace if trace is not None and hasattr(trace, "start_span") else self.client
+            return parent.start_span(
+                name=name,
+                input=input_data,
+                metadata=metadata or {},
+            )
+        except Exception as e:
+            logger.error(f"Error creating span '{name}': {e}")
+            return None
+
+    def end_span(
+        self,
+        span,
+        output: Optional[Any] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        level: Optional[str] = None,
+        status_message: Optional[str] = None,
+    ):
+        """Attach final data to a span and close it.
+
+        :param span: Span returned by :meth:`create_span` (``None`` is a no-op)
+        :param output: Operation output to record
+        :param metadata: Additional metadata to attach
+        :param level: Log level (e.g. ``"ERROR"``) for error tracking
+        :param status_message: Status or error message
+        """
+        if not span:
+            return
+
+        self.update_span(span, output=output, metadata=metadata, level=level, status_message=status_message)
+        try:
+            span.end()
+        except Exception as e:
+            logger.error(f"Error ending span: {e}")
+
     def get_trace_id(self, trace=None) -> Optional[str]:
         """
         Get the current trace ID from Langfuse context.
@@ -176,10 +275,10 @@ class LangfuseTracer:
             return False
 
         try:
-            self.client.score(
-                trace_id=trace_id,
+            self.client.create_score(
                 name=name,
                 value=score,
+                trace_id=trace_id,
                 comment=comment,
             )
             logger.info(f"Submitted feedback for trace {trace_id}: score={score}")
@@ -243,7 +342,7 @@ class LangfuseTracer:
             return
 
         try:
-            generation = self.client.generation(
+            generation = self.client.start_generation(
                 name=name,
                 model=model,
                 input=input_data,
@@ -289,7 +388,7 @@ class LangfuseTracer:
             return
 
         try:
-            span = self.client.span(
+            span = self.client.start_span(
                 name=name,
                 input=input_data,
                 metadata=metadata or {},

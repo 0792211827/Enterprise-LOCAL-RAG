@@ -1,4 +1,5 @@
 """System health, dashboard statistics and GPU monitoring endpoints."""
+
 import logging
 import shutil
 import subprocess
@@ -120,9 +121,23 @@ async def system_health(
             )
         )
 
-    # Langfuse (monitoring).
+    # Langfuse (monitoring). A constructed client object only proves that keys
+    # were supplied at startup -- it says nothing about the collector being up.
+    # Probe the server so a stopped Langfuse isn't reported as healthy.
     if langfuse is not None and getattr(langfuse, "client", None) is not None:
-        components.append(ComponentHealth(name="Langfuse", status="healthy"))
+        auth_check = getattr(langfuse.client, "auth_check", None)
+        if callable(auth_check):
+            ok, latency, err = _timed(auth_check)
+            components.append(
+                ComponentHealth(
+                    name="Langfuse",
+                    status="healthy" if ok else "unhealthy",
+                    latency_ms=latency,
+                    detail=err,
+                )
+            )
+        else:
+            components.append(ComponentHealth(name="Langfuse", status="healthy"))
     else:
         components.append(ComponentHealth(name="Langfuse", status="disabled"))
 
@@ -171,13 +186,17 @@ def gpu_info():
             check=True,
         ).stdout.strip()
 
-        driver = subprocess.run(
-            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader,nounits"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=True,
-        ).stdout.strip().splitlines()
+        driver = (
+            subprocess.run(
+                ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            )
+            .stdout.strip()
+            .splitlines()
+        )
 
         gpus: List[GPUInfo] = []
         for line in output.splitlines():

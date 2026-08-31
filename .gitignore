@@ -12,6 +12,9 @@ eggs/
 .eggs/
 lib/
 lib64/
+# ...but that unanchored Python rule also swallows the frontend's API
+# client layer, which is source, not build output.
+!frontend/src/lib/
 parts/
 sdist/
 var/
@@ -167,3 +170,9 @@ test_data/
 
 
 
+
+# Playwright MCP session artifacts (snapshots, console/network logs)
+.playwright-mcp/
+
+# TypeScript incremental build info
+*.tsbuildinfo

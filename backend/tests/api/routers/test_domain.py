@@ -3,6 +3,8 @@
 These run fully offline against an in-memory SQLite database (enabled by the
 portable ``GUID`` column type), so no PostgreSQL/OpenSearch/Redis is required.
 """
+
+import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -23,7 +25,16 @@ from src.dependencies import (
     get_opensearch_client,
     get_settings,
 )
-from src.routers import applications, documents, knowledge_bases, providers, retrieval, system
+from src.routers import (
+    api_keys,
+    applications,
+    chat_completions,
+    documents,
+    knowledge_bases,
+    providers,
+    retrieval,
+    system,
+)
 
 
 @pytest.fixture
@@ -40,7 +51,16 @@ def session_factory():
 @pytest.fixture
 def app(session_factory):
     application = FastAPI()
-    for module in (knowledge_bases, documents, applications, providers, retrieval, system):
+    for module in (
+        knowledge_bases,
+        documents,
+        applications,
+        providers,
+        retrieval,
+        system,
+        api_keys,
+        chat_completions,
+    ):
         application.include_router(module.router)
 
     def _override_session():
@@ -179,11 +199,7 @@ def test_application_ask_respects_configuration(client, app, session_factory):
 
     mock_os = MagicMock()
     mock_os.search_unified = MagicMock(
-        return_value={
-            "hits": [
-                {"chunk_text": "Leave is 25 days.", "title": "Handbook", "score": 0.9, "document_id": "d1"}
-            ]
-        }
+        return_value={"hits": [{"chunk_text": "Leave is 25 days.", "title": "Handbook", "score": 0.9, "document_id": "d1"}]}
     )
     mock_embeddings = AsyncMock()
     mock_embeddings.embed_query = AsyncMock(return_value=[0.1] * 1024)
@@ -277,5 +293,200 @@ def test_document_upload_rejects_duplicate(client, app, session_factory):
     app.dependency_overrides[get_database] = lambda: mock_db
 
     files = {"file": ("a.txt", b"identical bytes", "text/plain")}
-    assert client.post(f"/api/v1/knowledge-bases/{kb_id}/documents", files={"file": ("a.txt", b"identical bytes", "text/plain")}).status_code == 202
-    assert client.post(f"/api/v1/knowledge-bases/{kb_id}/documents", files={"file": ("a.txt", b"identical bytes", "text/plain")}).status_code == 409
+    assert (
+        client.post(
+            f"/api/v1/knowledge-bases/{kb_id}/documents", files={"file": ("a.txt", b"identical bytes", "text/plain")}
+        ).status_code
+        == 202
+    )
+    assert (
+        client.post(
+            f"/api/v1/knowledge-bases/{kb_id}/documents", files={"file": ("a.txt", b"identical bytes", "text/plain")}
+        ).status_code
+        == 409
+    )
+
+
+# --------------------------------------------------------------------------- #
+# API keys
+# --------------------------------------------------------------------------- #
+def _make_app(client, name="Keyed Bot", kb_ids=None):
+    if kb_ids is None:
+        kb_ids = [client.post("/api/v1/knowledge-bases", json={"name": f"{name} KB"}).json()["id"]]
+    return client.post(
+        "/api/v1/applications",
+        json={"name": name, "knowledge_base_ids": kb_ids, "llm_model": "qwen2.5:7b"},
+    ).json()
+
+
+def test_application_create_auto_provisions_key(client):
+    """Creation hands back a usable key exactly once."""
+    created = _make_app(client)
+    assert created["api_key"].startswith("sk-")
+
+    # ...and never again on reads.
+    fetched = client.get(f"/api/v1/applications/{created['id']}").json()
+    assert fetched["api_key"] is None
+
+    listed = client.get("/api/v1/applications").json()
+    assert all(a["api_key"] is None for a in listed)
+
+
+def test_api_key_lifecycle(client):
+    app_id = _make_app(client)["id"]
+
+    keys = client.get(f"/api/v1/applications/{app_id}/api-keys").json()
+    assert len(keys) == 1, "creation should have provisioned a default key"
+    assert "key" not in keys[0], "the plaintext must never be listed"
+    assert keys[0]["is_active"] is True
+
+    created = client.post(f"/api/v1/applications/{app_id}/api-keys", json={"name": "CI"})
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["key"].startswith("sk-")
+    assert body["key"].endswith(body["key_last4"])
+    assert body["key"].startswith(body["key_prefix"])
+
+    rotated = client.post(f"/api/v1/applications/{app_id}/api-keys/{body['id']}/rotate")
+    assert rotated.status_code == 200, rotated.text
+    assert rotated.json()["key"] != body["key"]
+
+    after_rotate = {k["id"]: k for k in client.get(f"/api/v1/applications/{app_id}/api-keys").json()}
+    assert after_rotate[body["id"]]["is_active"] is False, "rotate must revoke its predecessor"
+
+    default_key_id = keys[0]["id"]
+    assert client.delete(f"/api/v1/applications/{app_id}/api-keys/{default_key_id}").status_code == 204
+    after_revoke = {k["id"]: k for k in client.get(f"/api/v1/applications/{app_id}/api-keys").json()}
+    assert after_revoke[default_key_id]["is_active"] is False
+    assert after_revoke[default_key_id]["revoked_at"] is not None
+
+
+def test_api_keys_scoped_to_application(client):
+    a = _make_app(client, name="App A")
+    b = _make_app(client, name="App B")
+    b_key_id = client.get(f"/api/v1/applications/{b['id']}/api-keys").json()[0]["id"]
+    # A key belonging to B is not reachable through A.
+    assert client.delete(f"/api/v1/applications/{a['id']}/api-keys/{b_key_id}").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# OpenAI-compatible endpoint
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def rag_mocks(app):
+    """Override the retrieval/generation collaborators with recording mocks."""
+    mock_os = MagicMock()
+    mock_os.search_unified = MagicMock(
+        return_value={"hits": [{"chunk_text": "Leave is 25 days.", "title": "Handbook", "score": 0.9, "document_id": "d1"}]}
+    )
+    mock_embeddings = AsyncMock()
+    mock_embeddings.embed_query = AsyncMock(return_value=[0.1] * 1024)
+    mock_llm = AsyncMock()
+    mock_llm.generate_rag_answer = AsyncMock(return_value={"answer": "25 days.", "sources": []})
+
+    app.dependency_overrides[get_opensearch_client] = lambda: mock_os
+    app.dependency_overrides[get_embeddings_service] = lambda: mock_embeddings
+    app.dependency_overrides[get_llm_provider] = lambda: mock_llm
+    return mock_os, mock_embeddings, mock_llm
+
+
+def test_chat_completion_resolves_application_by_slug(client, rag_mocks):
+    created = _make_app(client, name="HR Assistant")
+    assert created["slug"] == "hr-assistant"
+
+    resp = client.post(
+        "/v1/chat/completions",
+        json={"model": "hr-assistant", "messages": [{"role": "user", "content": "How much leave?"}]},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["object"] == "chat.completion"
+    assert body["model"] == "hr-assistant"
+    assert body["choices"][0]["message"]["role"] == "assistant"
+    assert body["choices"][0]["message"]["content"] == "25 days."
+    assert body["choices"][0]["finish_reason"] == "stop"
+    assert body["id"].startswith("chatcmpl-")
+
+
+def test_chat_completion_unknown_model_uses_openai_error_shape(client, rag_mocks):
+    resp = client.post(
+        "/v1/chat/completions",
+        json={"model": "does-not-exist", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code == 404
+    # The OpenAI SDKs render {"error": {...}}; FastAPI's default {"detail": ...}
+    # would surface as an opaque failure.
+    assert resp.json()["error"]["code"] == "model_not_found"
+
+
+def test_chat_completion_does_not_enforce_api_keys(client, rag_mocks):
+    """Keys are issued but NOT enforced -- this documents that decision.
+
+    If enforcement is ever added, this test should be changed deliberately
+    rather than discovered to be failing.
+    """
+    _make_app(client, name="Open Bot")
+    payload = {"model": "open-bot", "messages": [{"role": "user", "content": "hi"}]}
+
+    assert client.post("/v1/chat/completions", json=payload).status_code == 200
+    assert (
+        client.post("/v1/chat/completions", json=payload, headers={"Authorization": "Bearer sk-not-a-real-key"}).status_code
+        == 200
+    )
+
+
+def test_chat_completion_requires_a_user_message(client, rag_mocks):
+    _make_app(client, name="Sys Only")
+    resp = client.post(
+        "/v1/chat/completions",
+        json={"model": "sys-only", "messages": [{"role": "system", "content": "be nice"}]},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "missing_user_message"
+
+
+def test_chat_completion_ignores_unknown_sdk_fields(client, rag_mocks):
+    """Stock SDK clients send extras (top_p, n, presence_penalty, ...)."""
+    _make_app(client, name="Tolerant Bot")
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "tolerant-bot",
+            "messages": [{"role": "user", "content": "hi"}],
+            "top_p": 0.9,
+            "n": 1,
+            "presence_penalty": 0.0,
+            "seed": 42,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_chat_completion_streams_sse(client, rag_mocks):
+    _, _, mock_llm = rag_mocks
+
+    async def _fake_stream(**kwargs):
+        for piece in ["25 ", "days."]:
+            yield {"response": piece}
+
+    mock_llm.generate_rag_answer_stream = _fake_stream
+    _make_app(client, name="Stream Bot")
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        json={"model": "stream-bot", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    ) as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        raw = "".join(resp.iter_text())
+
+    assert raw.rstrip().endswith("data: [DONE]")
+    payloads = [
+        json.loads(line[len("data: ") :])
+        for line in raw.splitlines()
+        if line.startswith("data: ") and not line.endswith("[DONE]")
+    ]
+    assert payloads[0]["choices"][0]["delta"] == {"role": "assistant"}
+    assert "".join(p["choices"][0]["delta"].get("content", "") for p in payloads) == "25 days."
+    assert payloads[-1]["choices"][0]["finish_reason"] == "stop"

@@ -51,16 +51,15 @@ class TextChunker:
         """
         return " ".join(words)
 
-    def chunk_paper(
+    def chunk_document(
         self,
         title: str,
         abstract: str,
         full_text: str,
-        arxiv_id: str,
-        paper_id: str,
+        document_id: str,
         sections: Optional[Union[Dict[str, str], str, list]] = None,
     ) -> List[TextChunk]:
-        """Chunk a paper using hybrid section-based approach.
+        """Chunk a document using a hybrid section-based approach.
 
         Strategy:
         - For sections 100-800 words: Use as single chunk with title+abstract
@@ -68,50 +67,48 @@ class TextChunker:
         - For sections >800 words: Split using traditional word-based chunking
         - Fallback to traditional chunking if no sections available
 
-        :param title: Paper title
-        :param abstract: Paper abstract
+        :param title: Document title
+        :param abstract: Leading summary/abstract text
         :param full_text: Full text content
-        :param arxiv_id: ArXiv ID of the paper
-        :param paper_id: Database ID of the paper
+        :param document_id: Identifier of the source document
         :param sections: Dictionary or JSON string of sections
         :returns: List of text chunks with metadata
         """
         # Try section-based chunking first
         if sections:
             try:
-                section_chunks = self._chunk_by_sections(title, abstract, arxiv_id, paper_id, sections)
+                section_chunks = self._chunk_by_sections(title, abstract, document_id, sections)
                 if section_chunks:
-                    logger.info(f"Created {len(section_chunks)} section-based chunks for {arxiv_id}")
+                    logger.info(f"Created {len(section_chunks)} section-based chunks for {document_id}")
                     return section_chunks
             except Exception as e:
-                logger.warning(f"Section-based chunking failed for {arxiv_id}: {e}")
+                logger.warning(f"Section-based chunking failed for {document_id}: {e}")
 
         # Fallback to traditional word-based chunking
-        logger.info(f"Using traditional word-based chunking for {arxiv_id}")
-        return self.chunk_text(full_text, arxiv_id, paper_id)
+        logger.info(f"Using traditional word-based chunking for {document_id}")
+        return self.chunk_text(full_text, document_id)
 
-    def chunk_text(self, text: str, arxiv_id: str, paper_id: str) -> List[TextChunk]:
+    def chunk_text(self, text: str, document_id: str) -> List[TextChunk]:
         """Chunk text into overlapping segments.
 
         :param text: Full text to chunk
-        :param arxiv_id: ArXiv ID of the paper
-        :param paper_id: Database ID of the paper
+        :param document_id: Identifier of the source document
         :returns: List of text chunks with metadata
         """
         if not text or not text.strip():
-            logger.warning(f"Empty text provided for paper {arxiv_id}")
+            logger.warning(f"Empty text provided for document {document_id}")
             return []
 
         # Split text into words
         words = self._split_into_words(text)
 
         if len(words) < self.min_chunk_size:
-            logger.warning(f"Text for paper {arxiv_id} has only {len(words)} words, less than minimum {self.min_chunk_size}")
+            logger.warning(f"Text for document {document_id} has only {len(words)} words, less than minimum {self.min_chunk_size}")
             # Return single chunk if text is too small
             if words:
                 return [
                     TextChunk(
-                        text=self._reconstruct_text(words, text),
+                        text=self._reconstruct_text(words),
                         metadata=ChunkMetadata(
                             chunk_index=0,
                             start_char=0,
@@ -120,8 +117,7 @@ class TextChunker:
                             overlap_with_previous=0,
                             overlap_with_next=0,
                         ),
-                        arxiv_id=arxiv_id,
-                        paper_id=paper_id,
+                        document_id=document_id,
                     )
                 ]
             return []
@@ -159,8 +155,7 @@ class TextChunker:
                     overlap_with_next=overlap_with_next,
                     section_title=None,  # Could be enhanced with section detection
                 ),
-                arxiv_id=arxiv_id,
-                paper_id=paper_id,
+                document_id=document_id,
             )
             chunks.append(chunk)
 
@@ -172,19 +167,18 @@ class TextChunker:
             if chunk_end >= len(words):
                 break
 
-        logger.info(f"Chunked paper {arxiv_id}: {len(words)} words -> {len(chunks)} chunks")
+        logger.info(f"Chunked document {document_id}: {len(words)} words -> {len(chunks)} chunks")
 
         return chunks
 
     def _chunk_by_sections(
-        self, title: str, abstract: str, arxiv_id: str, paper_id: str, sections: Union[Dict[str, str], str, list]
+        self, title: str, abstract: str, document_id: str, sections: Union[Dict[str, str], str, list]
     ) -> List[TextChunk]:
         """Implement hybrid section-based chunking strategy.
 
-        :param title: Paper title
-        :param abstract: Paper abstract
-        :param arxiv_id: ArXiv ID
-        :param paper_id: Database ID
+        :param title: Document title
+        :param abstract: Leading summary/abstract text
+        :param document_id: Identifier of the source document
         :param sections: Sections data
         :returns: List of text chunks
         """
@@ -196,7 +190,7 @@ class TextChunker:
         # Filter and clean sections
         sections_dict = self._filter_sections(sections_dict, abstract)
         if not sections_dict:
-            logger.warning(f"No meaningful sections found after filtering for {arxiv_id}")
+            logger.warning(f"No meaningful sections found after filtering for {document_id}")
             return []
 
         # Create header (title + abstract)
@@ -218,13 +212,13 @@ class TextChunker:
 
                 # If this is the last section or next section is large, process accumulated small sections
                 if i == len(section_items) - 1 or len(str(section_items[i + 1][1]).split()) >= 100:
-                    chunks.extend(self._create_combined_chunk(header, small_sections, chunks, arxiv_id, paper_id))
+                    chunks.extend(self._create_combined_chunk(header, small_sections, chunks, document_id))
                     small_sections = []
 
             elif 100 <= section_words <= 800:
                 # Perfect size - create single chunk
                 chunk_text = f"{header}Section: {section_title}\n\n{content_str}"
-                chunk = self._create_section_chunk(chunk_text, section_title, len(chunks), arxiv_id, paper_id)
+                chunk = self._create_section_chunk(chunk_text, section_title, len(chunks), document_id)
                 chunks.append(chunk)
 
             else:
@@ -234,7 +228,7 @@ class TextChunker:
 
                 # Use traditional chunking but with section context
                 section_chunks = self._split_large_section(
-                    full_section_text, header, section_title, len(chunks), arxiv_id, paper_id
+                    full_section_text, header, section_title, len(chunks), document_id
                 )
                 chunks.extend(section_chunks)
 
@@ -279,7 +273,7 @@ class TextChunker:
         """Filter out unwanted sections and avoid duplication.
 
         :param sections_dict: Dictionary of sections
-        :param abstract: Paper abstract for duplication check
+        :param abstract: Abstract text used for duplication checks
         :returns: Filtered dictionary of sections
         """
         filtered = {}
@@ -321,8 +315,6 @@ class TextChunker:
             "author",
             "affiliation",
             "email",
-            "arxiv",
-            "preprint",
             "submitted",
             "received",
             "accepted",
@@ -361,13 +353,12 @@ class TextChunker:
         return False
 
     def _is_metadata_content(self, content: str) -> bool:
-        """Check if content contains only metadata (emails, arxiv IDs, etc.)."""
+        """Check if content contains only metadata (emails, affiliations, etc.)."""
         content_lower = content.lower()
 
         # Check for common metadata patterns
         metadata_patterns = [
             "@",  # Email addresses
-            "arxiv:",  # ArXiv IDs
             "university",
             "institute",
             "department",
@@ -375,7 +366,6 @@ class TextChunker:
             "gmail.com",
             "edu",
             "ac.uk",
-            "preprint",
         ]
 
         # If content is mostly metadata patterns
@@ -388,7 +378,7 @@ class TextChunker:
         return False
 
     def _create_combined_chunk(
-        self, header: str, small_sections: List, existing_chunks: List, arxiv_id: str, paper_id: str
+        self, header: str, small_sections: List, existing_chunks: List, document_id: str
     ) -> List[TextChunk]:
         """Create chunks by combining small sections."""
         if not small_sections:
@@ -422,8 +412,7 @@ class TextChunker:
                     overlap_with_next=0,
                     section_title=f"{prev_chunk.metadata.section_title} + Combined",
                 ),
-                arxiv_id=arxiv_id,
-                paper_id=paper_id,
+                document_id=document_id,
             )
             return []
 
@@ -433,11 +422,11 @@ class TextChunker:
         if len(sections_titles) > 3:
             combined_title += f" + {len(sections_titles) - 3} more"
 
-        chunk = self._create_section_chunk(combined_text, combined_title, len(existing_chunks), arxiv_id, paper_id)
+        chunk = self._create_section_chunk(combined_text, combined_title, len(existing_chunks), document_id)
         return [chunk]
 
     def _create_section_chunk(
-        self, chunk_text: str, section_title: str, chunk_index: int, arxiv_id: str, paper_id: str
+        self, chunk_text: str, section_title: str, chunk_index: int, document_id: str
     ) -> TextChunk:
         """Create a single section-based chunk."""
         return TextChunk(
@@ -451,19 +440,18 @@ class TextChunker:
                 overlap_with_next=0,
                 section_title=section_title,
             ),
-            arxiv_id=arxiv_id,
-            paper_id=paper_id,
+            document_id=document_id,
         )
 
     def _split_large_section(
-        self, full_section_text: str, header: str, section_title: str, base_chunk_index: int, arxiv_id: str, paper_id: str
+        self, full_section_text: str, header: str, section_title: str, base_chunk_index: int, document_id: str
     ) -> List[TextChunk]:
         """Split large sections using traditional word-based chunking."""
         # Remove header from section text for chunking, then add back to each chunk
         section_only = full_section_text[len(header) :]
 
         # Use traditional chunking on section content
-        traditional_chunks = self.chunk_text(section_only, arxiv_id, paper_id)
+        traditional_chunks = self.chunk_text(section_only, document_id)
 
         # Add header to each chunk and update metadata
         enhanced_chunks = []
@@ -481,8 +469,7 @@ class TextChunker:
                     overlap_with_next=chunk.metadata.overlap_with_next,
                     section_title=f"{section_title} (Part {i + 1})",
                 ),
-                arxiv_id=arxiv_id,
-                paper_id=paper_id,
+                document_id=document_id,
             )
             enhanced_chunks.append(enhanced_chunk)
 

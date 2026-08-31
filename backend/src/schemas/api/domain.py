@@ -4,12 +4,30 @@ These schemas define the public API contract consumed by the Admin Control
 Plane frontend. They deliberately avoid leaking ORM internals; every endpoint
 returns a typed model rather than an arbitrary dictionary.
 """
+
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+from src.config import get_settings
 from src.models.enums import ProviderKind, ProviderType, RAGStrategy, RetrievalMode
+
+
+# Embedding defaults are read from the running configuration rather than
+# hardcoded. Retrieval always embeds with the process-wide provider
+# (`EmbeddingsDep`), so a literal default would persist -- and the admin UI
+# would then display -- an embedding model the deployment never actually uses.
+def _default_embedding_provider() -> str:
+    return get_settings().embedding.provider
+
+
+def _default_embedding_model() -> str:
+    return get_settings().embedding.model
+
+
+def _default_embedding_dimension() -> int:
+    return get_settings().embedding.dimension
 
 
 # --------------------------------------------------------------------------- #
@@ -18,9 +36,9 @@ from src.models.enums import ProviderKind, ProviderType, RAGStrategy, RetrievalM
 class KnowledgeBaseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=2000)
-    embedding_provider: str = "huggingface"
-    embedding_model: str = "BAAI/bge-m3"
-    embedding_dimension: int = Field(1024, ge=1, le=8192)
+    embedding_provider: str = Field(default_factory=_default_embedding_provider)
+    embedding_model: str = Field(default_factory=_default_embedding_model)
+    embedding_dimension: int = Field(default_factory=_default_embedding_dimension, ge=1, le=8192)
     retrieval_mode: RetrievalMode = RetrievalMode.HYBRID
     default_top_k: int = Field(10, ge=1, le=100)
 
@@ -179,8 +197,8 @@ class ApplicationCreate(BaseModel):
     llm_provider: str = "ollama"
     llm_endpoint: Optional[str] = None
     llm_model: str = "llama3.2:1b"
-    embedding_provider: str = "huggingface"
-    embedding_model: str = "BAAI/bge-m3"
+    embedding_provider: str = Field(default_factory=_default_embedding_provider)
+    embedding_model: str = Field(default_factory=_default_embedding_model)
     vlm_enabled: bool = False
     vlm_provider: Optional[str] = None
     vlm_model: Optional[str] = None
@@ -238,6 +256,9 @@ class ApplicationResponse(BaseModel):
     retrieval_configuration: Optional[RetrievalConfigResponse] = None
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
+    # Populated only on the create response, where the auto-provisioned key's
+    # plaintext is surfaced exactly once. Always null on reads.
+    api_key: Optional[str] = None
 
 
 class ApplicationAskRequest(BaseModel):
@@ -303,3 +324,94 @@ class DashboardStats(BaseModel):
     chunks: int
     ingestion_jobs: int
     ingestion_jobs_by_status: dict
+
+
+# --------------------------------------------------------------------------- #
+# Application API keys
+# --------------------------------------------------------------------------- #
+
+
+class ApiKeyResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    application_id: UUID
+    name: Optional[str] = None
+    key_prefix: str
+    key_last4: str
+    is_active: bool
+    created_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: Optional[str] = Field(None, max_length=200)
+
+
+class ApiKeyCreateResponse(ApiKeyResponse):
+    """Returned once at creation/rotation; ``key`` is never recoverable later."""
+
+    key: str
+
+
+# --------------------------------------------------------------------------- #
+# Provider model discovery
+# --------------------------------------------------------------------------- #
+
+
+class ProviderModel(BaseModel):
+    id: str
+    name: str
+
+
+class ProviderModelsResponse(BaseModel):
+    reachable: bool
+    models: List[ProviderModel] = Field(default_factory=list)
+    detail: Optional[str] = None
+
+
+# --------------------------------------------------------------------------- #
+# OpenAI-compatible chat completions
+# --------------------------------------------------------------------------- #
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
+    """Subset of the OpenAI chat-completions contract that we honour.
+
+    Unknown fields are ignored so standard SDK clients work unmodified.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    model: str
+    messages: List[ChatMessage] = Field(..., min_length=1)
+    stream: bool = False
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+
+
+class ChatCompletionUsage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+class ChatCompletionChoice(BaseModel):
+    index: int = 0
+    message: ChatMessage
+    finish_reason: str = "stop"
+
+
+class ChatCompletionResponse(BaseModel):
+    id: str
+    object: str = "chat.completion"
+    created: int
+    model: str
+    choices: List[ChatCompletionChoice]
+    usage: ChatCompletionUsage = Field(default_factory=ChatCompletionUsage)

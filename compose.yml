@@ -26,9 +26,18 @@ services:
       - OPENSEARCH__HOST=http://opensearch:9200
       - OLLAMA_HOST=http://ollama:11434
       - POSTGRES_DATABASE_URL=postgresql+psycopg2://rag_user:rag_password@postgres:5432/rag_db
-      - LANGFUSE_HOST=http://langfuse-web:3000 
-      - LANGFUSE_DEBUG=true
+      # Double underscore: the backend's LangfuseSettings uses env_prefix
+      # "LANGFUSE__". Single-underscore names here are silently ignored.
+      - LANGFUSE__HOST=http://langfuse-web:3000
+      - LANGFUSE__DEBUG=true
       - REDIS__HOST=redis
+    volumes:
+      # The embedding model (~2.3GB) is downloaded on first use. Without a
+      # volume it lives in the container layer and is re-downloaded on every
+      # rebuild, stalling the first ingestion for minutes.
+      - hf_cache:/root/.cache/huggingface
+      # Binary uploads (PDFs) are written here and re-read by reprocess.
+      - rag_uploads:/tmp/rag-uploads
     networks:
       - rag-network
 
@@ -279,7 +288,10 @@ services:
       LANGFUSE_INIT_USER_NAME: "Admin User"
       LANGFUSE_INIT_USER_PASSWORD: "admin123"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/public/health || exit 1"]
+      # The langfuse image ships wget, not curl, and the Next.js standalone
+      # server binds to $$HOSTNAME (the container IP) rather than loopback,
+      # so localhost/127.0.0.1 is refused here.
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://$$HOSTNAME:3000/api/public/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -351,6 +363,8 @@ services:
 
 
 volumes:
+  hf_cache:
+  rag_uploads:
   postgres_data:
   opensearch_data:
   ollama_data:

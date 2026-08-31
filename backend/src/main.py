@@ -9,7 +9,9 @@ from src.config import get_settings
 from src.db.factory import make_database
 from src.routers import (
     agentic_ask,
+    api_keys,
     applications,
+    chat_completions,
     documents,
     hybrid_search,
     knowledge_bases,
@@ -133,6 +135,11 @@ app.include_router(applications.router)
 app.include_router(providers.router)
 app.include_router(retrieval.router)
 app.include_router(system.router)
+app.include_router(api_keys.router)
+
+# Mounted at bare /v1 (not /api/v1) so stock OpenAI SDK clients work unmodified:
+# they append /chat/completions to a base_url ending in /v1.
+app.include_router(chat_completions.router)
 
 
 if __name__ == "__main__":

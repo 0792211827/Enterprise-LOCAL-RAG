@@ -8,6 +8,7 @@ be unit-tested with mocks and swapped without source changes. Chunking reuses
 the existing section-aware :class:`TextChunker` so the original intelligent
 chunking strategy is preserved for generic documents.
 """
+
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -56,37 +57,42 @@ class IngestionService:
         except Exception:  # pragma: no cover - defensive, repo may be a mock
             pass
 
+        def mark_stage(stage: str) -> None:
+            """Record the current pipeline stage so pollers can observe progress."""
+            job.stage = stage
+            try:
+                ingestion_repo.save(job)
+            except Exception:  # pragma: no cover - defensive, repo may be a mock
+                pass
+
         try:
             # Stage 1: parse/extract text.
-            job.stage = "parse"
+            mark_stage("parse")
             text, sections = await self._extract_text(document)
             if not text or not text.strip():
                 raise ValueError("No extractable text found in document")
 
             # Stage 2: chunk (section-aware where sections are available).
-            job.stage = "chunk"
-            chunks = self.chunker.chunk_paper(
+            mark_stage("chunk")
+            chunks = self.chunker.chunk_document(
                 title=document.title or "",
                 abstract="",
                 full_text=text,
-                arxiv_id=str(document.id),
-                paper_id=str(document.id),
+                document_id=str(document.id),
                 sections=sections,
             )
             if not chunks:
                 raise ValueError("Chunking produced no chunks")
 
             # Stage 3: embed.
-            job.stage = "embed"
+            mark_stage("embed")
             texts = [c.text for c in chunks]
             embeddings = await self.embeddings_provider.embed_passages(texts=texts, batch_size=50)
             if len(embeddings) != len(chunks):
-                raise ValueError(
-                    f"Embedding count mismatch: {len(embeddings)} != {len(chunks)}"
-                )
+                raise ValueError(f"Embedding count mismatch: {len(embeddings)} != {len(chunks)}")
 
             # Stage 4: index into OpenSearch (reusing the hybrid index).
-            job.stage = "index"
+            mark_stage("index")
             index_payload = self._build_index_payload(document, knowledge_base, chunks, embeddings)
             index_result = self.opensearch_client.bulk_index_chunks(index_payload)
             indexed = index_result.get("success", 0) if isinstance(index_result, dict) else 0
@@ -158,11 +164,8 @@ class IngestionService:
         payload = []
         for chunk, embedding in zip(chunks, embeddings):
             chunk_data = {
-                # Reuse the proven hybrid-index fields; map generic doc ids on.
-                "arxiv_id": str(document.id),
-                "paper_id": str(document.id),
-                "knowledge_base_id": str(document.knowledge_base_id),
                 "document_id": str(document.id),
+                "knowledge_base_id": str(document.knowledge_base_id),
                 "chunk_index": chunk.metadata.chunk_index,
                 "chunk_text": chunk.text,
                 "chunk_word_count": chunk.metadata.word_count,

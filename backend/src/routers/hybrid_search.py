@@ -46,17 +46,14 @@ async def hybrid_search(
         for hit in results.get("hits", []):
             hits.append(
                 SearchHit(
-                    arxiv_id=hit.get("arxiv_id", ""),
+                    document_id=hit.get("document_id", ""),
+                    knowledge_base_id=hit.get("knowledge_base_id"),
                     title=hit.get("title", ""),
-                    authors=hit.get("authors"),
-                    abstract=hit.get("abstract"),
-                    published_date=hit.get("published_date"),
-                    pdf_url=hit.get("pdf_url"),
                     score=hit.get("score", 0.0),
                     highlights=hit.get("highlights"),
                     chunk_text=hit.get("chunk_text"),
                     chunk_id=hit.get("chunk_id"),
-                    section_name=hit.get("section_name"),
+                    section_title=hit.get("section_title"),
                 )
             )
 

@@ -82,6 +82,6 @@ async def test_search_endpoint_all_parameters(client):
     assert isinstance(data["hits"], list)
 
     for hit in data["hits"]:
-        assert "arxiv_id" in hit
+        assert "document_id" in hit
         assert "title" in hit
         assert "score" in hit

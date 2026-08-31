@@ -91,10 +91,10 @@ export default function ProvidersPage() {
                       <div className="flex justify-end gap-2">
                         <button
                           className="btn btn-secondary"
-                          disabled={test.isPending}
+                          disabled={test.isPending && test.variables === p.id}
                           onClick={() => test.mutate(p.id)}
                         >
-                          Test
+                          {test.isPending && test.variables === p.id ? "Testing…" : "Test"}
                         </button>
                         <button
                           className="btn btn-danger"
@@ -118,20 +118,25 @@ export default function ProvidersPage() {
   );
 }
 
+const EMPTY_PROVIDER: ProviderCreate = {
+  name: "",
+  kind: "llm",
+  provider_type: "ollama",
+  endpoint: "http://ollama:11434",
+  model: "",
+  enabled: true,
+};
+
 function CreateProviderModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState<ProviderCreate>({
-    name: "",
-    kind: "llm",
-    provider_type: "ollama",
-    endpoint: "http://ollama:11434",
-    model: "",
-    enabled: true,
-  });
+  const [form, setForm] = useState<ProviderCreate>(EMPTY_PROVIDER);
   const create = useMutation({
     mutationFn: providersApi.create,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["providers"] });
+      // Reset, or reopening the modal shows the provider just created and a
+      // second Save silently duplicates it.
+      setForm(EMPTY_PROVIDER);
       onClose();
     },
   });

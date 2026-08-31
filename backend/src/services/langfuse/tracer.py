@@ -51,7 +51,7 @@ class RAGTracer:
             if span:
                 span.end()
 
-    def end_search(self, span, chunks: List[Dict], arxiv_ids: List[str], total_hits: int):
+    def end_search(self, span, chunks: List[Dict], document_ids: List[str], total_hits: int):
         """End search span with essential results."""
         if not span:
             return
@@ -60,9 +60,9 @@ class RAGTracer:
             span=span,
             output={
                 "chunks_returned": len(chunks),
-                "unique_papers": len(set(arxiv_ids)),
+                "unique_documents": len(set(document_ids)),
                 "total_hits": total_hits,
-                "arxiv_ids": list(set(arxiv_ids)),
+                "document_ids": list(set(document_ids)),
             },
         )
 

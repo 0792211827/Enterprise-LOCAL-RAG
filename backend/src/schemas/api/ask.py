@@ -10,12 +10,12 @@ class AskRequest(BaseModel):
     top_k: int = Field(3, description="Number of top chunks to retrieve", ge=1, le=10)
     use_hybrid: bool = Field(True, description="Use hybrid search (BM25 + vector)")
     model: str = Field("llama3.2:1b", description="Ollama model to use for generation")
-    categories: Optional[List[str]] = Field(None, description="Filter by arXiv categories")
+    categories: Optional[List[str]] = Field(None, description="Filter by document categories")
 
     class Config:
         json_schema_extra = {
             "example": {
-                "query": "What are transformers in machine learning?",
+                "query": "How many days of annual leave do employees accrue?",
                 "top_k": 3,
                 "use_hybrid": True,
                 "model": "llama3.2:1b",
@@ -36,9 +36,9 @@ class AskResponse(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "query": "What are transformers in machine learning?",
-                "answer": "Transformers are a neural network architecture...",
-                "sources": ["https://arxiv.org/pdf/1706.03762.pdf", "https://arxiv.org/pdf/1810.04805.pdf"],
+                "query": "How many days of annual leave do employees accrue?",
+                "answer": "Employees accrue 25 days of paid annual leave per calendar year...",
+                "sources": ["Employee Handbook", "Travel and Expenses Policy"],
                 "chunks_used": 3,
                 "search_mode": "hybrid",
             }
@@ -56,13 +56,13 @@ class AgenticAskResponse(AskResponse):
     class Config:
         json_schema_extra = {
             "example": {
-                "query": "What are transformers in machine learning?",
-                "answer": "Transformers are neural network architectures...",
-                "sources": ["https://arxiv.org/pdf/1706.03762.pdf"],
+                "query": "How many days of annual leave do employees accrue?",
+                "answer": "Employees accrue 25 days of paid annual leave per calendar year...",
+                "sources": ["Employee Handbook"],
                 "chunks_used": 3,
                 "search_mode": "hybrid",
                 "reasoning_steps": [
-                    "Decided to retrieve relevant papers",
+                    "Decided to retrieve relevant documents",
                     "Retrieved documents from database",
                     "Generated answer from relevant documents",
                 ],

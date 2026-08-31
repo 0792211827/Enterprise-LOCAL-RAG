@@ -55,9 +55,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
             response.raise_for_status()
             return response.json().get("data", [])
 
-    async def generate(
-        self, model: str, prompt: str, stream: bool = False, **kwargs: Any
-    ) -> Optional[Dict[str, Any]]:
+    async def generate(self, model: str, prompt: str, stream: bool = False, **kwargs: Any) -> Optional[Dict[str, Any]]:
         payload = {"model": model, "messages": self._messages(prompt), "stream": False}
         for key in ("temperature", "top_p", "max_tokens"):
             if key in kwargs:
@@ -103,9 +101,14 @@ class OpenAICompatibleLLMProvider(LLMProvider):
                         continue
 
     async def generate_rag_answer(
-        self, query: str, chunks: List[Dict[str, Any]], model: str, use_structured_output: bool = False
+        self,
+        query: str,
+        chunks: List[Dict[str, Any]],
+        model: str,
+        use_structured_output: bool = False,
+        system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
-        prompt = self.prompt_builder.create_rag_prompt(query, chunks)
+        prompt = self.prompt_builder.create_rag_prompt(query, chunks, system_prompt=system_prompt)
         response = await self.generate(model=model, prompt=prompt, temperature=0.7, top_p=0.9)
         answer_text = response["response"] if response else ""
         return {
@@ -116,8 +119,12 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         }
 
     async def generate_rag_answer_stream(
-        self, query: str, chunks: List[Dict[str, Any]], model: str
+        self,
+        query: str,
+        chunks: List[Dict[str, Any]],
+        model: str,
+        system_prompt: Optional[str] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        prompt = self.prompt_builder.create_rag_prompt(query, chunks)
+        prompt = self.prompt_builder.create_rag_prompt(query, chunks, system_prompt=system_prompt)
         async for chunk in self.generate_stream(model=model, prompt=prompt, temperature=0.7, top_p=0.9):
             yield chunk

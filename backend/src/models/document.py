@@ -16,9 +16,8 @@ def _utcnow() -> datetime:
 class Document(Base):
     """A generic enterprise document belonging to a knowledge base.
 
-    Replaces the arXiv-specific ``Paper`` model with a source-agnostic
-    abstraction that supports PDFs, DOCX, TXT, HTML, images, and other types
-    through the extensible ingestion pipeline.
+    A source-agnostic abstraction that supports PDFs, DOCX, TXT, HTML, images
+    and other types through the extensible ingestion pipeline.
     """
 
     __tablename__ = "documents"

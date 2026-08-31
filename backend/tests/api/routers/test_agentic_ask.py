@@ -14,7 +14,7 @@ def mock_agentic_rag_service():
     service.ask = AsyncMock(return_value={
         "query": "What is machine learning?",
         "answer": "Machine learning is a subset of AI that enables systems to learn from data.",
-        "sources": ["https://arxiv.org/pdf/2301.00001.pdf"],
+        "sources": ["Employee Handbook"],
         "reasoning_steps": [
             "Validated query is about AI research",
             "Retrieved 3 relevant papers",
@@ -124,8 +124,8 @@ class TestAgenticAskEndpoint:
         mock_agentic_rag_service.ask = AsyncMock(return_value={
             "query": "What is transformer architecture?",
             "answer": "Transformers use self-attention mechanisms.",
-            "sources": ["https://arxiv.org/pdf/1706.03762.pdf"],
-            "reasoning_steps": ["Retrieved papers", "Generated answer"],
+            "sources": ["Employee Handbook"],
+            "reasoning_steps": ["Retrieved documents", "Generated answer"],
             "retrieval_attempts": 1,
             "rewritten_query": None,
         })
@@ -138,7 +138,7 @@ class TestAgenticAskEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert len(data["sources"]) == 1
-        assert "1706.03762" in data["sources"][0]
+        assert "Employee Handbook" in data["sources"][0]
 
     def test_ask_agentic_reasoning_steps(self, client, mock_agentic_rag_service):
         """Test that reasoning steps are included in response."""

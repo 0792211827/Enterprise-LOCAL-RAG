@@ -84,19 +84,22 @@ export default function RetrievalPage() {
   );
 }
 
+const EMPTY_CONFIG: Partial<RetrievalConfig> & { name: string } = {
+  name: "",
+  mode: "hybrid",
+  top_k: 8,
+  hybrid_size_multiplier: 2,
+  rrf_rank_constant: 60,
+};
+
 function CreateConfigModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState<Partial<RetrievalConfig> & { name: string }>({
-    name: "",
-    mode: "hybrid",
-    top_k: 8,
-    hybrid_size_multiplier: 2,
-    rrf_rank_constant: 60,
-  });
+  const [form, setForm] = useState<Partial<RetrievalConfig> & { name: string }>(EMPTY_CONFIG);
   const create = useMutation({
     mutationFn: retrievalApi.create,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["retrieval"] });
+      setForm(EMPTY_CONFIG);
       onClose();
     },
   });

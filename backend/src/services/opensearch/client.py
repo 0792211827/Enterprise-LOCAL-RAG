@@ -6,10 +6,30 @@ from typing import Any, Dict, List, Optional
 from opensearchpy import OpenSearch
 from src.config import Settings
 
-from .index_config_hybrid import ARXIV_PAPERS_CHUNKS_MAPPING, HYBRID_RRF_PIPELINE
+from .index_config_hybrid import DOCUMENT_CHUNKS_MAPPING, HYBRID_RRF_PIPELINE
 from .query_builder import QueryBuilder
 
 logger = logging.getLogger(__name__)
+
+
+# The chunk index uses the nmslib k-NN engine (see index_config_hybrid.py).
+# OpenSearch only does efficient *pre*-filtering for the faiss and lucene
+# engines; with nmslib a filter wrapped around a knn clause is applied as a
+# *post*-filter -- ANN returns the global top-k first, then the filter discards
+# everything outside the requested knowledge bases. A narrowly-scoped search can
+# therefore come back empty even though matching chunks exist. Oversampling k
+# when a filter is present keeps enough candidates alive to survive it.
+#
+# The durable fix is "engine": "lucene" in the mapping plus a full reindex.
+KNN_FILTER_OVERSAMPLE = 10
+KNN_MAX_CANDIDATES = 1000
+
+
+def knn_k(size: int, filter_clause: Any) -> int:
+    """Return the k to request from ANN, oversampling when post-filtering."""
+    if not filter_clause:
+        return size
+    return min(size * KNN_FILTER_OVERSAMPLE, KNN_MAX_CANDIDATES)
 
 
 class OpenSearchClient:
@@ -78,7 +98,7 @@ class OpenSearchClient:
                 logger.info(f"Deleted existing hybrid index: {self.index_name}")
 
             if not self.client.indices.exists(index=self.index_name):
-                self.client.indices.create(index=self.index_name, body=ARXIV_PAPERS_CHUNKS_MAPPING)
+                self.client.indices.create(index=self.index_name, body=DOCUMENT_CHUNKS_MAPPING)
                 logger.info(f"Created hybrid index: {self.index_name}")
                 return True
 
@@ -133,13 +153,18 @@ class OpenSearchClient:
         return self._search_bm25_only(query=query, size=size, from_=from_, categories=categories, latest=latest)
 
     def search_chunks_vector(
-        self, query_embedding: List[float], size: int = 10, categories: Optional[List[str]] = None
+        self,
+        query_embedding: List[float],
+        size: int = 10,
+        categories: Optional[List[str]] = None,
+        knowledge_base_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Pure vector search on chunks.
 
         :param query_embedding: Query embedding vector
         :param size: Number of results
         :param categories: Optional category filter
+        :param knowledge_base_ids: Restrict results to these knowledge bases
         :returns: Search results
         """
         try:
@@ -147,10 +172,12 @@ class OpenSearchClient:
             filter_clause = []
             if categories:
                 filter_clause.append({"terms": {"categories": categories}})
+            if knowledge_base_ids:
+                filter_clause.append({"terms": {"knowledge_base_id": knowledge_base_ids}})
 
             search_body = {
                 "size": size,
-                "query": {"knn": {"embedding": {"vector": query_embedding, "k": size}}},
+                "query": {"knn": {"embedding": {"vector": query_embedding, "k": knn_k(size, filter_clause)}}},
                 "_source": {"excludes": ["embedding"]},
             }
 
@@ -183,6 +210,7 @@ class OpenSearchClient:
         latest: bool = False,
         use_hybrid: bool = True,
         min_score: float = 0.0,
+        knowledge_base_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Unified search method supporting BM25, vector, and hybrid modes.
 
@@ -194,16 +222,29 @@ class OpenSearchClient:
         :param latest: Sort by date instead of relevance
         :param use_hybrid: If True and embedding provided, use hybrid search
         :param min_score: Minimum score threshold
+        :param knowledge_base_ids: Restrict results to these knowledge bases
         :returns: Search results
         """
         try:
             # If no embedding provided or hybrid disabled, use BM25 only
             if not query_embedding or not use_hybrid:
-                return self._search_bm25_only(query=query, size=size, from_=from_, categories=categories, latest=latest)
+                return self._search_bm25_only(
+                    query=query,
+                    size=size,
+                    from_=from_,
+                    categories=categories,
+                    latest=latest,
+                    knowledge_base_ids=knowledge_base_ids,
+                )
 
             # Use native OpenSearch hybrid search with RRF pipeline
             return self._search_hybrid_native(
-                query=query, query_embedding=query_embedding, size=size, categories=categories, min_score=min_score
+                query=query,
+                query_embedding=query_embedding,
+                size=size,
+                categories=categories,
+                min_score=min_score,
+                knowledge_base_ids=knowledge_base_ids,
             )
 
         except Exception as e:
@@ -211,7 +252,13 @@ class OpenSearchClient:
             return {"total": 0, "hits": []}
 
     def _search_bm25_only(
-        self, query: str, size: int, from_: int, categories: Optional[List[str]], latest: bool
+        self,
+        query: str,
+        size: int,
+        from_: int,
+        categories: Optional[List[str]],
+        latest: bool,
+        knowledge_base_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Pure BM25 search implementation."""
         builder = QueryBuilder(
@@ -221,6 +268,7 @@ class OpenSearchClient:
             categories=categories,
             latest_papers=latest,
             search_chunks=True,  # Enable chunk search mode
+            knowledge_base_ids=knowledge_base_ids,
         )
         search_body = builder.build()
 
@@ -242,17 +290,37 @@ class OpenSearchClient:
         return results
 
     def _search_hybrid_native(
-        self, query: str, query_embedding: List[float], size: int, categories: Optional[List[str]], min_score: float
+        self,
+        query: str,
+        query_embedding: List[float],
+        size: int,
+        categories: Optional[List[str]],
+        min_score: float,
+        knowledge_base_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Native OpenSearch hybrid search with RRF pipeline."""
         builder = QueryBuilder(
-            query=query, size=size * 2, from_=0, categories=categories, latest_papers=False, search_chunks=True
+            query=query,
+            size=size * 2,
+            from_=0,
+            categories=categories,
+            latest_papers=False,
+            search_chunks=True,
+            knowledge_base_ids=knowledge_base_ids,
         )
         bm25_search_body = builder.build()
 
         bm25_query = bm25_search_body["query"]
 
-        hybrid_query = {"hybrid": {"queries": [bm25_query, {"knn": {"embedding": {"vector": query_embedding, "k": size * 2}}}]}}
+        # RRF fuses two independent legs. The BM25 leg is filtered by the query
+        # builder, but the kNN leg is raw -- without the same filter, chunks from
+        # other knowledge bases still surface through the vector side.
+        kb_filter = [{"terms": {"knowledge_base_id": knowledge_base_ids}}] if knowledge_base_ids else []
+        knn_query: Dict[str, Any] = {"knn": {"embedding": {"vector": query_embedding, "k": knn_k(size * 2, kb_filter)}}}
+        if kb_filter:
+            knn_query = {"bool": {"must": [knn_query], "filter": kb_filter}}
+
+        hybrid_query = {"hybrid": {"queries": [bm25_query, knn_query]}}
 
         search_body = {
             "size": size,
@@ -292,10 +360,16 @@ class OpenSearchClient:
         size: int = 10,
         categories: Optional[List[str]] = None,
         min_score: float = 0.0,
+        knowledge_base_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Hybrid search combining BM25 and vector similarity using native RRF."""
         return self._search_hybrid_native(
-            query=query, query_embedding=query_embedding, size=size, categories=categories, min_score=min_score
+            query=query,
+            query_embedding=query_embedding,
+            size=size,
+            categories=categories,
+            min_score=min_score,
+            knowledge_base_ids=knowledge_base_ids,
         )
 
     def index_chunk(self, chunk_data: Dict[str, Any], embedding: List[float]) -> bool:
@@ -342,34 +416,34 @@ class OpenSearchClient:
             logger.error(f"Bulk chunk indexing error: {e}")
             raise
 
-    def delete_paper_chunks(self, arxiv_id: str) -> bool:
-        """Delete all chunks for a specific paper.
+    def delete_document_chunks(self, document_id: str) -> bool:
+        """Delete all chunks for a specific document.
 
-        :param arxiv_id: ArXiv ID of the paper
+        :param document_id: Identifier of the source document
         :returns: True if deletion was successful
         """
         try:
             response = self.client.delete_by_query(
-                index=self.index_name, body={"query": {"term": {"arxiv_id": arxiv_id}}}, refresh=True
+                index=self.index_name, body={"query": {"term": {"document_id": document_id}}}, refresh=True
             )
 
             deleted = response.get("deleted", 0)
-            logger.info(f"Deleted {deleted} chunks for paper {arxiv_id}")
+            logger.info(f"Deleted {deleted} chunks for document {document_id}")
             return deleted > 0
 
         except Exception as e:
             logger.error(f"Error deleting chunks: {e}")
             return False
 
-    def get_chunks_by_paper(self, arxiv_id: str) -> List[Dict[str, Any]]:
-        """Get all chunks for a specific paper.
+    def get_chunks_by_document(self, document_id: str) -> List[Dict[str, Any]]:
+        """Get all chunks for a specific document.
 
-        :param arxiv_id: ArXiv ID of the paper
+        :param document_id: Identifier of the source document
         :returns: List of chunks sorted by chunk_index
         """
         try:
             search_body = {
-                "query": {"term": {"arxiv_id": arxiv_id}},
+                "query": {"term": {"document_id": document_id}},
                 "size": 1000,
                 "sort": [{"chunk_index": "asc"}],
                 "_source": {"excludes": ["embedding"]},

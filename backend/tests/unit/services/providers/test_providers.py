@@ -81,10 +81,11 @@ class TestGenericCitations:
         ]
         assert build_sources(chunks) == ["https://intranet/doc1", "Doc 2"]
 
-    def test_no_arxiv_assumption(self):
-        # Falls back gracefully across generic identifiers; never fabricates URLs.
-        chunks = [{"document_id": "kb-42"}, {"arxiv_id": "1706.03762"}]
-        assert build_citations(chunks) == ["kb-42", "1706.03762"]
+    def test_only_generic_identifiers_are_recognised(self):
+        # Falls back across generic identifiers and never fabricates URLs.
+        # Product-specific keys are ignored rather than surfaced as citations.
+        chunks = [{"document_id": "kb-42"}, {"legacy_external_id": "1706.03762"}]
+        assert build_citations(chunks) == ["kb-42"]
 
     def test_empty(self):
         assert build_sources([]) == []

@@ -1,4 +1,5 @@
 """RAG Application management endpoints + test/ask playground."""
+
 from typing import List
 from uuid import UUID
 
@@ -10,11 +11,16 @@ from src.dependencies import (
     SessionDep,
 )
 from src.models.application import RAGApplication
-from src.models.enums import RetrievalMode
 from src.models.provider import ModelConfiguration
 from src.models.retrieval import RetrievalConfiguration
-from src.repositories import ApplicationRepository, ProviderRepository, RetrievalConfigurationRepository
+from src.repositories import (
+    ApiKeyRepository,
+    ApplicationRepository,
+    ProviderRepository,
+    RetrievalConfigurationRepository,
+)
 from src.repositories.knowledge_base import KnowledgeBaseRepository
+from src.routers.knowledge_bases import refresh_counts
 from src.schemas.api.domain import (
     ApplicationAskRequest,
     ApplicationAskResponse,
@@ -23,15 +29,28 @@ from src.schemas.api.domain import (
     ApplicationUpdate,
     RetrievedSource,
 )
+from src.services.applications import answer_for_application
 from src.services.slug import slugify
 
 router = APIRouter(prefix="/api/v1/applications", tags=["applications"])
 
 
+def _with_fresh_kb_counts(application, session):
+    """Refresh the nested knowledge-base counters before serialisation.
+
+    The admin UI's readiness strip keys "Knowledge indexed" off these, so
+    serving the raw (never-decremented) columns reports an assistant as ready
+    when its knowledge base has been emptied.
+    """
+    for kb in application.knowledge_bases:
+        refresh_counts(kb, session)
+    return application
+
+
 @router.get("", response_model=List[ApplicationResponse])
 def list_applications(session: SessionDep, limit: int = 100, offset: int = 0):
     repo = ApplicationRepository(session)
-    return repo.get_all(limit=limit, offset=offset)
+    return [_with_fresh_kb_counts(a, session) for a in repo.get_all(limit=limit, offset=offset)]
 
 
 @router.post("", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED)
@@ -84,7 +103,12 @@ def create_application(payload: ApplicationCreate, session: SessionDep):
     application = repo.create(application)
     if payload.knowledge_base_ids:
         repo.set_knowledge_bases(application, payload.knowledge_base_ids)
-    return application
+
+    # Provision a default key up front so the caller leaves creation with a
+    # usable endpoint. The plaintext is attached transiently and returned once.
+    _, raw_key = ApiKeyRepository(session).create(application.id, name="Default key")
+    application.api_key = raw_key
+    return _with_fresh_kb_counts(application, session)
 
 
 @router.get("/{application_id}", response_model=ApplicationResponse)
@@ -93,7 +117,7 @@ def get_application(application_id: UUID, session: SessionDep):
     application = repo.get_by_id(application_id)
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
-    return application
+    return _with_fresh_kb_counts(application, session)
 
 
 @router.patch("/{application_id}", response_model=ApplicationResponse)
@@ -110,7 +134,7 @@ def update_application(application_id: UUID, payload: ApplicationUpdate, session
     application = repo.update(application, data)
     if kb_ids is not None:
         repo.set_knowledge_bases(application, kb_ids)
-    return application
+    return _with_fresh_kb_counts(application, session)
 
 
 @router.delete("/{application_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -142,47 +166,14 @@ async def ask_application(
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    retrieval_cfg = application.retrieval_configuration
-    model_cfg = application.model_configuration
-    mode = retrieval_cfg.mode if retrieval_cfg else RetrievalMode.HYBRID.value
-    top_k = payload.top_k or (retrieval_cfg.top_k if retrieval_cfg else 8)
-    model = model_cfg.llm_model if model_cfg else "llama3.2:1b"
-    min_score = (retrieval_cfg.score_threshold if retrieval_cfg else None) or 0.0
-
-    # Retrieval (respecting configured mode/top_k). The current OpenSearch
-    # client indexes all knowledge bases in one hybrid index; per-KB isolation
-    # is a documented limitation (see engineering report).
-    if mode == RetrievalMode.BM25.value:
-        results = opensearch.search_unified(
-            query=payload.query, size=top_k, use_hybrid=False, min_score=min_score
-        )
-    elif mode == RetrievalMode.VECTOR.value:
-        query_vector = await embeddings.embed_query(payload.query)
-        results = opensearch.search_chunks_vector(query_embedding=query_vector, size=top_k)
-    else:  # hybrid
-        query_vector = await embeddings.embed_query(payload.query)
-        results = opensearch.search_unified(
-            query=payload.query,
-            query_embedding=query_vector,
-            size=top_k,
-            use_hybrid=True,
-            min_score=min_score,
-        )
-    hits = results.get("hits", []) if isinstance(results, dict) else []
-
-    chunks = [
-        {
-            "chunk_text": h.get("chunk_text", ""),
-            "title": h.get("title", ""),
-            "score": h.get("score", 0.0),
-            "document_id": h.get("document_id"),
-            "section_title": h.get("section_title"),
-        }
-        for h in hits
-    ]
-
-    generation = await llm.generate_rag_answer(query=payload.query, chunks=chunks, model=model)
-    answer = generation.get("answer", "") if isinstance(generation, dict) else str(generation)
+    result = await answer_for_application(
+        application=application,
+        query=payload.query,
+        opensearch=opensearch,
+        embeddings=embeddings,
+        llm=llm,
+        top_k_override=payload.top_k,
+    )
 
     sources = [
         RetrievedSource(
@@ -191,15 +182,15 @@ async def ask_application(
             chunk_text=h.get("chunk_text", ""),
             score=float(h.get("score", 0.0)),
             section_title=h.get("section_title"),
-            retrieval_method=mode,
+            retrieval_method=result.mode,
         )
-        for h in hits
+        for h in result.hits
     ]
 
     return ApplicationAskResponse(
         query=payload.query,
-        answer=answer,
+        answer=result.answer,
         sources=sources if application.citations_enabled else [],
-        search_mode=mode,
-        chunks_used=len(chunks),
+        search_mode=result.mode,
+        chunks_used=len(result.chunks),
     )

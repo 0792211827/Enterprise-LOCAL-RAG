@@ -10,7 +10,8 @@ import {
   StatusBadge,
 } from "@/components/ui";
 import { applicationsApi } from "@/lib/api/resources";
-import type { ApplicationAskResponse } from "@/lib/api/types";
+import type { Application, ApplicationAskResponse } from "@/lib/api/types";
+import { EndpointPanel, ReadinessStrip, useReadinessChecks } from "./EndpointPanel";
 
 interface Turn {
   query: string;
@@ -21,8 +22,18 @@ interface Turn {
 export default function ApplicationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const app = useQuery({ queryKey: ["app", id], queryFn: () => applicationsApi.get(id) });
+
+  if (app.isLoading) return <LoadingState />;
+  if (app.isError) return <ErrorState message={(app.error as Error).message} />;
+  return <ApplicationDetail app={app.data!} />;
+}
+
+function ApplicationDetail({ app: a }: { app: Application }) {
+  const id = a.id;
   const [turns, setTurns] = useState<Turn[]>([]);
   const [query, setQuery] = useState("");
+  const checks = useReadinessChecks(a);
+  const ready = checks.every((c) => c.ok);
 
   const ask = useMutation({
     mutationFn: (q: string) => applicationsApi.ask(id, q),
@@ -36,10 +47,6 @@ export default function ApplicationDetailPage() {
       ),
   });
 
-  if (app.isLoading) return <LoadingState />;
-  if (app.isError) return <ErrorState message={(app.error as Error).message} />;
-  const a = app.data!;
-
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
@@ -51,9 +58,11 @@ export default function ApplicationDetailPage() {
   return (
     <div>
       <Link href="/applications" className="text-sm text-brand-600">
-        ← RAG Applications
+        ← Assistants
       </Link>
       <PageHeader title={a.name} description={a.description || undefined} />
+
+      <ReadinessStrip app={a} checks={checks} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <section className="card p-5 lg:col-span-1">
@@ -157,6 +166,8 @@ export default function ApplicationDetailPage() {
           </form>
         </section>
       </div>
+
+      <EndpointPanel app={a} ready={ready} />
     </div>
   );
 }

@@ -20,5 +20,4 @@ class TextChunk(BaseModel):
 
     text: str
     metadata: ChunkMetadata
-    arxiv_id: str
-    paper_id: str
+    document_id: str

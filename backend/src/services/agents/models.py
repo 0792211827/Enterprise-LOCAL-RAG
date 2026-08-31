@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -28,26 +28,23 @@ class GradeDocuments(BaseModel):
 class SourceItem(BaseModel):
     """Source item from retrieved documents.
 
-    :param arxiv_id: arXiv paper ID
-    :param title: Paper title
-    :param authors: List of authors
-    :param url: Link to the paper
+    :param document_id: Identifier of the source document
+    :param title: Document title
+    :param section: Section the excerpt came from, when known
     :param relevance_score: Relevance score from retrieval
     """
 
-    arxiv_id: str = Field(description="arXiv paper ID")
-    title: str = Field(description="Paper title")
-    authors: List[str] = Field(default_factory=list, description="List of authors")
-    url: str = Field(description="Link to paper")
+    document_id: str = Field(default="", description="Identifier of the source document")
+    title: str = Field(default="", description="Document title")
+    section: str = Field(default="", description="Section the excerpt came from")
     relevance_score: float = Field(default=0.0, description="Relevance score from search")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
-            "arxiv_id": self.arxiv_id,
+            "document_id": self.document_id,
             "title": self.title,
-            "authors": self.authors,
-            "url": self.url,
+            "section": self.section,
             "relevance_score": self.relevance_score,
         }
 

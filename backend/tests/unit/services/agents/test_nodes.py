@@ -70,7 +70,7 @@ class TestRetrieveNode:
         assert "messages" in result
         assert isinstance(result["messages"][0], AIMessage)
         assert len(result["messages"][0].tool_calls) > 0
-        assert result["messages"][0].tool_calls[0]["name"] == "retrieve_papers"
+        assert result["messages"][0].tool_calls[0]["name"] == "retrieve_documents"
 
     @pytest.mark.asyncio
     async def test_retrieve_max_attempts_reached(self, test_context, sample_human_message):
