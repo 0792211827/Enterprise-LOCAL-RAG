@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from src.dependencies import AgenticRAGDep, LangfuseDep
+from src.dependencies import AgenticRAGDep, LangfuseDep, PrincipalDep
 from src.schemas.api.ask import AgenticAskResponse, AskRequest, FeedbackRequest, FeedbackResponse
 
 router = APIRouter(prefix="/api/v1", tags=["agentic-rag"])
@@ -9,6 +9,7 @@ router = APIRouter(prefix="/api/v1", tags=["agentic-rag"])
 async def ask_agentic(
     request: AskRequest,
     agentic_rag: AgenticRAGDep,
+    principal: PrincipalDep,
 ) -> AgenticAskResponse:
     """
     Agentic RAG endpoint with intelligent retrieval and query refinement.
@@ -40,6 +41,7 @@ async def ask_agentic(
         result = await agentic_rag.ask(
             query=request.query,
             model=request.model,
+            user_id=principal.subject,
         )
 
         return AgenticAskResponse(

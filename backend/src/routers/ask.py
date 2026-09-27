@@ -5,7 +5,7 @@ from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from src.dependencies import CacheDep, EmbeddingsDep, LangfuseDep, OllamaDep, OpenSearchDep
+from src.dependencies import CacheDep, EmbeddingsDep, LangfuseDep, OllamaDep, OpenSearchDep, PrincipalDep
 from src.schemas.api.ask import AskRequest, AskResponse
 from src.services.langfuse.tracer import RAGTracer
 
@@ -90,13 +90,14 @@ async def ask_question(
     ollama_client: OllamaDep,
     langfuse_tracer: LangfuseDep,
     cache_client: CacheDep,
+    principal: PrincipalDep,
 ) -> AskResponse:
     """Clean RAG endpoint with essential tracing and exact match caching."""
 
     rag_tracer = RAGTracer(langfuse_tracer)
     start_time = time.time()
 
-    with rag_tracer.trace_request("api_user", request.query) as trace:
+    with rag_tracer.trace_request(principal.subject, request.query) as trace:
         try:
             # Check exact cache first
             cached_response = None
@@ -181,14 +182,18 @@ async def ask_question_stream(
     ollama_client: OllamaDep,
     langfuse_tracer: LangfuseDep,
     cache_client: CacheDep,
+    principal: PrincipalDep,
 ) -> StreamingResponse:
     """Clean streaming RAG endpoint."""
+
+    # Resolved to a plain value now: the generator runs after the handler returns.
+    subject = principal.subject
 
     async def generate_stream():
         rag_tracer = RAGTracer(langfuse_tracer)
         start_time = time.time()
 
-        with rag_tracer.trace_request("api_user", request.query) as trace:
+        with rag_tracer.trace_request(subject, request.query) as trace:
             try:
                 # Check exact cache first
                 if cache_client:
