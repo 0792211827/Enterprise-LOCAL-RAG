@@ -114,3 +114,26 @@ class TestCacheKeys:
         expected = RetrievalScope(kb_ids=frozenset({"kb-a"}), reason="grants").cache_token()
         assert cache.find_cached_response.call_args.args[1] == expected
         assert cache.store_response.call_args.args[2] == expected
+
+
+@pytest.mark.parametrize(
+    "method, path, body",
+    [
+        ("post", "/api/v1/ask", {"query": "q"}),
+        ("post", "/api/v1/stream", {"query": "q"}),
+        ("post", "/api/v1/hybrid-search/", {"query": "q"}),
+        ("post", "/api/v1/hybrid-search/", {"query": "q", "use_hybrid": False}),
+    ],
+)
+async def test_no_unscoped_search_under_a_restricted_scope(client, with_scope, method, path, body):
+    """Invariant: once a caller is restricted, no search call may be global."""
+    os_client = main.app.state.opensearch_client
+    with_scope("kb-a")
+    await getattr(client, method)(path, json=body)
+    calls = (
+        os_client.search_unified.call_args_list
+        + os_client.search_chunks_vector.call_args_list
+        + os_client.search_chunks_hybrid.call_args_list
+    )
+    assert calls, f"{path} made no search call"
+    assert all(call.kwargs.get("knowledge_base_ids") == ["kb-a"] for call in calls)
