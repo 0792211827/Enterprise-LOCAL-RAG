@@ -239,6 +239,14 @@ class AuthSettings(BaseConfigSettings):
     # retrieval runs with that user's permissions.
     user_token_header: str = "X-User-Authorization"
 
+    # Knowledge-base permissions (apply only when mode is not disabled).
+    # deny: a knowledge base is retrievable only through a matching grant.
+    # allow: knowledge bases with no grants at all stay readable by any querier
+    #        -- a migration aid while grants are being set up.
+    ungranted_kb_access: Literal["deny", "allow"] = "deny"
+    # Whether admins retrieve from every knowledge base regardless of grants.
+    admin_bypass_retrieval: bool = False
+
     @property
     def algorithm_list(self) -> List[str]:
         return split_csv(self.algorithms)

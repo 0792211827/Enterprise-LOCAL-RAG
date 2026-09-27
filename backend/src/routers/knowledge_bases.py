@@ -1,19 +1,23 @@
 """Knowledge Base management endpoints (Admin Control Plane)."""
 
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
+from src.auth import Principal, Role
+from src.config import split_csv
 from src.dependencies import PrincipalDep, SessionDep, SettingsDep
 from src.models.knowledge_base import KnowledgeBase
 from src.repositories import DocumentRepository, GrantRepository, KnowledgeBaseRepository
 from src.schemas.api.domain import (
+    KnowledgeBaseAccessCheck,
     KnowledgeBaseCreate,
     KnowledgeBaseGrantResponse,
     KnowledgeBaseGrantsUpdate,
     KnowledgeBaseResponse,
     KnowledgeBaseUpdate,
 )
+from src.services.access import resolve_scope
 from src.services.slug import slugify
 
 router = APIRouter(prefix="/api/v1/knowledge-bases", tags=["knowledge-bases"])
@@ -58,6 +62,37 @@ def create_knowledge_base(payload: KnowledgeBaseCreate, session: SessionDep, set
         default_top_k=payload.default_top_k,
     )
     return repo.create(kb)
+
+
+# Registered before /{kb_id} so the literal path is not captured as an ID.
+@router.get("/access-check", response_model=KnowledgeBaseAccessCheck)
+def check_access(
+    session: SessionDep,
+    settings: SettingsDep,
+    subject: str = Query(..., min_length=1, description="The caller's subject claim"),
+    groups: Optional[str] = Query(None, description="Comma-separated groups claim values"),
+    roles: Optional[str] = Query(None, description="Comma-separated raw roles claim values"),
+):
+    """Preview which knowledge bases a (hypothetical) querier could retrieve from.
+
+    Evaluates the same resolver the answer paths use, so admins can verify a
+    grant set against an IdP identity before anyone relies on it.
+    """
+    principal = Principal(
+        subject=subject,
+        roles=frozenset({Role.QUERIER}),
+        groups=frozenset(split_csv(groups or "")),
+        raw_roles=frozenset(split_csv(roles or "")),
+        auth_method="jwt",
+    )
+    scope = resolve_scope(principal, session, settings)
+    kbs = KnowledgeBaseRepository(session).get_all(limit=10_000)
+    visible = kbs if scope.is_unrestricted else [kb for kb in kbs if str(kb.id) in scope.kb_ids]
+    return KnowledgeBaseAccessCheck(
+        unrestricted=scope.is_unrestricted,
+        reason=scope.reason,
+        knowledge_bases=[{"id": kb.id, "name": kb.name, "slug": kb.slug} for kb in visible],
+    )
 
 
 @router.get("/{kb_id}", response_model=KnowledgeBaseResponse)

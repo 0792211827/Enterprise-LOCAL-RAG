@@ -107,6 +107,20 @@ class KnowledgeBaseGrantResponse(BaseModel):
     created_by: Optional[str]
 
 
+class KnowledgeBaseRef(BaseModel):
+    id: UUID
+    name: str
+    slug: str
+
+
+class KnowledgeBaseAccessCheck(BaseModel):
+    """What a hypothetical caller could retrieve under the current settings."""
+
+    unrestricted: bool = Field(description="True when no permission filter applies at all")
+    reason: str
+    knowledge_bases: List[KnowledgeBaseRef]
+
+
 # --------------------------------------------------------------------------- #
 # Documents & ingestion
 # --------------------------------------------------------------------------- #

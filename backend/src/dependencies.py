@@ -15,6 +15,7 @@ else:
 from src.auth import Principal, get_principal
 from src.config import Settings
 from src.db.interfaces.base import BaseDatabase
+from src.services.access import RetrievalScope, resolve_scope
 from src.services.agents.agentic_rag import AgenticRAGService
 from src.services.agents.factory import make_agentic_rag_service
 from src.services.cache.client import CacheClient
@@ -148,3 +149,11 @@ def get_agentic_rag_service(
 
 
 AgenticRAGDep = Annotated[AgenticRAGService, Depends(get_agentic_rag_service)]
+
+
+def get_retrieval_scope(principal: PrincipalDep, session: SessionDep, settings: SettingsDep) -> RetrievalScope:
+    """Knowledge bases the caller may retrieve from (resolved once per request)."""
+    return resolve_scope(principal, session, settings)
+
+
+ScopeDep = Annotated[RetrievalScope, Depends(get_retrieval_scope)]
