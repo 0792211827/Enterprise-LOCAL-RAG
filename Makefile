@@ -27,11 +27,18 @@ logs: ## Show service logs
 	docker compose logs -f
 
 # Health checks
+# Override when the API's host port is remapped, e.g. `make health API_PORT=8020`
+# with compose.localports.yml.
+API_PORT ?= 8000
+
+# curl -f fails on HTTP errors and connection refusals; capturing its output
+# first (rather than piping to jq, which exits 0 on empty input) makes the
+# "not responding" fallback actually fire.
 health: ## Check all services health
 	@echo "Checking service health..."
-	@curl -s http://localhost:8000/api/v1/health | jq . || echo "API not responding"
-	@curl -s http://localhost:9200/_cluster/health | jq . || echo "OpenSearch not responding"
-	@curl -s http://localhost:11434/api/version | jq . || echo "Ollama not responding"
+	@out=$$(curl -sf http://localhost:$(API_PORT)/api/v1/health) && echo "$$out" | jq . || echo "API not responding"
+	@out=$$(curl -sf http://localhost:9200/_cluster/health) && echo "$$out" | jq . || echo "OpenSearch not responding"
+	@out=$$(curl -sf http://localhost:11434/api/version) && echo "$$out" | jq . || echo "Ollama not responding"
 
 # Development (backend)
 setup: ## Install Python dependencies
