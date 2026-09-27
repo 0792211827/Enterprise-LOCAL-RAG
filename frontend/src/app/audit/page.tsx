@@ -330,10 +330,10 @@ function ExportButtons({ filters }: { filters: AuditFilters }) {
   return (
     <div className="flex flex-col items-end gap-1">
       <div className="flex gap-2">
-        <button className="btn btn-secondary" disabled={busy !== null} onClick={() => download("csv")}>
+        <button className="btn btn-secondary whitespace-nowrap" disabled={busy !== null} onClick={() => download("csv")}>
           {busy === "csv" ? "Exporting…" : "Export CSV"}
         </button>
-        <button className="btn btn-secondary" disabled={busy !== null} onClick={() => download("ndjson")}>
+        <button className="btn btn-secondary whitespace-nowrap" disabled={busy !== null} onClick={() => download("ndjson")}>
           {busy === "ndjson" ? "Exporting…" : "Export NDJSON"}
         </button>
       </div>
