@@ -127,6 +127,8 @@ def record_query_event(
 
     :param decision: the knowledge-base scope applied; its ``permitted=None``
         is recorded as NULL, meaning unrestricted.
+    :param hits: what retrieval returned; ``None`` (recorded as NULL) means
+        retrieval did not run here, e.g. a cache hit.
     :param outcome: defaults to ``denied``/``ok`` from ``decision``.
     :raises AuditWriteError: only when the write fails and fail_mode is deny.
     """
@@ -151,7 +153,7 @@ def record_query_event(
             requested_kb_ids=decision.requested if decision else None,
             permitted_kb_ids=decision.permitted if decision else None,
             dropped_kb_ids=decision.dropped if decision else None,
-            retrieved=retrieved_from_hits(hits),
+            retrieved=retrieved_from_hits(hits) if hits is not None else None,
             cache_hit=cache_hit,
             model=model,
             query_text=query,

@@ -3,11 +3,22 @@ import logging
 import time
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from src.dependencies import CacheDep, EmbeddingsDep, LangfuseDep, OllamaDep, OpenSearchDep, PrincipalDep, ScopeDep
+from src.dependencies import (
+    AuditDep,
+    CacheDep,
+    EmbeddingsDep,
+    LangfuseDep,
+    OllamaDep,
+    OpenSearchDep,
+    PrincipalDep,
+    ScopeDep,
+)
+from src.models import AuditAction
 from src.schemas.api.ask import AskRequest, AskResponse
 from src.services.access import RetrievalScope
+from src.services.audit import AuditContext, QueryAudit, audited_query, audited_stream
 from src.services.langfuse.tracer import RAGTracer
 
 logger = logging.getLogger(__name__)
@@ -70,13 +81,17 @@ async def _prepare_chunks_and_sources(
             title = hit.get("title", "")
 
             # Minimal chunk data for LLM. The title is what the prompt cites,
-            # so it must travel with the text.
+            # so it must travel with the text. The IDs and score are for the
+            # audit trail; the prompt builder ignores them.
             chunks.append(
                 {
                     "document_id": document_id,
                     "title": title,
                     "section_title": hit.get("section_title", ""),
                     "chunk_text": hit.get("chunk_text", ""),
+                    "chunk_id": hit.get("chunk_id"),
+                    "knowledge_base_id": hit.get("knowledge_base_id"),
+                    "score": hit.get("score"),
                 }
             )
 
@@ -103,6 +118,8 @@ async def ask_question(
     cache_client: CacheDep,
     principal: PrincipalDep,
     scope: ScopeDep,
+    audit_recorder: AuditDep,
+    http_request: Request,
 ) -> AskResponse:
     """Clean RAG endpoint with essential tracing and exact match caching."""
     scope_token = scope.cache_token()
@@ -110,7 +127,14 @@ async def ask_question(
     rag_tracer = RAGTracer(langfuse_tracer)
     start_time = time.time()
 
-    with rag_tracer.trace_request(principal.subject, request.query) as trace:
+    with audited_query(
+        audit_recorder,
+        AuditContext.capture(http_request, principal),
+        action=AuditAction.QUERY_ANSWER.value,
+        query=request.query,
+        decision=scope.restrict(None),
+    ) as audit, rag_tracer.trace_request(principal.subject, request.query) as trace:
+        audit.model, audit.cache_hit = request.model, (False if cache_client else None)
         try:
             # Check exact cache first
             cached_response = None
@@ -119,6 +143,7 @@ async def ask_question(
                     cached_response = await cache_client.find_cached_response(request, scope_token)
                     if cached_response:
                         logger.info("Returning cached response for exact query match")
+                        _audit_cache_hit(audit, cached_response)
                         return cached_response
                 except Exception as e:
                     logger.warning(f"Cache check failed, proceeding with normal flow: {e}")
@@ -131,6 +156,7 @@ async def ask_question(
                 request, opensearch_client, embeddings_service, rag_tracer, trace, scope=scope
             )
 
+            audit.hits = chunks
             if not chunks:
                 response = AskResponse(
                     query=request.query,
@@ -139,6 +165,7 @@ async def ask_question(
                     chunks_used=0,
                     search_mode="bm25" if not request.use_hybrid else "hybrid",
                 )
+                audit.answer = response.answer
                 rag_tracer.end_request(trace, response.answer, time.time() - start_time)
                 return response
 
@@ -160,6 +187,7 @@ async def ask_question(
             with rag_tracer.trace_generation(trace, request.model, final_prompt) as gen_span:
                 rag_response = await ollama_client.generate_rag_answer(query=request.query, chunks=chunks, model=request.model)
                 answer = rag_response.get("answer", "Unable to generate answer")
+                audit.answer = answer
                 rag_tracer.end_generation(gen_span, answer, request.model)
 
             # Prepare response
@@ -197,12 +225,22 @@ async def ask_question_stream(
     cache_client: CacheDep,
     principal: PrincipalDep,
     scope: ScopeDep,
+    audit_recorder: AuditDep,
+    http_request: Request,
 ) -> StreamingResponse:
     """Clean streaming RAG endpoint."""
 
     # Resolved to plain values now: the generator runs after the handler returns.
     subject = principal.subject
     scope_token = scope.cache_token()
+    audit = QueryAudit(
+        audit_recorder,
+        AuditContext.capture(http_request, principal),
+        action=AuditAction.QUERY_ANSWER.value,
+        query=request.query,
+        decision=scope.restrict(None),
+    )
+    audit.model, audit.cache_hit = request.model, (False if cache_client else None)
 
     async def generate_stream():
         rag_tracer = RAGTracer(langfuse_tracer)
@@ -216,6 +254,7 @@ async def ask_question_stream(
                         cached_response = await cache_client.find_cached_response(request, scope_token)
                         if cached_response:
                             logger.info("Returning cached response for exact streaming query match")
+                            _audit_cache_hit(audit, cached_response)
 
                             # Send metadata first (same format as non-cached)
                             metadata_response = {
@@ -240,7 +279,9 @@ async def ask_question_stream(
                     request, opensearch_client, embeddings_service, rag_tracer, trace, scope=scope
                 )
 
+                audit.hits = chunks
                 if not chunks:
+                    audit.answer = "No relevant information found."
                     yield f"data: {json.dumps({'answer': 'No relevant information found.', 'sources': [], 'done': True})}\n\n"
                     return
 
@@ -266,6 +307,7 @@ async def ask_question_stream(
                         if chunk.get("response"):
                             text_chunk = chunk["response"]
                             full_response += text_chunk
+                            audit.answer = full_response
                             yield f"data: {json.dumps({'chunk': text_chunk})}\n\n"
 
                         if chunk.get("done", False):
@@ -292,8 +334,19 @@ async def ask_question_stream(
 
             except Exception as e:
                 logger.error(f"Streaming error: {e}")
+                audit.fail(e)
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
-        generate_stream(), media_type="text/plain", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+        audited_stream(generate_stream(), audit, error_frame=lambda message: f"data: {json.dumps({'error': message})}\n\n"),
+        media_type="text/plain",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )
+
+
+def _audit_cache_hit(audit: QueryAudit, cached: AskResponse) -> None:
+    """A cached answer was retrieved by an earlier (audited) request; record
+    what it cites rather than claiming a retrieval that did not happen."""
+    audit.cache_hit = True
+    audit.answer = cached.answer
+    audit.details = {"cached_sources": list(cached.sources)}

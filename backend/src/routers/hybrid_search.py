@@ -1,8 +1,10 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
-from src.dependencies import EmbeddingsDep, OpenSearchDep, ScopeDep
+from fastapi import APIRouter, HTTPException, Request
+from src.dependencies import AuditDep, EmbeddingsDep, OpenSearchDep, ScopeDep
+from src.models import AuditAction
 from src.schemas.api.search import HybridSearchRequest, SearchHit, SearchResponse
+from src.services.audit import AuditContext, audited_query
 
 logger = logging.getLogger(__name__)
 
@@ -11,14 +13,32 @@ router = APIRouter(prefix="/hybrid-search", tags=["hybrid-search"])
 
 @router.post("/", response_model=SearchResponse)
 async def hybrid_search(
-    request: HybridSearchRequest, opensearch_client: OpenSearchDep, embeddings_service: EmbeddingsDep, scope: ScopeDep
+    request: HybridSearchRequest,
+    opensearch_client: OpenSearchDep,
+    embeddings_service: EmbeddingsDep,
+    scope: ScopeDep,
+    audit_recorder: AuditDep,
+    http_request: Request,
 ) -> SearchResponse:
     """
     Hybrid search endpoint supporting multiple search modes.
 
     Results are limited to the knowledge bases the caller may read.
     """
-    kb_ids = scope.restrict(None).permitted
+    decision = scope.restrict(None)
+    with audited_query(
+        audit_recorder,
+        AuditContext.capture(http_request),
+        action=AuditAction.QUERY_SEARCH.value,
+        query=request.query,
+        decision=decision,
+    ) as audit:
+        response = await _search(request, opensearch_client, embeddings_service, decision.permitted)
+        audit.hits = [hit.model_dump() for hit in response.hits]
+        return response
+
+
+async def _search(request, opensearch_client, embeddings_service, kb_ids) -> SearchResponse:
     try:
         if not opensearch_client.health_check():
             raise HTTPException(status_code=503, detail="Search service is currently unavailable")
