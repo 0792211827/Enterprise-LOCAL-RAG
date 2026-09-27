@@ -15,6 +15,11 @@ from src.config import Settings
 from src.models import KnowledgeBase
 from src.repositories import GrantRepository
 
+NO_ACCESSIBLE_KNOWLEDGE_MESSAGE = (
+    "You don't have access to any knowledge bases, so there is nothing to answer "
+    "from. Ask an administrator for access."
+)
+
 
 @dataclass(frozen=True)
 class ScopeDecision:

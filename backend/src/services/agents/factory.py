@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 from src.services.langfuse.client import LangfuseTracer
 from src.services.ollama.client import OllamaClient
@@ -17,6 +17,7 @@ def make_agentic_rag_service(
     model: Optional[str] = None,
     top_k: int = 3,
     use_hybrid: bool = True,
+    knowledge_base_ids: Optional[List[str]] = None,
 ) -> AgenticRAGService:
     """
     Create AgenticRAGService with dependency injection.
@@ -29,6 +30,8 @@ def make_agentic_rag_service(
         model: Default LLM model for graph nodes (default: GraphConfig's default)
         top_k: Number of documents to retrieve (default: 3)
         use_hybrid: Use hybrid search (default: True)
+        knowledge_base_ids: Knowledge bases the retriever may search (the
+            caller's scope); None is unscoped
 
     Returns:
         Configured AgenticRAGService instance
@@ -38,6 +41,7 @@ def make_agentic_rag_service(
         **({"model": model} if model else {}),
         top_k=top_k,
         use_hybrid=use_hybrid,
+        knowledge_base_ids=knowledge_base_ids,
     )
 
     return AgenticRAGService(

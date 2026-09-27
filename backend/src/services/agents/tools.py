@@ -1,4 +1,5 @@
 import logging
+from typing import List, Optional
 
 from langchain_core.documents import Document
 from langchain_core.tools import tool
@@ -13,6 +14,7 @@ def create_retriever_tool(
     embeddings_client: EmbeddingProvider,
     top_k: int = 3,
     use_hybrid: bool = True,
+    knowledge_base_ids: Optional[List[str]] = None,
 ):
     """Create a retriever tool that wraps OpenSearch service.
 
@@ -20,6 +22,8 @@ def create_retriever_tool(
     :param embeddings_client: Existing Jina embeddings service
     :param top_k: Number of chunks to retrieve
     :param use_hybrid: Use hybrid search (BM25 + vector)
+    :param knowledge_base_ids: Restrict retrieval to these knowledge bases (the
+        caller's scope); None is unscoped, [] retrieves nothing
     :returns: LangChain tool for retrieving document excerpts
     """
 
@@ -49,6 +53,7 @@ def create_retriever_tool(
             query_embedding=query_embedding,
             size=top_k,
             use_hybrid=use_hybrid,
+            knowledge_base_ids=knowledge_base_ids,
         )
 
         # Convert SearchHit to LangChain Document

@@ -90,6 +90,7 @@ class AgenticRAGService:
             embeddings_client=self.embeddings,
             top_k=self.graph_config.top_k,
             use_hybrid=self.graph_config.use_hybrid,
+            knowledge_base_ids=self.graph_config.knowledge_base_ids,
         )
         tools = [retriever_tool]
 

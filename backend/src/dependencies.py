@@ -131,29 +131,53 @@ def get_ingestion_service(
 IngestionServiceDep = Annotated["IngestionService", Depends(get_ingestion_service)]
 
 
+def get_retrieval_scope(request: Request, principal: PrincipalDep, settings: SettingsDep) -> RetrievalScope:
+    """Knowledge bases the caller may retrieve from (resolved once per request).
+
+    With authentication disabled the scope is unrestricted and needs no
+    database, so none is opened: endpoints stay usable exactly as before, even
+    in apps assembled without a database. Otherwise a short-lived session reads
+    the grants (honouring a ``get_db_session`` override, as tests use).
+    """
+    if settings.auth.mode == "disabled":
+        return RetrievalScope.unrestricted("authentication disabled")
+
+    override = request.app.dependency_overrides.get(get_db_session)
+    if override is not None:
+        sessions = override()
+        try:
+            return resolve_scope(principal, next(sessions), settings)
+        finally:
+            sessions.close()
+
+    with get_database(request).get_session() as session:
+        return resolve_scope(principal, session, settings)
+
+
+ScopeDep = Annotated[RetrievalScope, Depends(get_retrieval_scope)]
+
+
 def get_agentic_rag_service(
     opensearch: OpenSearchDep,
     ollama: OllamaDep,
     embeddings: EmbeddingsDep,
     langfuse: LangfuseDep,
     settings: Annotated[Settings, Depends(get_settings)],
+    scope: Annotated[Optional[RetrievalScope], Depends(get_retrieval_scope)] = None,
 ) -> AgenticRAGService:
-    """Get agentic RAG service."""
+    """Get agentic RAG service, with its retriever limited to the caller's scope.
+
+    ``scope`` defaults to None (unscoped) only for direct calls; under FastAPI
+    it is always resolved.
+    """
     return make_agentic_rag_service(
         opensearch_client=opensearch,
         ollama_client=ollama,
         embeddings_client=embeddings,
         langfuse_tracer=langfuse,
         model=settings.ollama_model,
+        knowledge_base_ids=scope.restrict(None).permitted if scope is not None else None,
     )
 
 
 AgenticRAGDep = Annotated[AgenticRAGService, Depends(get_agentic_rag_service)]
-
-
-def get_retrieval_scope(principal: PrincipalDep, session: SessionDep, settings: SettingsDep) -> RetrievalScope:
-    """Knowledge bases the caller may retrieve from (resolved once per request)."""
-    return resolve_scope(principal, session, settings)
-
-
-ScopeDep = Annotated[RetrievalScope, Depends(get_retrieval_scope)]

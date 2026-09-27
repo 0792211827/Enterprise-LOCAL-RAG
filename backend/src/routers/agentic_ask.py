@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
-from src.dependencies import AgenticRAGDep, LangfuseDep, PrincipalDep
+from src.dependencies import AgenticRAGDep, LangfuseDep, PrincipalDep, ScopeDep
 from src.schemas.api.ask import AgenticAskResponse, AskRequest, FeedbackRequest, FeedbackResponse
+from src.services.access import NO_ACCESSIBLE_KNOWLEDGE_MESSAGE
 
 router = APIRouter(prefix="/api/v1", tags=["agentic-rag"])
 
@@ -10,6 +11,7 @@ async def ask_agentic(
     request: AskRequest,
     agentic_rag: AgenticRAGDep,
     principal: PrincipalDep,
+    scope: ScopeDep,
 ) -> AgenticAskResponse:
     """
     Agentic RAG endpoint with intelligent retrieval and query refinement.
@@ -37,6 +39,20 @@ async def ask_agentic(
     Raises:
         HTTPException: If processing fails
     """
+    # A caller who may read nothing gets a refusal, not an agent run: with no
+    # documents to ground on, the agent could answer from the model's general
+    # knowledge, which is not what a permission-scoped deployment promises.
+    if scope.restrict(None).permitted == []:
+        return AgenticAskResponse(
+            query=request.query,
+            answer=NO_ACCESSIBLE_KNOWLEDGE_MESSAGE,
+            sources=[],
+            chunks_used=0,
+            search_mode="hybrid" if request.use_hybrid else "bm25",
+            reasoning_steps=["No accessible knowledge bases for this caller; retrieval skipped."],
+            retrieval_attempts=0,
+        )
+
     try:
         result = await agentic_rag.ask(
             query=request.query,
