@@ -27,6 +27,7 @@ ADMIN_PREFIXES = (
     "/api/v1/retrieval-configurations",
     "/api/v1/system",
 )
+AUDITOR_PREFIXES = ("/api/v1/audit",)
 
 
 def _routes():
@@ -63,6 +64,8 @@ def test_route_has_policy(method, path, route):
         assert roles == {Role.ADMIN}, f"{method} {path} must be admin-only, got {roles}"
     elif path.startswith(QUERY_PREFIXES):
         assert roles == {Role.QUERIER}, f"{method} {path} must require querier, got {roles}"
+    elif path.startswith(AUDITOR_PREFIXES):
+        assert roles == {Role.AUDITOR}, f"{method} {path} must be auditor-only, got {roles}"
     else:
         pytest.fail(f"{method} {path} is not classified; extend this test's prefixes deliberately")
 

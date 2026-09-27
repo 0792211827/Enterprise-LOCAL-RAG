@@ -105,6 +105,40 @@ def elapsed_ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
 
 
+def record_event(
+    recorder: AuditRecorder,
+    context: AuditContext,
+    *,
+    action: str,
+    outcome: str = AuditOutcome.OK.value,
+    details: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Record a non-query event (e.g. an export) attributed to ``context``.
+
+    :raises AuditWriteError: only when the write fails and fail_mode is deny.
+    """
+    if not recorder.enabled:
+        return
+    recorder.record(
+        AuditRecord(
+            action=action,
+            outcome=outcome,
+            request_id=context.request_id,
+            actor_subject=context.actor_subject,
+            actor_roles=context.actor_roles,
+            actor_groups=context.actor_groups,
+            auth_method=context.auth_method,
+            api_key_id=context.api_key_id,
+            application_id=context.application_id,
+            source_ip=context.source_ip,
+            user_agent=context.user_agent,
+            http_method=context.http_method,
+            route=context.route,
+            details=details,
+        )
+    )
+
+
 def record_query_event(
     recorder: AuditRecorder,
     context: AuditContext,

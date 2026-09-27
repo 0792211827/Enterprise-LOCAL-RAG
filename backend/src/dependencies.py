@@ -1,5 +1,6 @@
+from contextlib import contextmanager
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated, Generator, Optional
+from typing import TYPE_CHECKING, Annotated, Callable, ContextManager, Generator, Optional
 
 if TYPE_CHECKING:
     from fastapi import Depends, Request
@@ -49,6 +50,25 @@ def get_db_session(database: Annotated[BaseDatabase, Depends(get_database)]) -> 
     """Get database session dependency."""
     with database.get_session() as session:
         yield session
+
+
+def get_session_opener(request: Request) -> Callable[[], ContextManager[Session]]:
+    """Open short-lived sessions of one's own, for work that outlives the
+    handler (a streamed response body runs after the request session closes).
+    Honours a ``get_db_session`` override, as tests use."""
+    override = request.app.dependency_overrides.get(get_db_session)
+    if override is None:
+        return get_database(request).get_session
+
+    @contextmanager
+    def open_overridden():
+        sessions = override()
+        try:
+            yield next(sessions)
+        finally:
+            sessions.close()
+
+    return open_overridden
 
 
 def get_opensearch_client(request: Request) -> OpenSearchClient:
@@ -110,6 +130,7 @@ CacheDep = Annotated[CacheClient | None, Depends(get_cache_client)]
 LLMProviderDep = Annotated[LLMProvider, Depends(get_llm_provider)]
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 AuditDep = Annotated[AuditRecorder, Depends(get_audit_recorder)]
+SessionOpenerDep = Annotated[Callable[[], ContextManager[Session]], Depends(get_session_opener)]
 
 
 def get_ingestion_service(

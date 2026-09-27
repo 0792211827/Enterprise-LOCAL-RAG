@@ -15,6 +15,7 @@ from src.routers import (
     agentic_ask,
     api_keys,
     applications,
+    audit,
     auth,
     chat_completions,
     documents,
@@ -164,6 +165,7 @@ app.add_middleware(RequestContextMiddleware, trusted_proxies=get_settings().auth
 # any route missing from it). With AUTH__MODE=disabled every check passes.
 QUERIER = [Depends(require_role(Role.QUERIER))]
 ADMIN = [Depends(require_role(Role.ADMIN))]
+AUDITOR = [Depends(require_role(Role.AUDITOR))]
 
 # Public: orchestrator liveness probe.
 app.include_router(ping.router, prefix="/api/v1")
@@ -183,6 +185,10 @@ app.include_router(providers.router, dependencies=ADMIN)
 app.include_router(retrieval.router, dependencies=ADMIN)
 app.include_router(system.router, dependencies=ADMIN)
 app.include_router(api_keys.router, dependencies=ADMIN)
+
+# Read-only audit trail. Admins hold the auditor role too unless
+# AUTH__ADMIN_CAN_READ_AUDIT=false (separation of duties).
+app.include_router(audit.router, dependencies=AUDITOR)
 
 # Any authenticated caller: lets users and operators inspect their own mapping.
 app.include_router(auth.router)

@@ -7,6 +7,7 @@ from .events import (
     decision_outcome,
     elapsed_ms,
     principal_fields,
+    record_event,
     record_query_event,
     retrieved_from_hits,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "elapsed_ms",
     "make_audit_recorder",
     "principal_fields",
+    "record_event",
     "record_query_event",
     "retrieved_from_hits",
     "sha256_text",
