@@ -25,6 +25,21 @@ KNN_FILTER_OVERSAMPLE = 10
 KNN_MAX_CANDIDATES = 1000
 
 
+def scope_matches_nothing(knowledge_base_ids: Optional[List[str]]) -> bool:
+    """True when a caller asked for an empty knowledge-base scope.
+
+    ``None`` means unscoped (search everything); an empty list means "none of
+    them". The two used to be indistinguishable -- both are falsy, so an empty
+    scope silently became a global search. Returning no results instead makes
+    the unsafe reading impossible: a permission check that resolves to "no
+    knowledge bases" can never widen into "all knowledge bases".
+    """
+    return knowledge_base_ids is not None and len(knowledge_base_ids) == 0
+
+
+NO_RESULTS: Dict[str, Any] = {"total": 0, "hits": []}
+
+
 def knn_k(size: int, filter_clause: Any) -> int:
     """Return the k to request from ANN, oversampling when post-filtering."""
     if not filter_clause:
@@ -167,6 +182,8 @@ class OpenSearchClient:
         :param knowledge_base_ids: Restrict results to these knowledge bases
         :returns: Search results
         """
+        if scope_matches_nothing(knowledge_base_ids):
+            return dict(NO_RESULTS, hits=[])
         try:
             # Build filter
             filter_clause = []
@@ -225,6 +242,8 @@ class OpenSearchClient:
         :param knowledge_base_ids: Restrict results to these knowledge bases
         :returns: Search results
         """
+        if scope_matches_nothing(knowledge_base_ids):
+            return dict(NO_RESULTS, hits=[])
         try:
             # If no embedding provided or hybrid disabled, use BM25 only
             if not query_embedding or not use_hybrid:
@@ -363,6 +382,8 @@ class OpenSearchClient:
         knowledge_base_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Hybrid search combining BM25 and vector similarity using native RRF."""
+        if scope_matches_nothing(knowledge_base_ids):
+            return dict(NO_RESULTS, hits=[])
         return self._search_hybrid_native(
             query=query,
             query_embedding=query_embedding,
