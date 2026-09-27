@@ -10,6 +10,7 @@ from src.auth import Role, make_authenticator, require_role
 from src.config import get_settings
 from src.db.factory import make_database
 from src.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
+from src.middleware.audit import AuditMiddleware
 from src.routers import (
     agentic_ask,
     api_keys,
@@ -148,6 +149,10 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=[REQUEST_ID_HEADER],
 )
+
+# Records admin changes and 401/403s (a no-op with AUDIT__LEVEL=off). Inside
+# the request-context middleware, so every event carries the request ID.
+app.add_middleware(AuditMiddleware)
 
 # Added last so it is outermost: every response, including CORS preflights and
 # errors raised by inner middleware, carries the correlation ID.
