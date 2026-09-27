@@ -133,7 +133,7 @@ async def ask_question(
         action=AuditAction.QUERY_ANSWER.value,
         query=request.query,
         decision=scope.restrict(None),
-    ) as audit, rag_tracer.trace_request(principal.subject, request.query) as trace:
+    ) as audit, rag_tracer.trace_request(principal.subject, request.query, audit.context.request_id) as trace:
         audit.model, audit.cache_hit = request.model, (False if cache_client else None)
         try:
             # Check exact cache first
@@ -246,7 +246,7 @@ async def ask_question_stream(
         rag_tracer = RAGTracer(langfuse_tracer)
         start_time = time.time()
 
-        with rag_tracer.trace_request(subject, request.query) as trace:
+        with rag_tracer.trace_request(subject, request.query, audit.context.request_id) as trace:
             try:
                 # Check exact cache first
                 if cache_client:

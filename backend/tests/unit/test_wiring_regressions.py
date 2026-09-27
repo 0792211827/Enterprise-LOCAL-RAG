@@ -191,3 +191,23 @@ class TestIndexPayloadMatchesMapping:
         written = set(payload[0]["chunk_data"]) | {"embedding"}
 
         assert not (written - mapped), f"unmapped fields would be rejected: {sorted(written - mapped)}"
+
+
+class TestTraceCarriesRequestId:
+    """Langfuse traces carry the X-Request-ID so they join to audit events."""
+
+    def _metadata(self, request_id):
+        from unittest.mock import MagicMock
+
+        from src.services.langfuse.tracer import RAGTracer
+
+        tracer = MagicMock()
+        with RAGTracer(tracer).trace_request("alice", "q", request_id):
+            pass
+        return tracer.trace_rag_request.call_args.kwargs["metadata"]
+
+    def test_request_id_is_attached(self):
+        assert self._metadata("rid-1") == {"simplified_tracing": True, "request_id": "rid-1"}
+
+    def test_metadata_unchanged_without_one(self):
+        assert self._metadata(None) == {"simplified_tracing": True}

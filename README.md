@@ -19,6 +19,9 @@ LangGraph. Everything runs locally with **no external AI APIs** required.
 - **Local-first providers** — embeddings (HuggingFace / Ollama /
   OpenAI-compatible), LLM (Ollama / OpenAI-compatible), optional VLM.
 - **Observability** — self-hosted Langfuse tracing and Redis caching.
+- **Access control and audit** — accepts your SSO's identity (JWT or trusted
+  proxy headers), role-based routes, per-knowledge-base grants enforced at
+  retrieval, and a queryable, exportable audit log. All of it is off by default.
 
 ## 🏗️ Architecture
 
@@ -97,6 +100,7 @@ make test      # run backend tests (cd backend && uv run python -m pytest)
 make lint      # ruff + mypy
 make frontend-dev    # frontend dev server on :3001
 make frontend-build  # frontend production build + type check
+make audit-purge DAYS=365  # delete audit events older than 365 days (DRY_RUN=1 to count)
 make clean     # tear down + prune
 ```
 
@@ -121,6 +125,7 @@ clients work unmodified.
 | System | `/api/v1/system` |
 | Caller identity | `GET /api/v1/auth/me` |
 | Active access controls | `GET /api/v1/system/security` |
+| Audit log (auditor role) | `/api/v1/audit` |
 | OpenAI-compatible chat | `POST /v1/chat/completions` |
 
 Full, interactive documentation is available at `/docs`.
@@ -129,7 +134,7 @@ Full, interactive documentation is available at `/docs`.
 
 A Next.js 14 admin UI (`frontend/`) for managing knowledge bases, document
 ingestion, RAG applications (with a retrieval playground), model providers,
-retrieval profiles, and system health.
+retrieval profiles, and system health, plus an audit log viewer for auditors.
 
 Run with Docker (part of `make start`):
 
@@ -164,6 +169,7 @@ documented list. Key groups:
   double underscore; single-underscore `LANGFUSE_*` names configure the
   self-hosted Langfuse server in compose, not the backend).
 - **Authentication** (`AUTH__*`) — see below. Off by default.
+- **Audit log** (`AUDIT__*`) — see [Audit logging](#-audit-logging). Off by default.
 
 ## 🔐 Authentication
 
@@ -211,9 +217,9 @@ startup instead.
 Every response carries an `X-Request-ID` header, reused if the caller sent a
 valid one. Quote it when reporting a problem.
 
-> **Status:** identity intake, role enforcement, API-key enforcement and
-> knowledge-base permissions are live. The audit log is still being added
-> (see `docs/audit/integration-plan.md`).
+> **Status:** identity intake, role enforcement, API-key enforcement,
+> knowledge-base permissions and the audit log are all live (see
+> `docs/audit/integration-plan.md`).
 
 ### Knowledge-base permissions
 
@@ -308,6 +314,76 @@ services:
 The IdP's access token must carry the audience in `AUTH__AUDIENCE`. The
 sidebar shows the signed-in subject and roles. An expired session raises a
 "sign in again" banner.
+
+## 🧾 Audit logging
+
+`AUDIT__LEVEL` turns on a structured audit trail in the platform's own
+PostgreSQL (`audit_events`). It's a record a compliance team can query and
+export: who asked what, which knowledge they were allowed to search, what was
+retrieved, and what was answered. It is separate from Langfuse, which remains
+the optional debugging and observability layer.
+
+| Level | Recorded |
+|-------|----------|
+| `off` (default) | Nothing. No database writes. |
+| `metadata` | Everything below except text: the query and answer are kept only as SHA-256 digests. To check whether a particular question was asked, hash it and compare the digests. |
+| `full` | As `metadata`, plus the query and answer text. |
+
+**What produces an event**
+
+| Action | When | Notable fields |
+|--------|------|----------------|
+| `query.answer` | `/api/v1/ask`, `/stream`, `/ask-agentic`, the playground, `/v1/chat/completions` (streaming too) | caller (end user and/or API key), application, knowledge bases *requested / permitted / dropped* by grants, retrieved chunk IDs with scores, model, cache hit, latency, outcome |
+| `query.search` | `/api/v1/hybrid-search` | as above, without an answer |
+| `admin.mutation` | every POST/PUT/PATCH/DELETE on the control plane | route template, path parameters, status code, caller |
+| `access.denied` | any other `401`/`403` | route, caller if known |
+| `audit.export` | an export of the audit log | format and filters |
+| `audit.purge` | `make audit-purge` | cutoff, rows deleted, OS user |
+
+Every event also has the `X-Request-ID`, the client IP (taken from
+`X-Forwarded-For` only when the peer is in `AUTH__TRUSTED_PROXY_CIDRS`) and the
+user agent. The outcome is `ok`, `denied` (the caller could read none of the
+knowledge they asked about, or got a 401/403) or `error`. In the knowledge-base
+fields, `null` means unrestricted or global and `[]` means none.
+
+**Reading it.** Anyone with the `auditor` role can use the **Audit Log** page in
+the admin UI or the API. Admins hold that role unless
+`AUTH__ADMIN_CAN_READ_AUDIT=false`.
+
+- `GET /api/v1/audit/events` accepts filters `actor`, `action`, `outcome`,
+  `application_id`, `knowledge_base_id`, `request_id`, `since` and `until`.
+  Results are newest first; pass `next_cursor` back as `cursor` for the next page.
+- `GET /api/v1/audit/events/{id}` returns one event.
+- `GET /api/v1/audit/export?format=csv|ndjson` streams every matching event.
+  In CSV, cells a spreadsheet would execute are prefixed with `'`.
+
+There is no API to change or delete events.
+
+**When the audit write fails.** With `AUDIT__FAIL_MODE=log` (the default) the
+error is logged and the response is served. With `deny`, an answer or export
+that can't be audited is refused with `503`. A stream has already delivered its
+answer by then, so it ends with an error event instead. Admin changes are
+recorded after they complete, so a failed write never alters their response.
+
+**Retention.** Nothing is deleted automatically.
+`make audit-purge DAYS=365` (or `AUDIT__RETENTION_DAYS` plus `make audit-purge`)
+deletes older events inside the `rag-api` container. It leaves an `audit.purge`
+event in the same transaction. There is no HTTP endpoint for purging.
+
+**Append-only at the database level.** For stricter deployments, have the API
+connect as a role that can insert and read audit rows but not change them, and
+run purges as a separate role:
+
+```sql
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM rag_app;
+GRANT SELECT, INSERT ON audit_events TO rag_app;
+GRANT SELECT, DELETE, INSERT ON audit_events TO rag_retention;  -- purge job only
+```
+
+**Limits.** Reads of the audit log itself are not recorded; exports are. For
+`admin.mutation` events on create endpoints, `resource_id` is empty because the
+new ID is only in the response body. A tamper-evidence hash chain is a planned
+follow-up.
 
 ## 🧪 Testing
 
