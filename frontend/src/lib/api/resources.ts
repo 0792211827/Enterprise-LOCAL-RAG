@@ -19,6 +19,7 @@ import type {
   ProviderTestResult,
   RetrievalConfig,
   SystemHealth,
+  SecurityStatus,
 } from "./types";
 
 export const knowledgeBasesApi = {
@@ -126,4 +127,5 @@ export const systemApi = {
   health: () => apiGet<SystemHealth>("/api/v1/system/health"),
   stats: () => apiGet<DashboardStats>("/api/v1/system/stats"),
   gpu: () => apiGet<GPUResponse>("/api/v1/system/gpu"),
+  security: () => apiGet<SecurityStatus>("/api/v1/system/security"),
 };

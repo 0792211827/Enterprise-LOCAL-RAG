@@ -316,6 +316,16 @@ class GPUResponse(BaseModel):
     message: Optional[str] = None
 
 
+class SecurityStatus(BaseModel):
+    """What the deployment actually enforces, so the UI never overstates it."""
+
+    auth_mode: str = Field(description="disabled | jwt | trusted_header")
+    api_keys_enforced: bool
+    user_token_header: Optional[str] = Field(
+        None, description="Header a host app may use to forward its end user's identity (jwt mode)"
+    )
+
+
 class DashboardStats(BaseModel):
     knowledge_bases: int
     documents: int

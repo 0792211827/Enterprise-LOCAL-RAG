@@ -73,3 +73,13 @@ async def test_public_health_needs_no_role(client, as_caller):
 async def test_disabled_mode_keeps_every_route_open(client):
     assert (await client.get("/api/v1/system/gpu")).status_code == 200
     assert (await client.post("/api/v1/ask", json={"query": "q"})).status_code == 200
+
+
+async def test_security_status_reports_defaults(client):
+    data = (await client.get("/api/v1/system/security")).json()
+    assert data == {"auth_mode": "disabled", "api_keys_enforced": False, "user_token_header": None}
+
+
+async def test_security_status_is_admin_only(client, as_caller):
+    as_caller(Role.QUERIER)
+    assert (await client.get("/api/v1/system/security")).status_code == 403

@@ -201,6 +201,12 @@ export interface GPUInfo {
   temperature_c: number | null;
 }
 
+export interface SecurityStatus {
+  auth_mode: "disabled" | "jwt" | "trusted_header";
+  api_keys_enforced: boolean;
+  user_token_header: string | null;
+}
+
 export interface GPUResponse {
   available: boolean;
   cuda_version: string | null;

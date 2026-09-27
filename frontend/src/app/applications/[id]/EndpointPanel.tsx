@@ -15,6 +15,46 @@ import { applicationsApi, openaiApi, systemApi } from "@/lib/api/resources";
 import { curlSnippet, pythonSnippet, typescriptSnippet } from "@/lib/snippets";
 import type { Application, ChatCompletionResponse } from "@/lib/api/types";
 
+// States what the deployment actually enforces (from /system/security) rather
+// than a fixed caveat, so the UI never over- or under-states the control.
+function KeyEnforcementCallout() {
+  const security = useQuery({ queryKey: ["system", "security"], queryFn: systemApi.security });
+  if (!security.data) return null;
+  const { api_keys_enforced, auth_mode, user_token_header } = security.data;
+
+  if (api_keys_enforced) {
+    return (
+      <Callout tone="info">
+        Keys are <strong>enforced</strong>: requests need{" "}
+        <code>Authorization: Bearer &lt;key&gt;</code> with an active key issued for this
+        assistant.
+        {user_token_header && (
+          <>
+            {" "}To scope a request to one of your users, forward their token in{" "}
+            <code>{user_token_header}</code>.
+          </>
+        )}
+      </Callout>
+    );
+  }
+  if (auth_mode !== "disabled") {
+    return (
+      <Callout tone="warn">
+        Keys are <strong>not enforced</strong> (<code>API_KEYS__ENFORCE=false</code>). Callers
+        need either a valid key or their own identity ({auth_mode === "jwt" ? "an IdP token" : "proxy-asserted headers"}).
+      </Callout>
+    );
+  }
+  return (
+    <Callout tone="warn">
+      Keys are issued but <strong>not enforced</strong>, and authentication is off. The endpoint
+      accepts any request, with or without an <code>Authorization</code> header. Treat it as
+      unauthenticated and keep it on a trusted network, or set{" "}
+      <code>API_KEYS__ENFORCE=true</code>.
+    </Callout>
+  );
+}
+
 interface Check {
   label: string;
   ok: boolean;
@@ -193,11 +233,7 @@ export function EndpointPanel({ app, ready }: { app: Application; ready: boolean
           </button>
         </div>
 
-        <Callout tone="warn">
-          Keys are issued but <strong>not yet enforced</strong>. The endpoint currently
-          accepts any request, with or without an <code>Authorization</code> header.
-          Treat it as unauthenticated and keep it on a trusted network.
-        </Callout>
+        <KeyEnforcementCallout />
 
         <table className="mt-3 w-full text-sm">
           <thead>

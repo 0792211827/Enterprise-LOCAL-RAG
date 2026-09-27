@@ -1,9 +1,9 @@
 """API key management for RAG applications.
 
-Keys are issued, displayed and revocable, but ``/v1/chat/completions`` does not
-currently reject requests carrying an unknown key -- see that router for the
-enforcement caveat. The admin UI states this plainly rather than implying the
-key is already a security control.
+Keys authenticate host applications on ``/v1/chat/completions``. They are
+required there only when ``API_KEYS__ENFORCE=true``; otherwise a valid key's
+usage is recorded but keyless requests are still served. The admin UI reads
+the active setting from ``/api/v1/system/security`` and states it plainly.
 """
 
 from typing import List
