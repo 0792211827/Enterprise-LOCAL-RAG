@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.config import get_settings
 from src.db.factory import make_database
+from src.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
 from src.routers import (
     agentic_ask,
     api_keys,
@@ -119,7 +120,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[REQUEST_ID_HEADER],
 )
+
+# Added last so it is outermost: every response, including CORS preflights and
+# errors raised by inner middleware, carries the correlation ID.
+app.add_middleware(RequestContextMiddleware)
 
 # Include routers
 app.include_router(ping.router, prefix="/api/v1")  # Health check endpoint
