@@ -4,11 +4,13 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from src.dependencies import SessionDep, SettingsDep
+from src.dependencies import PrincipalDep, SessionDep, SettingsDep
 from src.models.knowledge_base import KnowledgeBase
-from src.repositories import DocumentRepository, KnowledgeBaseRepository
+from src.repositories import DocumentRepository, GrantRepository, KnowledgeBaseRepository
 from src.schemas.api.domain import (
     KnowledgeBaseCreate,
+    KnowledgeBaseGrantResponse,
+    KnowledgeBaseGrantsUpdate,
     KnowledgeBaseResponse,
     KnowledgeBaseUpdate,
 )
@@ -87,3 +89,20 @@ def delete_knowledge_base(kb_id: UUID, session: SessionDep):
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     repo.delete(kb)
     return None
+
+
+@router.get("/{kb_id}/grants", response_model=List[KnowledgeBaseGrantResponse])
+def list_grants(kb_id: UUID, session: SessionDep):
+    """Who may retrieve from this knowledge base when authentication is on."""
+    if not KnowledgeBaseRepository(session).get_by_id(kb_id):
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    return GrantRepository(session).list_for_knowledge_base(kb_id)
+
+
+@router.put("/{kb_id}/grants", response_model=List[KnowledgeBaseGrantResponse])
+def replace_grants(kb_id: UUID, payload: KnowledgeBaseGrantsUpdate, session: SessionDep, principal: PrincipalDep):
+    """Replace the knowledge base's grants with exactly the submitted set."""
+    if not KnowledgeBaseRepository(session).get_by_id(kb_id):
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    entries = [(g.principal_type, g.principal_value) for g in payload.grants]
+    return GrantRepository(session).replace_for_knowledge_base(kb_id, entries, created_by=principal.subject)

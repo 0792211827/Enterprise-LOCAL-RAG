@@ -6,10 +6,10 @@ returns a typed model rather than an arbitrary dictionary.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from src.config import get_settings
 from src.models.enums import ProviderKind, ProviderType, RAGStrategy, RetrievalMode
 
@@ -67,6 +67,44 @@ class KnowledgeBaseResponse(BaseModel):
     chunk_count: int
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
+
+
+class KnowledgeBaseGrantEntry(BaseModel):
+    """One principal that may retrieve from a knowledge base.
+
+    ``principal_value`` is an IdP claim value: a group name, a raw role value,
+    or a subject. ``everyone`` means any authenticated querier and ignores the
+    value.
+    """
+
+    principal_type: Literal["group", "role", "subject", "everyone"]
+    principal_value: str = Field("", max_length=512)
+
+    @model_validator(mode="after")
+    def _normalise(self) -> "KnowledgeBaseGrantEntry":
+        self.principal_value = self.principal_value.strip()
+        if self.principal_type == "everyone":
+            self.principal_value = "*"
+        elif not self.principal_value:
+            raise ValueError(f"principal_value is required for a {self.principal_type} grant")
+        return self
+
+
+class KnowledgeBaseGrantsUpdate(BaseModel):
+    """The complete set of grants; replaces whatever was there."""
+
+    grants: List[KnowledgeBaseGrantEntry] = Field(default_factory=list, max_length=500)
+
+
+class KnowledgeBaseGrantResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    principal_type: str
+    principal_value: str
+    permission: str
+    created_at: Optional[datetime]
+    created_by: Optional[str]
 
 
 # --------------------------------------------------------------------------- #
