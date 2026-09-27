@@ -372,12 +372,14 @@ event in the same transaction. There is no HTTP endpoint for purging.
 
 **Append-only at the database level.** For stricter deployments, have the API
 connect as a role that can insert and read audit rows but not change them, and
-run purges as a separate role:
+run purges as a separate role. A table's owner can always grant its rights
+back, so `audit_events` must be owned by a third role. Start the API once as
+that owner so it creates the tables, then switch the API to `rag_app`:
 
 ```sql
-REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM rag_app;
+ALTER TABLE audit_events OWNER TO rag_owner;
 GRANT SELECT, INSERT ON audit_events TO rag_app;
-GRANT SELECT, DELETE, INSERT ON audit_events TO rag_retention;  -- purge job only
+GRANT SELECT, INSERT, DELETE ON audit_events TO rag_retention;  -- purge job only
 ```
 
 **Limits.** Reads of the audit log itself are not recorded; exports are. For

@@ -1,8 +1,12 @@
 # Integration plan (Phase 4)
 
-*Plan only. Nothing here is implemented yet. It covers every **Blocker** and
-**Important** row from `feature-gap-comparison.md`, using the decisions
-confirmed after Phase 3:*
+> **Implementation status (2026-09-27).** S1, S2/S2a/F1, S3 and S4 are
+> implemented on `feature/owui-gap-analysis`. S5, S3a and the whole
+> Hardware/Backend track (H1–H5) have not started. Where S4 differs from the
+> plan below, see "As built" at the end of the S4 section.
+
+*This plan covers every **Blocker** and **Important** row from
+`feature-gap-comparison.md`, using the decisions confirmed after Phase 3:*
 
 - *Order: S1 → S2 (+S2a, minimal F1) → S3 → S4, with S5 alongside, and S3a later.*
 - *Grants key on IdP **claim values** (groups, roles or subject). There is no local users table.*
@@ -630,6 +634,28 @@ The `*_kb_ids` fields exist before S3 lands; until then they're filled with
 - For a code rollback, revert the commits. **Don't** drop `audit_events` on
   rollback; the rows may be subject to retention obligations. A documented
   export-then-drop procedure covers that if it's ever needed.
+
+### As built (differences from this plan)
+
+- **Audit status** is at `GET /api/v1/audit/status` (auditor role), not an
+  `audit_level` field on `/system/security`. That endpoint is admin-only, so
+  a non-admin auditor couldn't have read it. It also means the existing
+  exact-match test on `/system/security` stays unchanged.
+- **Three extra actions:** `access.denied` (any other 401/403, recorded by the
+  middleware), `audit.export` (recorded *before* data is sent, so `deny` can
+  refuse an unauditable export) and `audit.purge` (written in the same
+  transaction as the delete, even at level `off`).
+- **A `details` JSON column** holds action-specific extras: path parameters,
+  cached source titles on cache hits, agentic retrieval attempts, export
+  filters and purge counts.
+- **Cache hits** record `retrieved = NULL` (no retrieval ran for that
+  request) and the cited titles in `details`, rather than claiming chunks.
+- **The Audit nav entry** is shown to callers holding the auditor role. The
+  page itself says when recording is off, instead of the entry being hidden.
+- **Admin-mutation audit failures are always log-only.** The change has
+  already committed and the response has been sent.
+- **The Langfuse request ID** is added on `/ask` and `/stream`, which use
+  `RAGTracer`. The agentic service builds its own traces and was not changed.
 
 ---
 
