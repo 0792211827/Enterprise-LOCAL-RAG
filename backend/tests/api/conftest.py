@@ -72,6 +72,11 @@ async def client(monkeypatch):
     monkeypatch.setattr(main, "make_vlm_provider", lambda settings: None)
     monkeypatch.setattr(main, "make_langfuse_tracer", lambda: MagicMock())
     monkeypatch.setattr(main, "make_cache_client", lambda settings: None)
+    # Pin auditing off for the same reason as auth below: tests that exercise
+    # the audit trail install their own recorder.
+    from src.services.audit import NoopAuditRecorder
+
+    monkeypatch.setattr(main, "make_audit_recorder", lambda settings, database: NoopAuditRecorder())
     # Pin auth off so a developer's .env (e.g. AUTH__MODE=jwt) cannot change
     # the behaviour these tests assert.
     from src.auth import DisabledAuthenticator

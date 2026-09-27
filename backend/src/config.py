@@ -284,6 +284,35 @@ class ApiKeySettings(BaseConfigSettings):
     enforce: bool = False
 
 
+class AuditSettings(BaseConfigSettings):
+    """Structured audit trail of queries and admin changes (off by default).
+
+    Distinct from Langfuse: this is the record a compliance team queries and
+    exports -- who asked what, what was retrieved, what was answered -- kept in
+    the platform's own PostgreSQL.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="AUDIT__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    # off:      nothing is recorded (as before).
+    # metadata: actor, request, knowledge-base decision, retrieved chunk IDs and
+    #           SHA-256 digests of the query and answer -- but no text.
+    # full:     metadata plus the query and answer text.
+    level: Literal["off", "metadata", "full"] = "off"
+    # When an audit row cannot be written. log: log an error and still answer.
+    # deny: refuse the answer with 503 (a stream can only fail its last event).
+    fail_mode: Literal["log", "deny"] = "log"
+    # Age after which `make audit-purge` deletes events; 0 keeps them forever.
+    # Nothing is ever purged automatically.
+    retention_days: int = Field(default=0, ge=0)
+
+
 class Settings(BaseConfigSettings):
     app_version: str = "0.1.0"
     debug: bool = True
@@ -309,6 +338,7 @@ class Settings(BaseConfigSettings):
     vlm: VLMSettings = Field(default_factory=VLMSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     api_keys: ApiKeySettings = Field(default_factory=ApiKeySettings)
+    audit: AuditSettings = Field(default_factory=AuditSettings)
 
     @field_validator("postgres_database_url")
     @classmethod

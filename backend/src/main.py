@@ -3,8 +3,9 @@ import os
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from src.auth import Role, make_authenticator, require_role
 from src.config import get_settings
 from src.db.factory import make_database
@@ -24,6 +25,7 @@ from src.routers import (
     system,
 )
 from src.routers.ask import ask_router, stream_router
+from src.services.audit import AuditWriteError, make_audit_recorder
 from src.services.cache.factory import make_cache_client
 from src.services.embeddings.factory import make_embeddings_service
 from src.services.langfuse.factory import make_langfuse_tracer
@@ -59,6 +61,9 @@ async def lifespan(app: FastAPI):
     database = make_database()
     app.state.database = database
     logger.info("Database connected")
+
+    app.state.audit_recorder = make_audit_recorder(settings, database)
+    logger.info("Audit logging: %s (fail mode %s)", settings.audit.level, settings.audit.fail_mode)
 
     # Initialize search service
     opensearch_client = make_opensearch_client()
@@ -113,6 +118,20 @@ app = FastAPI(
     version=os.getenv("APP_VERSION", "0.1.0"),
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(AuditWriteError)
+async def audit_write_failed(request: Request, exc: AuditWriteError) -> JSONResponse:
+    """AUDIT__FAIL_MODE=deny: an answer that cannot be audited is not served."""
+    message = "The audit log is unavailable, so this request was refused."
+    if request.url.path.startswith("/v1/"):
+        # OpenAI SDK clients only surface errors in this shape.
+        return JSONResponse(
+            status_code=503,
+            content={"error": {"message": message, "type": "server_error", "param": None, "code": "audit_unavailable"}},
+        )
+    return JSONResponse(status_code=503, content={"detail": message})
+
 
 # CORS for the Admin Control Plane frontend. Origins are configurable via the
 # CORS_ALLOW_ORIGINS environment variable (comma-separated); defaults cover the

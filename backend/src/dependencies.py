@@ -18,6 +18,7 @@ from src.db.interfaces.base import BaseDatabase
 from src.services.access import RetrievalScope, resolve_scope
 from src.services.agents.agentic_rag import AgenticRAGService
 from src.services.agents.factory import make_agentic_rag_service
+from src.services.audit import AuditRecorder, NoopAuditRecorder
 from src.services.cache.client import CacheClient
 from src.services.langfuse.client import LangfuseTracer
 from src.services.ollama.client import OllamaClient
@@ -90,6 +91,11 @@ def get_cache_client(request: Request) -> CacheClient | None:
     return getattr(request.app.state, "cache_client", None)
 
 
+def get_audit_recorder(request: Request) -> AuditRecorder:
+    """Get the audit recorder; apps assembled without the lifespan record nothing."""
+    return getattr(request.app.state, "audit_recorder", None) or NoopAuditRecorder()
+
+
 # Dependency annotations
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DatabaseDep = Annotated[BaseDatabase, Depends(get_database)]
@@ -103,6 +109,7 @@ LangfuseDep = Annotated[LangfuseTracer, Depends(get_langfuse_tracer)]
 CacheDep = Annotated[CacheClient | None, Depends(get_cache_client)]
 LLMProviderDep = Annotated[LLMProvider, Depends(get_llm_provider)]
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
+AuditDep = Annotated[AuditRecorder, Depends(get_audit_recorder)]
 
 
 def get_ingestion_service(
