@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { CallerBadge } from "./AuthStatus";
 
 // Assistants first: it is the object admins actually come here for. The
 // infrastructure pages are grouped under a Settings heading below.
@@ -14,7 +15,7 @@ const NAV = [
   { href: "/system", label: "System", icon: "❤" },
 ];
 
-export function Sidebar() {
+export function Sidebar({ onSignOut }: { onSignOut?: () => void }) {
   const pathname = usePathname();
   return (
     <aside className="fixed inset-y-0 left-0 w-64 border-r border-slate-200 bg-white">
@@ -56,6 +57,9 @@ export function Sidebar() {
           );
         })}
       </nav>
+      <div className="absolute inset-x-0 bottom-0 border-t border-slate-200 p-4">
+        <CallerBadge onSignOut={onSignOut} />
+      </div>
     </aside>
   );
 }

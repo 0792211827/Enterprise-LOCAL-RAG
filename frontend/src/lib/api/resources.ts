@@ -1,3 +1,4 @@
+import { FETCH_CREDENTIALS, authHeaders } from "@/lib/auth";
 import { API_BASE, apiGet, apiSend, apiUpload } from "./client";
 import type {
   ApiKey,
@@ -20,6 +21,7 @@ import type {
   RetrievalConfig,
   SystemHealth,
   SecurityStatus,
+  Principal,
 } from "./types";
 
 export const knowledgeBasesApi = {
@@ -87,11 +89,14 @@ export const openaiApi = {
     messages: ChatMessage[],
     apiKey?: string,
   ): Promise<ChatCompletionResponse> => {
+    // Mimics an external SDK client: the application key when one is given,
+    // otherwise the signed-in admin's own credentials.
     const res = await fetch(openaiApi.chatCompletionUrl(baseUrl), {
       method: "POST",
+      credentials: FETCH_CREDENTIALS,
       headers: {
         "Content-Type": "application/json",
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : await authHeaders()),
       },
       body: JSON.stringify({ model, messages }),
     });
@@ -121,6 +126,10 @@ export const retrievalApi = {
     apiSend<RetrievalConfig>("/api/v1/retrieval-configurations", "POST", payload),
   remove: (id: string) =>
     apiSend<void>(`/api/v1/retrieval-configurations/${id}`, "DELETE"),
+};
+
+export const authApi = {
+  me: () => apiGet<Principal>("/api/v1/auth/me"),
 };
 
 export const systemApi = {

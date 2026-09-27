@@ -201,6 +201,16 @@ export interface GPUInfo {
   temperature_c: number | null;
 }
 
+export interface Principal {
+  subject: string;
+  roles: ("admin" | "querier" | "auditor")[];
+  groups: string[];
+  raw_roles: string[];
+  auth_method: "disabled" | "jwt" | "trusted_header" | "api_key";
+  api_key_id: string | null;
+  application_id: string | null;
+}
+
 export interface SecurityStatus {
   auth_mode: "disabled" | "jwt" | "trusted_header";
   api_keys_enforced: boolean;
