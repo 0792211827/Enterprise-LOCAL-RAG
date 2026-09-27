@@ -3,9 +3,9 @@ import os
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from src.auth import make_authenticator
+from src.auth import Role, make_authenticator, require_role
 from src.config import get_settings
 from src.db.factory import make_database
 from src.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
@@ -134,25 +134,38 @@ app.add_middleware(
 # errors raised by inner middleware, carries the correlation ID.
 app.add_middleware(RequestContextMiddleware, trusted_proxies=get_settings().auth.trusted_proxy_list)
 
-# Include routers
-app.include_router(ping.router, prefix="/api/v1")  # Health check endpoint
-app.include_router(hybrid_search.router, prefix="/api/v1")  # Search chunks with BM25/hybrid
-app.include_router(ask_router, prefix="/api/v1")  # RAG question answering with LLM
-app.include_router(stream_router, prefix="/api/v1")  # Streaming RAG responses
-app.include_router(agentic_ask.router)  # Agentic RAG with intelligent retrieval
+# Route access policy. Applied here, once per router, rather than inside each
+# handler, so the whole matrix is visible in one place and a router cannot be
+# mounted without a deliberate choice (tests/unit/test_route_policy.py fails on
+# any route missing from it). With AUTH__MODE=disabled every check passes.
+QUERIER = [Depends(require_role(Role.QUERIER))]
+ADMIN = [Depends(require_role(Role.ADMIN))]
 
-# Admin Control Plane domain routers.
-app.include_router(knowledge_bases.router)
-app.include_router(documents.router)
-app.include_router(applications.router)
-app.include_router(providers.router)
-app.include_router(retrieval.router)
-app.include_router(system.router)
-app.include_router(api_keys.router)
+# Public: orchestrator liveness probe.
+app.include_router(ping.router, prefix="/api/v1")
+
+# Query surface.
+app.include_router(hybrid_search.router, prefix="/api/v1", dependencies=QUERIER)
+app.include_router(ask_router, prefix="/api/v1", dependencies=QUERIER)
+app.include_router(stream_router, prefix="/api/v1", dependencies=QUERIER)
+app.include_router(agentic_ask.router, dependencies=QUERIER)
+
+# Admin Control Plane. Includes the provider /test and /models endpoints, which
+# make the backend call caller-supplied URLs and so must never be open.
+app.include_router(knowledge_bases.router, dependencies=ADMIN)
+app.include_router(documents.router, dependencies=ADMIN)
+app.include_router(applications.router, dependencies=ADMIN)
+app.include_router(providers.router, dependencies=ADMIN)
+app.include_router(retrieval.router, dependencies=ADMIN)
+app.include_router(system.router, dependencies=ADMIN)
+app.include_router(api_keys.router, dependencies=ADMIN)
+
+# Any authenticated caller: lets users and operators inspect their own mapping.
 app.include_router(auth.router)
 
 # Mounted at bare /v1 (not /api/v1) so stock OpenAI SDK clients work unmodified:
-# they append /chat/completions to a base_url ending in /v1.
+# they append /chat/completions to a base_url ending in /v1. Authorised inside
+# the handler, since it accepts application API keys as well as user tokens.
 app.include_router(chat_completions.router)
 
 
