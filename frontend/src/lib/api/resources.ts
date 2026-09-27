@@ -22,6 +22,9 @@ import type {
   SystemHealth,
   SecurityStatus,
   Principal,
+  KnowledgeBaseAccessCheck,
+  KnowledgeBaseGrant,
+  KnowledgeBaseGrantEntry,
 } from "./types";
 
 export const knowledgeBasesApi = {
@@ -30,6 +33,15 @@ export const knowledgeBasesApi = {
   create: (payload: KnowledgeBaseCreate) =>
     apiSend<KnowledgeBase>("/api/v1/knowledge-bases", "POST", payload),
   remove: (id: string) => apiSend<void>(`/api/v1/knowledge-bases/${id}`, "DELETE"),
+  grants: (id: string) => apiGet<KnowledgeBaseGrant[]>(`/api/v1/knowledge-bases/${id}/grants`),
+  replaceGrants: (id: string, grants: KnowledgeBaseGrantEntry[]) =>
+    apiSend<KnowledgeBaseGrant[]>(`/api/v1/knowledge-bases/${id}/grants`, "PUT", { grants }),
+  accessCheck: (subject: string, groups: string, roles: string) => {
+    const params = new URLSearchParams({ subject });
+    if (groups.trim()) params.set("groups", groups);
+    if (roles.trim()) params.set("roles", roles);
+    return apiGet<KnowledgeBaseAccessCheck>(`/api/v1/knowledge-bases/access-check?${params}`);
+  },
 };
 
 export const documentsApi = {

@@ -201,6 +201,26 @@ export interface GPUInfo {
   temperature_c: number | null;
 }
 
+export type GrantPrincipalType = "group" | "role" | "subject" | "everyone";
+
+export interface KnowledgeBaseGrantEntry {
+  principal_type: GrantPrincipalType;
+  principal_value: string;
+}
+
+export interface KnowledgeBaseGrant extends KnowledgeBaseGrantEntry {
+  id: string;
+  permission: string;
+  created_at: string | null;
+  created_by: string | null;
+}
+
+export interface KnowledgeBaseAccessCheck {
+  unrestricted: boolean;
+  reason: string;
+  knowledge_bases: { id: string; name: string; slug: string }[];
+}
+
 export interface Principal {
   subject: string;
   roles: ("admin" | "querier" | "auditor")[];
