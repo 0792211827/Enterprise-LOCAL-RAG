@@ -9,10 +9,11 @@ platform a drop-in target for the stock ``openai`` package:
 
 Two behaviours to be explicit about, both surfaced in the admin UI:
 
-* **API keys are issued but NOT enforced.** A bearer token is parsed and, if it
-  matches a known key, its ``last_used_at`` is stamped -- but requests carrying
-  an unknown token, or no token at all, are still served. Treat this endpoint as
-  unauthenticated and do not expose it outside a trusted network.
+* **API keys are enforced only when ``API_KEYS__ENFORCE=true``.** Then a key
+  that exists, is not revoked and was issued for the requested application is
+  required. By default (false) a valid key is recorded (``last_used_at``) but
+  requests without one are still served -- anonymously with ``AUTH__MODE``
+  disabled, or as the authenticated user otherwise. See ``src/auth/completions``.
 * **Conversation history is ignored.** Retrieval and generation are driven by the
   last ``user`` message only; earlier turns are not carried into the prompt.
 """
@@ -21,12 +22,13 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from src.dependencies import EmbeddingsDep, LLMProviderDep, OpenSearchDep, SessionDep
-from src.repositories import ApiKeyRepository, ApplicationRepository
+from src.auth.completions import CompletionAuthError, authorize_completion
+from src.dependencies import EmbeddingsDep, LLMProviderDep, OpenSearchDep, SessionDep, SettingsDep
+from src.repositories import ApplicationRepository
 from src.schemas.api.domain import (
     ChatCompletionChoice,
     ChatCompletionRequest,
@@ -58,27 +60,6 @@ def _openai_error(status_code: int, message: str, code: str, err_type: str = "in
     )
 
 
-def _record_key_usage(session: Any, authorization: Optional[str]) -> None:
-    """Stamp last_used_at when a recognised key is presented.
-
-    Deliberately does not reject unknown or absent keys -- see the module
-    docstring. Any failure here is swallowed: observability must never break a
-    request on an endpoint that does not authenticate.
-    """
-    if not authorization or not authorization.lower().startswith("bearer "):
-        return
-    raw = authorization.split(" ", 1)[1].strip()
-    if not raw:
-        return
-    try:
-        repo = ApiKeyRepository(session)
-        key = repo.get_by_raw_key(raw)
-        if key is not None and key.revoked_at is None:
-            repo.touch(key)
-    except Exception:  # pragma: no cover - defensive
-        logger.debug("Could not record API key usage", exc_info=True)
-
-
 @router.post("/chat/completions")
 async def create_chat_completion(
     payload: ChatCompletionRequest,
@@ -87,18 +68,19 @@ async def create_chat_completion(
     opensearch: OpenSearchDep,
     embeddings: EmbeddingsDep,
     llm: LLMProviderDep,
-    authorization: Optional[str] = Header(default=None),
+    settings: SettingsDep,
 ):
     """Answer via a RAG application, addressed by its slug as ``model``."""
-    application = ApplicationRepository(session).get_by_slug(payload.model)
-    if application is None:
-        return _openai_error(
-            404,
-            f"Model '{payload.model}' not found. Use a RAG application slug as the model name.",
-            code="model_not_found",
+    try:
+        _principal, application = await authorize_completion(
+            request,
+            session,
+            settings,
+            model=payload.model,
+            find_application=lambda: ApplicationRepository(session).get_by_slug(payload.model),
         )
-
-    _record_key_usage(session, authorization)
+    except CompletionAuthError as exc:
+        return _openai_error(exc.status_code, exc.message, code=exc.code, err_type=exc.err_type)
 
     user_messages = [m for m in payload.messages if m.role == "user"]
     if not user_messages:

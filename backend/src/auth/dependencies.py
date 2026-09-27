@@ -11,7 +11,7 @@ from .principal import Principal, Role
 logger = logging.getLogger(__name__)
 
 
-def _authenticator(request: Request) -> Authenticator:
+def get_authenticator(request: Request) -> Authenticator:
     """Return the app's authenticator, building it from settings if absent.
 
     The lifespan normally installs it. Apps assembled without the lifespan (e.g.
@@ -31,7 +31,7 @@ def _authenticator(request: Request) -> Authenticator:
 async def get_principal(request: Request) -> Principal:
     """Resolve the caller, or reject the request with 401."""
     try:
-        principal = await _authenticator(request).authenticate(request)
+        principal = await get_authenticator(request).authenticate(request)
     except AuthenticationError as exc:
         logger.info("Authentication failed for %s %s: %s", request.method, request.url.path, exc)
         raise HTTPException(

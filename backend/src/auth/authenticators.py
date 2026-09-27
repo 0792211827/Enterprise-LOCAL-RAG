@@ -119,6 +119,10 @@ class JwtAuthenticator:
         token = token.strip()
         if scheme.lower() != "bearer" or not token:
             raise AuthenticationError("missing bearer token")
+        return await self.authenticate_token(token)
+
+    async def authenticate_token(self, token: str) -> Principal:
+        """Validate a raw JWT (e.g. one forwarded in an on-behalf-of header)."""
         claims = await self.decode(token)
         return self.principal_from_claims(claims)
 

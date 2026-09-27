@@ -234,6 +234,11 @@ class AuthSettings(BaseConfigSettings):
     # Also governs which peers may set X-Forwarded-For for client IP capture.
     trusted_proxy_cidrs: str = ""
 
+    # /v1/chat/completions: a host app authenticating with its application API
+    # key may forward its end user's identity here (a JWT in jwt mode), so
+    # retrieval runs with that user's permissions.
+    user_token_header: str = "X-User-Authorization"
+
     @property
     def algorithm_list(self) -> List[str]:
         return split_csv(self.algorithms)
@@ -253,6 +258,22 @@ class AuthSettings(BaseConfigSettings):
     @property
     def trusted_proxy_list(self) -> List[str]:
         return split_csv(self.trusted_proxy_cidrs)
+
+
+class ApiKeySettings(BaseConfigSettings):
+    """Per-application API keys on the OpenAI-compatible endpoint."""
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="API_KEYS__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    # false (default): keys are issued and usage is recorded, but requests
+    # without a valid key are still served, as before.
+    enforce: bool = False
 
 
 class Settings(BaseConfigSettings):
@@ -279,6 +300,7 @@ class Settings(BaseConfigSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     vlm: VLMSettings = Field(default_factory=VLMSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    api_keys: ApiKeySettings = Field(default_factory=ApiKeySettings)
 
     @field_validator("postgres_database_url")
     @classmethod
