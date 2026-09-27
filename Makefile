@@ -1,5 +1,5 @@
 .PHONY: help start stop restart status logs health setup format lint test test-cov \
-        frontend-setup frontend-dev frontend-build clean
+        frontend-setup frontend-dev frontend-build clean audit-purge
 
 # The virtualenv lives at the repo root, not in backend/. uv resolves this
 # relative to the project root (backend/, where pyproject.toml is).
@@ -56,6 +56,12 @@ test: ## Run tests
 
 test-cov: ## Run tests with coverage
 	cd backend && uv run python -m pytest --cov=src --cov-report=html
+
+# Audit retention. Runs inside the rag-api container, against its database.
+# DAYS defaults to AUDIT__RETENTION_DAYS; DRY_RUN=1 only counts.
+#   make audit-purge DAYS=365 DRY_RUN=1
+audit-purge: ## Delete audit events older than DAYS (or AUDIT__RETENTION_DAYS)
+	docker exec rag-api python -m src.cli.audit_purge $(if $(DAYS),--days $(DAYS)) $(if $(DRY_RUN),--dry-run)
 
 # Development (frontend)
 frontend-setup: ## Install frontend dependencies

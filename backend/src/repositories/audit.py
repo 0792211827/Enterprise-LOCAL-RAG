@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import String, and_, cast, delete, or_, select
+from sqlalchemy import String, and_, cast, delete, func, or_, select
 from sqlalchemy.orm import Session
 from src.models import AuditEvent
 
@@ -69,9 +69,13 @@ class AuditEventRepository:
         query = query.order_by(AuditEvent.occurred_at.desc(), AuditEvent.id.desc()).limit(limit)
         return list(self.session.scalars(query))
 
-    def purge_before(self, cutoff: datetime) -> int:
+    def count_before(self, cutoff: datetime) -> int:
+        query = select(func.count()).select_from(AuditEvent).where(AuditEvent.occurred_at < cutoff)
+        return self.session.scalar(query) or 0
+
+    def delete_before(self, cutoff: datetime) -> int:
+        """Delete events older than ``cutoff``; the caller commits."""
         result = self.session.execute(delete(AuditEvent).where(AuditEvent.occurred_at < cutoff))
-        self.session.commit()
         return result.rowcount or 0
 
     @staticmethod
