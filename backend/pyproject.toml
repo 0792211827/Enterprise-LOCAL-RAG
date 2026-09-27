@@ -23,6 +23,7 @@ dependencies = [
     "langchain>=0.3.0",
     "langchain-core>=0.3.0",
     "langchain-ollama>=0.2.0",
+    "pyjwt[crypto]>=2.9",
 ]
 readme = "README.md"
 
