@@ -1,11 +1,15 @@
 "use client";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { authApi } from "@/lib/api/resources";
 import { CallerBadge } from "./AuthStatus";
 
 // Assistants first: it is the object admins actually come here for. The
 // infrastructure pages are grouped under a Settings heading below.
-const NAV = [
+type NavItem = { href: string; label: string; icon: string; section?: string; role?: "auditor" };
+
+const NAV: NavItem[] = [
   { href: "/applications", label: "Assistants", icon: "◈" },
   { href: "/", label: "Dashboard", icon: "▦" },
   { href: "/knowledge-bases", label: "Knowledge Bases", icon: "▤" },
@@ -13,10 +17,15 @@ const NAV = [
   { href: "/providers", label: "Models & Providers", icon: "◍", section: "Settings" },
   { href: "/retrieval", label: "Retrieval", icon: "⇄" },
   { href: "/system", label: "System", icon: "❤" },
+  { href: "/audit", label: "Audit Log", icon: "☰", section: "Compliance", role: "auditor" },
 ];
 
 export function Sidebar({ onSignOut }: { onSignOut?: () => void }) {
   const pathname = usePathname();
+  // Same query (and cache entry) as the caller badge. With auth disabled the
+  // anonymous caller holds every role, so everything shows as before.
+  const me = useQuery({ queryKey: ["auth", "me"], queryFn: authApi.me, retry: false });
+  const nav = NAV.filter((item) => !item.role || me.data?.roles.includes(item.role));
   return (
     <aside className="fixed inset-y-0 left-0 w-64 border-r border-slate-200 bg-white">
       <div className="flex h-16 items-center gap-2 border-b border-slate-200 px-5">
@@ -29,7 +38,7 @@ export function Sidebar({ onSignOut }: { onSignOut?: () => void }) {
         </div>
       </div>
       <nav className="p-3">
-        {NAV.map((item) => {
+        {nav.map((item) => {
           const active =
             item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           const link = (

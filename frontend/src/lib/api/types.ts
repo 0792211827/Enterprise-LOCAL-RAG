@@ -304,3 +304,79 @@ export interface ChatCompletionResponse {
     total_tokens: number;
   };
 }
+
+export type AuditAction =
+  | "query.answer"
+  | "query.search"
+  | "admin.mutation"
+  | "access.denied"
+  | "audit.export"
+  | "audit.purge";
+
+export type AuditOutcome = "ok" | "denied" | "error";
+
+export interface AuditStatus {
+  level: "off" | "metadata" | "full";
+  fail_mode: "log" | "deny";
+  retention_days: number;
+}
+
+export interface AuditRetrievedChunk {
+  chunk_id?: string | null;
+  document_id?: string | null;
+  knowledge_base_id?: string | null;
+  score?: number | null;
+}
+
+export interface AuditEvent {
+  id: string;
+  occurred_at: string;
+  request_id: string | null;
+  action: AuditAction;
+  outcome: AuditOutcome;
+  status_code: number | null;
+  actor_subject: string | null;
+  actor_roles: string[] | null;
+  actor_groups: string[] | null;
+  auth_method: string | null;
+  api_key_id: string | null;
+  application_id: string | null;
+  source_ip: string | null;
+  user_agent: string | null;
+  http_method: string | null;
+  route: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  /** null: a global search (every knowledge base). */
+  requested_kb_ids: string[] | null;
+  /** null: unrestricted; []: none. */
+  permitted_kb_ids: string[] | null;
+  dropped_kb_ids: string[] | null;
+  /** null: no retrieval ran for this request (e.g. a cache hit). */
+  retrieved: AuditRetrievedChunk[] | null;
+  cache_hit: boolean | null;
+  model: string | null;
+  query_text: string | null;
+  answer_text: string | null;
+  query_sha256: string | null;
+  answer_sha256: string | null;
+  latency_ms: number | null;
+  error_code: string | null;
+  details: Record<string, unknown> | null;
+}
+
+export interface AuditEventPage {
+  items: AuditEvent[];
+  next_cursor: string | null;
+}
+
+export interface AuditFilters {
+  actor?: string;
+  action?: AuditAction | "";
+  outcome?: AuditOutcome | "";
+  application_id?: string;
+  knowledge_base_id?: string;
+  request_id?: string;
+  since?: string;
+  until?: string;
+}

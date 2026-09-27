@@ -62,6 +62,19 @@ export async function apiSend<T>(
   return res.json() as Promise<T>;
 }
 
+/** Fetch a file with the caller's credentials (a plain link would carry none). */
+export async function apiDownload(path: string): Promise<{ blob: Blob; filename: string | null }> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    cache: "no-store",
+    credentials: FETCH_CREDENTIALS,
+    headers: await authHeaders(),
+  });
+  if (!res.ok) return parseError(res);
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const filename = /filename="?([^";]+)"?/.exec(disposition)?.[1] ?? null;
+  return { blob: await res.blob(), filename };
+}
+
 export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",

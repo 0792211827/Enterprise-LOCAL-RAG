@@ -1,8 +1,12 @@
 import { FETCH_CREDENTIALS, authHeaders } from "@/lib/auth";
-import { API_BASE, apiGet, apiSend, apiUpload } from "./client";
+import { API_BASE, apiDownload, apiGet, apiSend, apiUpload } from "./client";
 import type {
   ApiKey,
   ApiKeyWithSecret,
+  AuditEvent,
+  AuditEventPage,
+  AuditFilters,
+  AuditStatus,
   Application,
   ApplicationAskResponse,
   ApplicationCreate,
@@ -138,6 +142,26 @@ export const retrievalApi = {
     apiSend<RetrievalConfig>("/api/v1/retrieval-configurations", "POST", payload),
   remove: (id: string) =>
     apiSend<void>(`/api/v1/retrieval-configurations/${id}`, "DELETE"),
+};
+
+function auditQuery(params: Record<string, string | number | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  }
+  const text = query.toString();
+  return text ? `?${text}` : "";
+}
+
+export const auditApi = {
+  status: () => apiGet<AuditStatus>("/api/v1/audit/status"),
+  events: (filters: AuditFilters, cursor?: string | null, limit = 50) =>
+    apiGet<AuditEventPage>(
+      `/api/v1/audit/events${auditQuery({ ...filters, limit, cursor: cursor ?? undefined })}`,
+    ),
+  event: (id: string) => apiGet<AuditEvent>(`/api/v1/audit/events/${id}`),
+  export: (filters: AuditFilters, format: "ndjson" | "csv") =>
+    apiDownload(`/api/v1/audit/export${auditQuery({ ...filters, format })}`),
 };
 
 export const authApi = {
