@@ -1,12 +1,13 @@
 import json
 import logging
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from src.dependencies import CacheDep, EmbeddingsDep, LangfuseDep, OllamaDep, OpenSearchDep, PrincipalDep
+from src.dependencies import CacheDep, EmbeddingsDep, LangfuseDep, OllamaDep, OpenSearchDep, PrincipalDep, ScopeDep
 from src.schemas.api.ask import AskRequest, AskResponse
+from src.services.access import RetrievalScope
 from src.services.langfuse.tracer import RAGTracer
 
 logger = logging.getLogger(__name__)
@@ -22,8 +23,17 @@ async def _prepare_chunks_and_sources(
     embeddings_service,
     rag_tracer: RAGTracer,
     trace=None,
+    scope: Optional[RetrievalScope] = None,
 ) -> tuple[List[Dict], List[str], List[str]]:
-    """Retrieve and prepare chunks for RAG with clean tracing."""
+    """Retrieve and prepare chunks for RAG with clean tracing.
+
+    These legacy endpoints search globally; with a restricted ``scope`` the
+    search is limited to the knowledge bases the caller may read, and an
+    empty scope searches nothing.
+    """
+    kb_ids = scope.restrict(None).permitted if scope is not None else None
+    if kb_ids == []:
+        return [], [], []
 
     # Handle embeddings for hybrid search
     query_embedding = None
@@ -47,6 +57,7 @@ async def _prepare_chunks_and_sources(
             categories=request.categories,
             use_hybrid=request.use_hybrid and query_embedding is not None,
             min_score=0.0,
+            knowledge_base_ids=kb_ids,
         )
 
         # Extract essential data for LLM
@@ -91,8 +102,10 @@ async def ask_question(
     langfuse_tracer: LangfuseDep,
     cache_client: CacheDep,
     principal: PrincipalDep,
+    scope: ScopeDep,
 ) -> AskResponse:
     """Clean RAG endpoint with essential tracing and exact match caching."""
+    scope_token = scope.cache_token()
 
     rag_tracer = RAGTracer(langfuse_tracer)
     start_time = time.time()
@@ -103,7 +116,7 @@ async def ask_question(
             cached_response = None
             if cache_client:
                 try:
-                    cached_response = await cache_client.find_cached_response(request)
+                    cached_response = await cache_client.find_cached_response(request, scope_token)
                     if cached_response:
                         logger.info("Returning cached response for exact query match")
                         return cached_response
@@ -115,7 +128,7 @@ async def ask_question(
 
             # Retrieve chunks
             chunks, sources, _ = await _prepare_chunks_and_sources(
-                request, opensearch_client, embeddings_service, rag_tracer, trace
+                request, opensearch_client, embeddings_service, rag_tracer, trace, scope=scope
             )
 
             if not chunks:
@@ -163,7 +176,7 @@ async def ask_question(
             # Store response in exact match cache
             if cache_client:
                 try:
-                    await cache_client.store_response(request, response)
+                    await cache_client.store_response(request, response, scope_token)
                 except Exception as e:
                     logger.warning(f"Failed to store response in cache: {e}")
 
@@ -183,11 +196,13 @@ async def ask_question_stream(
     langfuse_tracer: LangfuseDep,
     cache_client: CacheDep,
     principal: PrincipalDep,
+    scope: ScopeDep,
 ) -> StreamingResponse:
     """Clean streaming RAG endpoint."""
 
-    # Resolved to a plain value now: the generator runs after the handler returns.
+    # Resolved to plain values now: the generator runs after the handler returns.
     subject = principal.subject
+    scope_token = scope.cache_token()
 
     async def generate_stream():
         rag_tracer = RAGTracer(langfuse_tracer)
@@ -198,7 +213,7 @@ async def ask_question_stream(
                 # Check exact cache first
                 if cache_client:
                     try:
-                        cached_response = await cache_client.find_cached_response(request)
+                        cached_response = await cache_client.find_cached_response(request, scope_token)
                         if cached_response:
                             logger.info("Returning cached response for exact streaming query match")
 
@@ -222,7 +237,7 @@ async def ask_question_stream(
 
                 # Retrieve chunks
                 chunks, sources, _ = await _prepare_chunks_and_sources(
-                    request, opensearch_client, embeddings_service, rag_tracer, trace
+                    request, opensearch_client, embeddings_service, rag_tracer, trace, scope=scope
                 )
 
                 if not chunks:
@@ -271,7 +286,7 @@ async def ask_question_stream(
                             chunks_used=len(chunks),
                             search_mode=search_mode,
                         )
-                        await cache_client.store_response(request, response_to_cache)
+                        await cache_client.store_response(request, response_to_cache, scope_token)
                     except Exception as e:
                         logger.warning(f"Failed to store streaming response in cache: {e}")
 
