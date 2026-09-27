@@ -6,9 +6,9 @@ from typing import Any, Mapping, Optional, Protocol
 
 import jwt
 from fastapi import Request
-from starlette.concurrency import run_in_threadpool
 from src.config import AuthSettings, Settings
 from src.middleware.network import is_trusted, parse_networks
+from starlette.concurrency import run_in_threadpool
 
 from .principal import AuthMethod, Principal, as_values, claim_at, map_roles
 

@@ -10,10 +10,10 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from starlette.requests import Request
 from src.auth import AuthenticationError, Role
 from src.auth.authenticators import JwtAuthenticator, make_authenticator
 from src.config import AuthSettings, Settings
+from starlette.requests import Request
 
 ISSUER = "https://idp.example.internal/realms/acme"
 AUDIENCE = "rag-platform"

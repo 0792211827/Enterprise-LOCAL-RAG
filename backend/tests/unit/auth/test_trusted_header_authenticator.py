@@ -1,10 +1,10 @@
 """Identity asserted by an authenticating reverse proxy."""
 
 import pytest
-from starlette.requests import Request
 from src.auth import AuthenticationError, Role
 from src.auth.authenticators import TrustedHeaderAuthenticator, make_authenticator
 from src.config import AuthSettings, Settings
+from starlette.requests import Request
 
 
 def _settings(**overrides) -> AuthSettings:

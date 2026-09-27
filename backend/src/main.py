@@ -12,8 +12,8 @@ from src.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
 from src.routers import (
     agentic_ask,
     api_keys,
-    auth,
     applications,
+    auth,
     chat_completions,
     documents,
     hybrid_search,
