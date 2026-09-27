@@ -102,20 +102,24 @@ make clean     # tear down + prune
 
 ## 🔌 API Overview
 
-All application routes are served under `/api/v1` (search under `/hybrid-search`).
+All application routes are served under `/api/v1`, except the
+OpenAI-compatible endpoint, which is mounted at bare `/v1` so stock OpenAI SDK
+clients work unmodified.
 
 | Area | Route prefix |
 |------|--------------|
-| Health | `GET /health` |
-| Hybrid search | `/hybrid-search` |
+| Health | `GET /api/v1/health` |
+| Hybrid search | `/api/v1/hybrid-search` |
 | Ask / Streaming RAG | `/api/v1/ask`, `/api/v1/stream` |
-| Agentic RAG | `/api/v1` (`agentic-rag`) |
+| Agentic RAG | `/api/v1/ask-agentic`, `/api/v1/feedback` |
 | Knowledge bases | `/api/v1/knowledge-bases` |
-| Documents | `/api/v1/documents` |
+| Documents | `/api/v1/documents`, `/api/v1/ingestion-jobs` |
 | Applications | `/api/v1/applications` |
+| Application API keys | `/api/v1/applications/{id}/api-keys` |
 | Providers | `/api/v1/providers` |
 | Retrieval configs | `/api/v1/retrieval-configurations` |
 | System | `/api/v1/system` |
+| OpenAI-compatible chat | `POST /v1/chat/completions` |
 
 Full, interactive documentation is available at `/docs`.
 
@@ -154,12 +158,18 @@ documented list. Key groups:
 - **VLM** (`VLM__*`) — optional vision-language model (off by default).
 - **OpenSearch** (`OPENSEARCH__*`) — index and hybrid-search settings.
 - **Chunking** (`CHUNKING__*`) — chunk size, overlap, section-based mode.
-- **Redis** (`REDIS__*`) and **Langfuse** (`LANGFUSE_*`).
+- **Redis** (`REDIS__*`) and **Langfuse** client (`LANGFUSE__*` — note the
+  double underscore; single-underscore `LANGFUSE_*` names configure the
+  self-hosted Langfuse server in compose, not the backend).
 
 ## 🧪 Testing
 
+The virtualenv lives at the repo root (`.venv`), not in `backend/`. The Make
+targets handle this; when calling `uv` directly, point it there first:
+
 ```bash
 cd backend
+export UV_PROJECT_ENVIRONMENT=../.venv  # otherwise uv creates backend/.venv
 uv sync                                 # install dependencies
 uv run python -m pytest                 # run the backend test suite
 uv run python -m pytest --ignore=tests/integration   # offline only
