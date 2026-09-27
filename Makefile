@@ -1,5 +1,5 @@
 .PHONY: help start stop restart status logs health setup format lint test test-cov \
-        frontend-setup frontend-dev frontend-build clean audit-purge
+        frontend-setup frontend-dev frontend-build clean audit-purge start-hardened health-hardened
 
 # The virtualenv lives at the repo root, not in backend/. uv resolves this
 # relative to the project root (backend/, where pyproject.toml is).
@@ -13,6 +13,9 @@ help: ## Show this help message
 # Service management
 start: ## Start all services
 	docker compose up --build -d
+
+start-hardened: ## Start with only the API/UIs published, on 127.0.0.1 (see compose.hardened.yml)
+	docker compose -f compose.yml -f compose.hardened.yml up --build -d
 
 stop: ## Stop all services
 	docker compose down
@@ -39,6 +42,14 @@ health: ## Check all services health
 	@out=$$(curl -sf http://localhost:$(API_PORT)/api/v1/health) && echo "$$out" | jq . || echo "API not responding"
 	@out=$$(curl -sf http://localhost:9200/_cluster/health) && echo "$$out" | jq . || echo "OpenSearch not responding"
 	@out=$$(curl -sf http://localhost:11434/api/version) && echo "$$out" | jq . || echo "Ollama not responding"
+
+# The hardened overlay publishes no datastore ports, so OpenSearch and Ollama
+# are checked from inside the network, through the API container.
+health-hardened: ## Check health of a stack started with start-hardened
+	@echo "Checking service health (hardened)..."
+	@out=$$(curl -sf http://127.0.0.1:$(API_PORT)/api/v1/health) && echo "$$out" | jq . || echo "API not responding"
+	@out=$$(docker exec rag-api python -c "import urllib.request; print(urllib.request.urlopen('http://opensearch:9200/_cluster/health').read().decode())" 2>/dev/null) && echo "$$out" | jq . || echo "OpenSearch not responding"
+	@out=$$(docker exec rag-api python -c "import urllib.request; print(urllib.request.urlopen('http://ollama:11434/api/version').read().decode())" 2>/dev/null) && echo "$$out" | jq . || echo "Ollama not responding"
 
 # Development (backend)
 setup: ## Install Python dependencies

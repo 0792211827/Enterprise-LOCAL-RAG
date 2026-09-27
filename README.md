@@ -93,9 +93,11 @@ at **http://localhost:8000/docs**.
 
 ```bash
 make start     # build + start all services
+make start-hardened  # same, publishing only the API and UIs, on 127.0.0.1
 make stop      # stop services
 make logs      # tail logs
 make health    # check API / OpenSearch / Ollama
+make health-hardened # the same for a hardened stack (checks from inside the network)
 make test      # run backend tests (cd backend && uv run python -m pytest)
 make lint      # ruff + mypy
 make frontend-dev    # frontend dev server on :3001
@@ -387,6 +389,55 @@ GRANT SELECT, INSERT, DELETE ON audit_events TO rag_retention;  -- purge job onl
 new ID is only in the response body. A tamper-evidence hash chain is a planned
 follow-up.
 
+## 🛡️ Production hardening
+
+`compose.yml` publishes every service on every host interface, which is
+convenient on a laptop and wrong anywhere else. The opt-in
+`compose.hardened.yml` overlay removes that:
+
+```bash
+make start-hardened   # docker compose -f compose.yml -f compose.hardened.yml up --build -d
+make health-hardened
+```
+
+| Service | Default stack | Hardened |
+|---------|---------------|----------|
+| API, admin UI, Langfuse UI | `0.0.0.0` | `127.0.0.1` only. Put your reverse proxy or ingress in front. |
+| PostgreSQL, Redis, OpenSearch (+ Dashboards), Ollama, ClickHouse, Langfuse's Postgres/Redis/MinIO/worker | `0.0.0.0` | Not published. Reachable only by the other containers on `rag-network`. |
+
+The containers talk to each other exactly as before (`postgres:5432`,
+`opensearch:9200`, …), so nothing else changes. Optional variables:
+`RAG_BIND_ADDRESS` publishes on a specific internal interface instead of
+loopback, and `RAG_API_PORT`, `RAG_FRONTEND_PORT` and `RAG_LANGFUSE_PORT`
+change the host ports. The admin UI calls the API from the browser at
+`NEXT_PUBLIC_API_URL`, which is baked in at build time. Set it to the URL your
+proxy serves the API on. It stacks with other overlays; put it last:
+`docker compose -f compose.yml -f compose.override.yml -f compose.hardened.yml up -d`.
+
+Plain `make health` reports OpenSearch and Ollama as "not responding" on a
+hardened stack. That's the point: their ports are closed. `make
+health-hardened` checks them from inside the network instead.
+
+**The overlay is network isolation, and only that.** Before going live:
+
+- Turn on identity: `AUTH__MODE=jwt` or `trusted_header` (see
+  [Authentication](#-authentication)). For the admin UI, also set
+  `NEXT_PUBLIC_AUTH_MODE`. If you use `trusted_header`, make sure the API is
+  reachable only through the proxy that sets the headers.
+- Turn on the audit log: `AUDIT__LEVEL=metadata` or `full`.
+- Change the default credentials. PostgreSQL's `rag_password` is in
+  `compose.yml` and `POSTGRES_DATABASE_URL`. Regenerate the Langfuse secrets
+  in `.env` (see `.env.example`).
+- Know what is still unauthenticated *inside* `rag-network`: OpenSearch runs
+  with its security plugin disabled, and Redis has no password by default.
+  Anything that can join the network can read the index and the answer cache.
+  Enabling OpenSearch TLS and credentials is a planned follow-up.
+- The overlay also closes Langfuse's browser media-upload endpoint (MinIO on
+  `:9090`). It's used only for multimodal trace attachments, which this
+  platform never sends.
+
+Roll back by starting without the overlay (`make start`).
+
 ## 🧪 Testing
 
 The virtualenv lives at the repo root (`.venv`), not in `backend/`. The Make
@@ -410,6 +461,7 @@ Or from the repo root: `make test`, `make frontend-build`.
 ```
 .
 ├── compose.yml              # Full local stack (API, frontend, datastores, Langfuse)
+├── compose.hardened.yml     # Opt-in overlay: publish only the API/UIs, on 127.0.0.1
 ├── Makefile                 # Common developer commands
 ├── .env / .env.example      # Shared config for compose and the backend
 ├── backend/                 # FastAPI backend

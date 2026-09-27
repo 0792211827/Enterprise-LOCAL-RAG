@@ -1,7 +1,7 @@
 # Integration plan (Phase 4)
 
-> **Implementation status (2026-09-27).** S1, S2/S2a/F1, S3 and S4 are
-> implemented on `feature/owui-gap-analysis`. S5, S3a and the whole
+> **Implementation status (2026-09-27).** S1, S2/S2a/F1, S3, S4 and S5 are
+> implemented on `feature/owui-gap-analysis`. S3a and the whole
 > Hardware/Backend track (H1–H5) have not started. Where S4 differs from the
 > plan below, see "As built" at the end of the S4 section.
 
@@ -715,6 +715,19 @@ feature.
 ### 6. Rollback
 
 Start without the overlay (`make start`).
+
+### As built (differences from this plan)
+
+- Published ports come from variables (`RAG_BIND_ADDRESS`, `RAG_API_PORT`,
+  `RAG_FRONTEND_PORT`, `RAG_LANGFUSE_PORT`; defaults `127.0.0.1` and the
+  usual ports), so buyers can bind an internal interface and the overlay
+  stacks with host-port remaps. Removed ports use `!reset []`.
+- Also adds `make health-hardened`, which checks OpenSearch and Ollama from
+  inside the network through the API container, so a healthy hardened stack
+  doesn't read as broken.
+- The README checklist also covers default credentials, Redis having no
+  password inside the network, and the Langfuse media-upload endpoint the
+  overlay closes.
 
 ---
 
