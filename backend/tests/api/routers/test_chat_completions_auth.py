@@ -284,3 +284,76 @@ class TestResolvedPrincipal:
         app = _new_app(client, "HR Bot")
         principal = await resolve(client, app["slug"], {})
         assert principal.auth_method == "disabled"
+
+
+class TestScopedRetrieval:
+    """Grants narrow what /v1/chat/completions retrieves, per caller."""
+
+    @pytest.fixture
+    def setup(self, make_client, idp_key):
+        client = make_client(auth="jwt")
+        finance = client.post("/api/v1/knowledge-bases", json={"name": "Finance"}).json()["id"]
+        hr = client.post("/api/v1/knowledge-bases", json={"name": "HR"}).json()["id"]
+        granted = client.put(
+            f"/api/v1/knowledge-bases/{finance}/grants",
+            json={"grants": [{"principal_type": "group", "principal_value": "finance"}]},
+            headers=_bearer(_token(idp_key, roles=("rag-admin",), sub="admin")),
+        )
+        assert granted.status_code == 200, granted.text
+        app = client.post("/api/v1/applications", json={"name": "Ops Bot", "knowledge_base_ids": [finance, hr]}).json()
+        opensearch = client.app.dependency_overrides[get_opensearch_client]()
+        llm = client.app.dependency_overrides[get_llm_provider]()
+        return client, app, finance, hr, opensearch, llm
+
+    def _ask(self, client, slug, headers, stream=False):
+        return client.post("/v1/chat/completions", json={**_payload(slug), "stream": stream}, headers=headers)
+
+    def test_group_member_searches_only_granted_knowledge_bases(self, setup, idp_key):
+        client, app, finance, _hr, opensearch, _ = setup
+        response = self._ask(client, app["slug"], _bearer(_token(idp_key, groups=["finance"])))
+        assert response.status_code == 200
+        assert opensearch.search_unified.call_args.kwargs["knowledge_base_ids"] == [finance]
+
+    def test_user_without_grants_is_told_and_nothing_is_searched(self, setup, idp_key):
+        from src.services.applications import NO_PERMITTED_KNOWLEDGE_MESSAGE
+
+        client, app, _f, _h, opensearch, llm = setup
+        response = self._ask(client, app["slug"], _bearer(_token(idp_key, groups=["sales"])))
+        assert response.status_code == 200
+        assert response.json()["choices"][0]["message"]["content"] == NO_PERMITTED_KNOWLEDGE_MESSAGE
+        opensearch.search_unified.assert_not_called()
+        llm.generate_rag_answer.assert_not_called()
+
+    def test_streaming_is_scoped_too(self, setup, idp_key):
+        from src.services.applications import NO_PERMITTED_KNOWLEDGE_MESSAGE
+
+        client, app, _f, _h, opensearch, _ = setup
+        response = self._ask(client, app["slug"], _bearer(_token(idp_key)), stream=True)
+        assert NO_PERMITTED_KNOWLEDGE_MESSAGE in response.text
+        opensearch.search_unified.assert_not_called()
+
+    def test_application_key_alone_uses_all_application_knowledge_bases(self, setup):
+        client, app, finance, hr, opensearch, _ = setup
+        response = self._ask(client, app["slug"], _bearer(app["api_key"]))
+        assert response.status_code == 200
+        assert sorted(opensearch.search_unified.call_args.kwargs["knowledge_base_ids"]) == sorted([finance, hr])
+
+    def test_forwarded_user_narrows_the_application_key(self, setup, idp_key):
+        client, app, finance, _hr, opensearch, _ = setup
+        headers = {**_bearer(app["api_key"]), "X-User-Authorization": f"Bearer {_token(idp_key, groups=['finance'])}"}
+        assert self._ask(client, app["slug"], headers).status_code == 200
+        assert opensearch.search_unified.call_args.kwargs["knowledge_base_ids"] == [finance]
+
+
+def test_playground_ask_honours_the_scope(make_client):
+    from src.dependencies import get_retrieval_scope
+    from src.services.access import RetrievalScope
+    from src.services.applications import NO_PERMITTED_KNOWLEDGE_MESSAGE
+
+    client = make_client()
+    app = _new_app(client, "Playground Bot")
+    client.app.dependency_overrides[get_retrieval_scope] = lambda: RetrievalScope(kb_ids=frozenset(), reason="grants")
+    response = client.post(f"/api/v1/applications/{app['id']}/ask", json={"query": "How much leave?"})
+    assert response.status_code == 200, response.text
+    assert response.json()["answer"] == NO_PERMITTED_KNOWLEDGE_MESSAGE
+    client.app.dependency_overrides[get_opensearch_client]().search_unified.assert_not_called()

@@ -8,6 +8,7 @@ from src.dependencies import (
     EmbeddingsDep,
     LLMProviderDep,
     OpenSearchDep,
+    ScopeDep,
     SessionDep,
 )
 from src.models.application import RAGApplication
@@ -155,6 +156,7 @@ async def ask_application(
     opensearch: OpenSearchDep,
     embeddings: EmbeddingsDep,
     llm: LLMProviderDep,
+    scope: ScopeDep,
 ):
     """Answer a question using the application's stored configuration.
 
@@ -173,6 +175,7 @@ async def ask_application(
         embeddings=embeddings,
         llm=llm,
         top_k_override=payload.top_k,
+        scope=scope,
     )
 
     sources = [

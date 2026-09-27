@@ -36,9 +36,10 @@ from src.schemas.api.domain import (
     ChatCompletionUsage,
     ChatMessage,
 )
+from src.services.access import resolve_scope
 from src.services.applications import (
-    NO_KNOWLEDGE_BASE_MESSAGE,
     answer_for_application,
+    blocked_message,
     effective_system_prompt,
     retrieve_for_application,
 )
@@ -72,7 +73,7 @@ async def create_chat_completion(
 ):
     """Answer via a RAG application, addressed by its slug as ``model``."""
     try:
-        _principal, application = await authorize_completion(
+        principal, application = await authorize_completion(
             request,
             session,
             settings,
@@ -81,6 +82,10 @@ async def create_chat_completion(
         )
     except CompletionAuthError as exc:
         return _openai_error(exc.status_code, exc.message, code=exc.code, err_type=exc.err_type)
+
+    # Resolved from the principal authorize_completion established -- the end
+    # user when a host app forwarded one, so retrieval honours their grants.
+    scope = resolve_scope(principal, session, settings)
 
     user_messages = [m for m in payload.messages if m.role == "user"]
     if not user_messages:
@@ -104,7 +109,9 @@ async def create_chat_completion(
         # request-scoped session is closed and any lazy load on the application
         # (e.g. knowledge_bases) would raise. Everything the generator needs is
         # resolved to plain values first.
-        chunks, _hits, _mode, model = await retrieve_for_application(application, query, opensearch, embeddings)
+        chunks, _hits, _mode, model = await retrieve_for_application(
+            application, query, opensearch, embeddings, scope=scope
+        )
         return StreamingResponse(
             _stream_completion(
                 slug=application.slug,
@@ -113,6 +120,7 @@ async def create_chat_completion(
                 chunks=chunks,
                 query=query,
                 llm=llm,
+                blocked=blocked_message(application) if chunks is None else None,
             ),
             media_type="text/event-stream",
         )
@@ -124,6 +132,7 @@ async def create_chat_completion(
         embeddings=embeddings,
         llm=llm,
         system_prompt_override=system_override,
+        scope=scope,
     )
 
     return ChatCompletionResponse(
@@ -141,7 +150,7 @@ async def create_chat_completion(
     )
 
 
-async def _stream_completion(slug, model, system_prompt, chunks, query, llm):
+async def _stream_completion(slug, model, system_prompt, chunks, query, llm, blocked=None):
     """Emit an SSE stream in the OpenAI chat.completion.chunk format.
 
     Takes only plain values -- no ORM objects -- because this runs after the
@@ -165,7 +174,7 @@ async def _stream_completion(slug, model, system_prompt, chunks, query, llm):
         yield envelope({"role": "assistant"})
 
         if chunks is None:
-            yield envelope({"content": NO_KNOWLEDGE_BASE_MESSAGE})
+            yield envelope({"content": blocked})
         else:
             async for chunk in llm.generate_rag_answer_stream(
                 query=query, chunks=chunks, model=model, system_prompt=system_prompt
