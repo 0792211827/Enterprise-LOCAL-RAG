@@ -119,6 +119,7 @@ clients work unmodified.
 | Providers | `/api/v1/providers` |
 | Retrieval configs | `/api/v1/retrieval-configurations` |
 | System | `/api/v1/system` |
+| Caller identity | `GET /api/v1/auth/me` |
 | OpenAI-compatible chat | `POST /v1/chat/completions` |
 
 Full, interactive documentation is available at `/docs`.
@@ -161,6 +162,56 @@ documented list. Key groups:
 - **Redis** (`REDIS__*`) and **Langfuse** client (`LANGFUSE__*` — note the
   double underscore; single-underscore `LANGFUSE_*` names configure the
   self-hosted Langfuse server in compose, not the backend).
+- **Authentication** (`AUTH__*`) — see below. Off by default.
+
+## 🔐 Authentication
+
+The platform sits behind your existing identity provider. It never issues
+sessions, stores passwords or runs a login flow of its own: it **accepts** an
+identity your SSO already established. `AUTH__MODE` selects how:
+
+| Mode | Use when | What is checked |
+|------|----------|-----------------|
+| `disabled` (default) | Local development, trusted networks | Nothing — every request is an anonymous caller with all roles, exactly as before. |
+| `jwt` | Your apps or gateway forward the user's access token | `Authorization: Bearer <JWT>` on every request: signature (your IdP's JWKS, or a static PEM for air-gapped sites), `iss`, `aud`, `exp`. HS*/`none` algorithms are refused. |
+| `trusted_header` | An authenticating reverse proxy (oauth2-proxy, Envoy/Istio ext-authz, a corporate gateway) fronts the API | Identity headers, honoured **only** from `AUTH__TRUSTED_PROXY_CIDRS`. Make sure the API port is reachable only through that proxy. |
+
+**Roles.** IdP role values map to three platform roles through
+`AUTH__ADMIN_ROLES`, `AUTH__QUERY_ROLES` and `AUTH__AUDITOR_ROLES`. A caller who
+maps to none is rejected, so a valid token for some unrelated application of
+the same IdP gets nothing.
+
+| Role | Intended for |
+|------|--------------|
+| `admin` | The control plane: knowledge bases, documents, applications, keys. Also holds `querier`, and `auditor` unless `AUTH__ADMIN_CAN_READ_AUDIT=false`. |
+| `querier` | The answer and search endpoints |
+| `auditor` | Reading the audit log |
+
+Example for Keycloak:
+
+```bash
+AUTH__MODE=jwt
+AUTH__JWKS_URL=https://sso.corp.internal/realms/acme/protocol/openid-connect/certs
+AUTH__ISSUER=https://sso.corp.internal/realms/acme
+AUTH__AUDIENCE=rag-platform
+AUTH__ROLES_CLAIM=realm_access.roles
+```
+
+Check how a token maps with `GET /api/v1/auth/me`. It returns the subject, the
+mapped roles, groups, and the raw IdP role values. Failed authentication
+returns a generic `401`; the specific reason (expired, wrong audience, unknown
+key…) goes to the API log. An incomplete configuration stops the API at
+startup instead.
+
+Every response carries an `X-Request-ID` header, reused if the caller sent a
+valid one. Quote it when reporting a problem.
+
+> **Status:** identity intake is live. In `jwt` and `trusted_header` modes,
+> `/api/v1/ask`, `/api/v1/stream`, `/api/v1/ask-agentic` and `/api/v1/auth/me`
+> already require a valid identity, because they attribute traces to the
+> caller. **All other routes are not yet restricted.** Role enforcement,
+> API-key enforcement and knowledge-base permissions are still being added (see
+> `docs/audit/integration-plan.md`).
 
 ## 🧪 Testing
 
