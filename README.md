@@ -211,10 +211,49 @@ startup instead.
 Every response carries an `X-Request-ID` header, reused if the caller sent a
 valid one. Quote it when reporting a problem.
 
-> **Status:** identity intake, role enforcement and API-key enforcement are
-> live. Knowledge-base permissions (which documents a caller may retrieve)
-> and the audit log are still being added (see
-> `docs/audit/integration-plan.md`).
+> **Status:** identity intake, role enforcement, API-key enforcement and
+> knowledge-base permissions are live. The audit log is still being added
+> (see `docs/audit/integration-plan.md`).
+
+### Knowledge-base permissions
+
+With authentication on, a caller retrieves only from knowledge bases they
+have been **granted**. This applies on every path that searches:
+`/api/v1/ask`, `/stream`, `/ask-agentic`, `/hybrid-search`, the playground,
+and `/v1/chat/completions`. Grants name IdP claim values, so group membership
+stays managed in your IdP:
+
+| Grant type | Matches |
+|------------|---------|
+| `group` | a value in the caller's groups claim (`AUTH__GROUPS_CLAIM`) |
+| `role` | a raw value in the caller's roles claim |
+| `subject` | one specific caller |
+| `everyone` | any authenticated querier |
+
+Manage grants in the admin UI (**Knowledge Bases → Access**) or via
+`GET`/`PUT /api/v1/knowledge-bases/{id}/grants`. The same panel, or
+`GET /api/v1/knowledge-bases/access-check?subject=…&groups=…`, previews what a
+given identity could retrieve.
+
+How the rules combine:
+
+- An assistant answers only from the knowledge bases that are both attached
+  to it and granted to the caller. If none are, the caller is told so, and
+  nothing is searched and no model is called.
+- A host app calling `/v1` with only its application key gets the
+  assistant's full set of knowledge bases. If it forwards an end user
+  (`X-User-Authorization`), that user's grants apply.
+- Admins are bound by grants like everyone else unless
+  `AUTH__ADMIN_BYPASS_RETRIEVAL=true`.
+- Cached answers are only reused between callers with an identical set of
+  permitted knowledge bases.
+
+**Turning it on for an existing deployment.** With the default
+`AUTH__UNGRANTED_KB_ACCESS=deny`, enabling `AUTH__MODE` makes every knowledge
+base unreadable until it has grants. To migrate gradually, start with
+`allow`: knowledge bases that have no grants yet stay readable by all
+queriers. Add grants, check them with the access preview, then switch to
+`deny`.
 
 ### API keys on `/v1/chat/completions`
 
