@@ -120,6 +120,7 @@ clients work unmodified.
 | Retrieval configs | `/api/v1/retrieval-configurations` |
 | System | `/api/v1/system` |
 | Caller identity | `GET /api/v1/auth/me` |
+| Active access controls | `GET /api/v1/system/security` |
 | OpenAI-compatible chat | `POST /v1/chat/completions` |
 
 Full, interactive documentation is available at `/docs`.
@@ -181,11 +182,15 @@ identity your SSO already established. `AUTH__MODE` selects how:
 maps to none is rejected, so a valid token for some unrelated application of
 the same IdP gets nothing.
 
-| Role | Intended for |
-|------|--------------|
-| `admin` | The control plane: knowledge bases, documents, applications, keys. Also holds `querier`, and `auditor` unless `AUTH__ADMIN_CAN_READ_AUDIT=false`. |
-| `querier` | The answer and search endpoints |
-| `auditor` | Reading the audit log |
+| Role | Can use |
+|------|---------|
+| `admin` | The control plane: knowledge bases, documents and ingestion jobs, applications (including the playground), providers, retrieval configs, API keys, `/api/v1/system/*`. Also holds `querier`, and holds `auditor` unless `AUTH__ADMIN_CAN_READ_AUDIT=false`. |
+| `querier` | `/api/v1/ask`, `/stream`, `/ask-agentic`, `/feedback`, `/hybrid-search`, and `/v1/chat/completions` |
+| `auditor` | The audit log |
+
+Only `GET /api/v1/health` is public. The policy is applied once per router in
+`backend/src/main.py`, and `tests/unit/test_route_policy.py` fails if a route
+is added without one. Callers without a required role get `403`.
 
 Example for Keycloak:
 
@@ -206,12 +211,64 @@ startup instead.
 Every response carries an `X-Request-ID` header, reused if the caller sent a
 valid one. Quote it when reporting a problem.
 
-> **Status:** identity intake is live. In `jwt` and `trusted_header` modes,
-> `/api/v1/ask`, `/api/v1/stream`, `/api/v1/ask-agentic` and `/api/v1/auth/me`
-> already require a valid identity, because they attribute traces to the
-> caller. **All other routes are not yet restricted.** Role enforcement,
-> API-key enforcement and knowledge-base permissions are still being added (see
+> **Status:** identity intake, role enforcement and API-key enforcement are
+> live. Knowledge-base permissions (which documents a caller may retrieve)
+> and the audit log are still being added (see
 > `docs/audit/integration-plan.md`).
+
+### API keys on `/v1/chat/completions`
+
+Each application gets API keys (`sk-...`). With `API_KEYS__ENFORCE=true`, a
+request must present an active key **issued for that application**. A key for
+a different application is rejected. With the default `false`, a valid key's
+use is recorded, but requests without one are still served (as the
+authenticated user when `AUTH__MODE` is on). The admin UI's Endpoint panel
+shows which applies.
+
+A host application can authenticate with its key **and** say which end user
+it's acting for, by forwarding that user's IdP token. The request is then
+attributed to the user, not the application:
+
+```python
+client = OpenAI(
+    base_url="http://rag.internal:8000/v1",
+    api_key=APP_KEY,
+    default_headers={"X-User-Authorization": f"Bearer {user_access_token}"},
+)
+```
+
+An invalid forwarded token is rejected (`401`). It never falls back to the
+application's own access.
+
+### Admin UI sign-in
+
+The admin UI picks how to authenticate at **build time** with
+`NEXT_PUBLIC_AUTH_MODE`:
+
+| Value | Use with | Behaviour |
+|-------|----------|-----------|
+| `none` (default) | `AUTH__MODE=disabled` | No credentials, as before. |
+| `proxy` | `AUTH__MODE=trusted_header` | The UI and API sit behind the same authenticating proxy. Requests carry the proxy's session cookie. |
+| `oidc` | `AUTH__MODE=jwt` | Authorization-code + PKCE sign-in against your IdP as a public client. The access token is kept in memory only. |
+
+For `oidc`, register a public client whose redirect URI is
+`https://<ui-host>/auth/callback`. Then pass the build args through a compose
+override. `compose.yml` itself needs no change:
+
+```yaml
+# compose.override.yml
+services:
+  frontend:
+    build:
+      args:
+        NEXT_PUBLIC_AUTH_MODE: oidc
+        NEXT_PUBLIC_OIDC_ISSUER: https://sso.corp.internal/realms/acme
+        NEXT_PUBLIC_OIDC_CLIENT_ID: rag-admin-ui
+```
+
+The IdP's access token must carry the audience in `AUTH__AUDIENCE`. The
+sidebar shows the signed-in subject and roles. An expired session raises a
+"sign in again" banner.
 
 ## 🧪 Testing
 
