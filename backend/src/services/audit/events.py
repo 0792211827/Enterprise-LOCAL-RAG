@@ -6,17 +6,24 @@ reduced to plain values up front (``AuditContext.capture``), so streaming
 generators can record after the request handler has returned.
 """
 
+import asyncio
+import logging
 import time
+from contextlib import aclosing, contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, Iterable, Iterator, List, Optional
 from uuid import UUID
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from src.auth import Principal
 from src.models import AuditOutcome
 from src.services.access import ScopeDecision
 
-from .recorder import AuditRecord, AuditRecorder
+from .recorder import AuditRecord, AuditRecorder, AuditWriteError
+
+logger = logging.getLogger(__name__)
+
+AUDIT_UNAVAILABLE_MESSAGE = "The audit log is unavailable, so this request was refused."
 
 
 @dataclass(frozen=True)
@@ -154,3 +161,125 @@ def record_query_event(
             details=details,
         )
     )
+
+
+def error_code_for(exc: BaseException) -> str:
+    if isinstance(exc, HTTPException):
+        return f"http_{exc.status_code}"
+    if isinstance(exc, (GeneratorExit, asyncio.CancelledError)):
+        return "client_disconnected"
+    return type(exc).__name__
+
+
+class QueryAudit:
+    """Collects one query's audit facts while it runs, and records them once.
+
+    The answer path fills in ``answer``, ``hits``, ``model`` and so on as they
+    become known; whichever way the request ends -- a normal return, an early
+    return, an exception, a client disconnect -- exactly one event is written.
+    """
+
+    def __init__(
+        self,
+        recorder: AuditRecorder,
+        context: AuditContext,
+        *,
+        action: str,
+        query: Optional[str],
+        decision: Optional[ScopeDecision] = None,
+        application_id: Optional[UUID] = None,
+    ):
+        self.recorder = recorder
+        self.context = context
+        self.action = action
+        self.query = query
+        self.decision = decision
+        self.application_id = application_id
+        self.answer: Optional[str] = None
+        self.hits: Optional[Iterable[Dict[str, Any]]] = None
+        self.model: Optional[str] = None
+        self.cache_hit: Optional[bool] = None
+        self.outcome: Optional[str] = None
+        self.error_code: Optional[str] = None
+        self.details: Optional[Dict[str, Any]] = None
+        self._started = time.perf_counter()
+        self._recorded = False
+
+    def fail(self, exc: BaseException) -> None:
+        """Mark the query as failed (for paths that handle their own errors)."""
+        self.outcome = "error"
+        self.error_code = error_code_for(exc)
+
+    def record(self) -> None:
+        """Write the event, once. Raises ``AuditWriteError`` under fail_mode=deny."""
+        if self._recorded:
+            return
+        self._recorded = True
+        record_query_event(
+            self.recorder,
+            self.context,
+            action=self.action,
+            query=self.query,
+            answer=self.answer,
+            decision=self.decision,
+            hits=self.hits,
+            model=self.model,
+            cache_hit=self.cache_hit,
+            outcome=self.outcome,
+            latency_ms=elapsed_ms(self._started),
+            error_code=self.error_code,
+            application_id=self.application_id,
+            details=self.details,
+        )
+
+    def record_after_abort(self, exc: BaseException) -> None:
+        """Record a request that is already failing; never mask its exception."""
+        if self.outcome is None:
+            self.fail(exc)
+        try:
+            self.record()
+        except AuditWriteError:
+            pass  # already logged by the recorder; the original error wins
+
+
+@contextmanager
+def audited_query(recorder: AuditRecorder, context: AuditContext, **fields: Any) -> Iterator[QueryAudit]:
+    """Audit a request handler: records on exit, including on exceptions.
+
+    Under fail_mode=deny a failed write on the success path raises
+    ``AuditWriteError`` (rendered as 503), so an unaudited answer is not served.
+    """
+    audit = QueryAudit(recorder, context, **fields)
+    try:
+        yield audit
+    except BaseException as exc:
+        audit.record_after_abort(exc)
+        raise
+    audit.record()
+
+
+async def audited_stream(
+    events: AsyncIterator[str],
+    audit: QueryAudit,
+    error_frame: Callable[[str], str],
+    trailer: Optional[str] = None,
+) -> AsyncIterator[str]:
+    """Pass a streaming body through, recording its audit event at the end.
+
+    The event is written after the last content frame and before ``trailer``
+    (e.g. OpenAI's ``[DONE]``). A stream has already delivered its answer by
+    then, so under fail_mode=deny a failed write can only append an error frame.
+    """
+    try:
+        async with aclosing(events) as frames:
+            async for frame in frames:
+                yield frame
+    except BaseException as exc:
+        audit.record_after_abort(exc)
+        raise
+    try:
+        audit.record()
+    except AuditWriteError:
+        yield error_frame(AUDIT_UNAVAILABLE_MESSAGE)
+    if trailer is not None:
+        yield trailer

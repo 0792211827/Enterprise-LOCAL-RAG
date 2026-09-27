@@ -27,7 +27,8 @@ from typing import Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from src.auth.completions import CompletionAuthError, authorize_completion
-from src.dependencies import EmbeddingsDep, LLMProviderDep, OpenSearchDep, SessionDep, SettingsDep
+from src.dependencies import AuditDep, EmbeddingsDep, LLMProviderDep, OpenSearchDep, SessionDep, SettingsDep
+from src.models import AuditAction
 from src.repositories import ApplicationRepository
 from src.schemas.api.domain import (
     ChatCompletionChoice,
@@ -42,7 +43,9 @@ from src.services.applications import (
     blocked_message,
     effective_system_prompt,
     retrieve_for_application,
+    scope_application,
 )
+from src.services.audit import AuditContext, QueryAudit, audited_query, audited_stream
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +64,12 @@ def _openai_error(status_code: int, message: str, code: str, err_type: str = "in
     )
 
 
+def _openai_error_frame(message: str) -> str:
+    """An SSE error event; OpenAI SDKs raise ``APIError`` when they read one."""
+    body = {"error": {"message": message, "type": "server_error", "param": None, "code": "audit_unavailable"}}
+    return f"data: {json.dumps(body)}\n\n"
+
+
 @router.post("/chat/completions")
 async def create_chat_completion(
     payload: ChatCompletionRequest,
@@ -70,6 +79,7 @@ async def create_chat_completion(
     embeddings: EmbeddingsDep,
     llm: LLMProviderDep,
     settings: SettingsDep,
+    audit_recorder: AuditDep,
 ):
     """Answer via a RAG application, addressed by its slug as ``model``."""
     try:
@@ -97,6 +107,16 @@ async def create_chat_completion(
     # would risk a later commit persisting a caller-supplied prompt.
     system_override = next((m.content for m in payload.messages if m.role == "system"), None)
 
+    # The principal here is the one authorize_completion established (end user
+    # and/or application key), so the audit row names both.
+    audit_fields = dict(
+        action=AuditAction.QUERY_ANSWER.value,
+        query=query,
+        decision=scope_application(application, scope),
+        application_id=application.id,
+    )
+    audit_context = AuditContext.capture(request, principal)
+
     if payload.stream:
         if not application.streaming_enabled:
             return _openai_error(
@@ -109,31 +129,45 @@ async def create_chat_completion(
         # request-scoped session is closed and any lazy load on the application
         # (e.g. knowledge_bases) would raise. Everything the generator needs is
         # resolved to plain values first.
-        chunks, _hits, _mode, model = await retrieve_for_application(
-            application, query, opensearch, embeddings, scope=scope
-        )
+        audit = QueryAudit(audit_recorder, audit_context, **audit_fields)
+        try:
+            chunks, hits, _mode, model = await retrieve_for_application(
+                application, query, opensearch, embeddings, scope=scope
+            )
+        except BaseException as exc:
+            audit.record_after_abort(exc)
+            raise
+        audit.hits, audit.model = hits, model
         return StreamingResponse(
-            _stream_completion(
-                slug=application.slug,
-                model=model,
-                system_prompt=effective_system_prompt(application, system_override),
-                chunks=chunks,
-                query=query,
-                llm=llm,
-                blocked=blocked_message(application) if chunks is None else None,
+            audited_stream(
+                _stream_completion(
+                    slug=application.slug,
+                    model=model,
+                    system_prompt=effective_system_prompt(application, system_override),
+                    chunks=chunks,
+                    query=query,
+                    llm=llm,
+                    blocked=blocked_message(application) if chunks is None else None,
+                    audit=audit,
+                ),
+                audit,
+                error_frame=_openai_error_frame,
+                trailer="data: [DONE]\n\n",
             ),
             media_type="text/event-stream",
         )
 
-    result = await answer_for_application(
-        application=application,
-        query=query,
-        opensearch=opensearch,
-        embeddings=embeddings,
-        llm=llm,
-        system_prompt_override=system_override,
-        scope=scope,
-    )
+    with audited_query(audit_recorder, audit_context, **audit_fields) as audit:
+        result = await answer_for_application(
+            application=application,
+            query=query,
+            opensearch=opensearch,
+            embeddings=embeddings,
+            llm=llm,
+            system_prompt_override=system_override,
+            scope=scope,
+        )
+        audit.answer, audit.hits, audit.model = result.answer, result.hits, result.model
 
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",
@@ -150,12 +184,14 @@ async def create_chat_completion(
     )
 
 
-async def _stream_completion(slug, model, system_prompt, chunks, query, llm, blocked=None):
+async def _stream_completion(slug, model, system_prompt, chunks, query, llm, blocked=None, audit=None):
     """Emit an SSE stream in the OpenAI chat.completion.chunk format.
 
     Takes only plain values -- no ORM objects -- because this runs after the
-    request-scoped database session has closed.
+    request-scoped database session has closed. The closing ``[DONE]`` is
+    appended by ``audited_stream``, after the audit event is written.
     """
+    answer_parts = []
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
 
@@ -174,6 +210,7 @@ async def _stream_completion(slug, model, system_prompt, chunks, query, llm, blo
         yield envelope({"role": "assistant"})
 
         if chunks is None:
+            answer_parts.append(blocked)
             yield envelope({"content": blocked})
         else:
             async for chunk in llm.generate_rag_answer_stream(
@@ -181,10 +218,14 @@ async def _stream_completion(slug, model, system_prompt, chunks, query, llm, blo
             ):
                 delta = chunk.get("response", "") if isinstance(chunk, dict) else str(chunk)
                 if delta:
+                    answer_parts.append(delta)
                     yield envelope({"content": delta})
         yield envelope({}, finish_reason="stop")
     except Exception as exc:  # noqa: BLE001 - stream must terminate cleanly
         logger.error("Streaming completion failed: %s", exc)
+        if audit is not None:
+            audit.fail(exc)
         yield envelope({"content": f"\n[error: {exc}]"}, finish_reason="stop")
-
-    yield "data: [DONE]\n\n"
+    finally:
+        if audit is not None:
+            audit.answer = "".join(answer_parts)

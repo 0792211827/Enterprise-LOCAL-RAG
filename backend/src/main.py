@@ -25,7 +25,7 @@ from src.routers import (
     system,
 )
 from src.routers.ask import ask_router, stream_router
-from src.services.audit import AuditWriteError, make_audit_recorder
+from src.services.audit import AUDIT_UNAVAILABLE_MESSAGE, AuditWriteError, make_audit_recorder
 from src.services.cache.factory import make_cache_client
 from src.services.embeddings.factory import make_embeddings_service
 from src.services.langfuse.factory import make_langfuse_tracer
@@ -123,7 +123,7 @@ app = FastAPI(
 @app.exception_handler(AuditWriteError)
 async def audit_write_failed(request: Request, exc: AuditWriteError) -> JSONResponse:
     """AUDIT__FAIL_MODE=deny: an answer that cannot be audited is not served."""
-    message = "The audit log is unavailable, so this request was refused."
+    message = AUDIT_UNAVAILABLE_MESSAGE
     if request.url.path.startswith("/v1/"):
         # OpenAI SDK clients only surface errors in this shape.
         return JSONResponse(

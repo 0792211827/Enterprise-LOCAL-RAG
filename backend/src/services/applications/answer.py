@@ -60,6 +60,7 @@ class ApplicationAnswer:
     hits: List[Dict[str, Any]] = field(default_factory=list)
     mode: str = RetrievalMode.HYBRID.value
     scope_decision: Optional[ScopeDecision] = None
+    model: Optional[str] = None
 
 
 async def retrieve_for_application(
@@ -150,7 +151,7 @@ async def answer_for_application(
     )
     if chunks is None:
         return ApplicationAnswer(
-            answer=blocked_message(application), chunks=[], hits=[], mode=mode, scope_decision=decision
+            answer=blocked_message(application), chunks=[], hits=[], mode=mode, scope_decision=decision, model=model
         )
 
     generation = await llm.generate_rag_answer(
@@ -161,7 +162,9 @@ async def answer_for_application(
     )
     answer = generation.get("answer", "") if isinstance(generation, dict) else str(generation)
 
-    return ApplicationAnswer(answer=answer, chunks=chunks, hits=hits, mode=mode, scope_decision=decision)
+    return ApplicationAnswer(
+        answer=answer, chunks=chunks, hits=hits, mode=mode, scope_decision=decision, model=model
+    )
 
 
 async def stream_for_application(

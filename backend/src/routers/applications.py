@@ -3,14 +3,16 @@
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from src.dependencies import (
+    AuditDep,
     EmbeddingsDep,
     LLMProviderDep,
     OpenSearchDep,
     ScopeDep,
     SessionDep,
 )
+from src.models import AuditAction
 from src.models.application import RAGApplication
 from src.models.provider import ModelConfiguration
 from src.models.retrieval import RetrievalConfiguration
@@ -30,7 +32,8 @@ from src.schemas.api.domain import (
     ApplicationUpdate,
     RetrievedSource,
 )
-from src.services.applications import answer_for_application
+from src.services.applications import answer_for_application, scope_application
+from src.services.audit import AuditContext, audited_query
 from src.services.slug import slugify
 
 router = APIRouter(prefix="/api/v1/applications", tags=["applications"])
@@ -157,6 +160,8 @@ async def ask_application(
     embeddings: EmbeddingsDep,
     llm: LLMProviderDep,
     scope: ScopeDep,
+    audit_recorder: AuditDep,
+    request: Request,
 ):
     """Answer a question using the application's stored configuration.
 
@@ -168,15 +173,24 @@ async def ask_application(
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    result = await answer_for_application(
-        application=application,
+    with audited_query(
+        audit_recorder,
+        AuditContext.capture(request),
+        action=AuditAction.QUERY_ANSWER.value,
         query=payload.query,
-        opensearch=opensearch,
-        embeddings=embeddings,
-        llm=llm,
-        top_k_override=payload.top_k,
-        scope=scope,
-    )
+        decision=scope_application(application, scope),
+        application_id=application.id,
+    ) as audit:
+        result = await answer_for_application(
+            application=application,
+            query=payload.query,
+            opensearch=opensearch,
+            embeddings=embeddings,
+            llm=llm,
+            top_k_override=payload.top_k,
+            scope=scope,
+        )
+        audit.answer, audit.hits, audit.model = result.answer, result.hits, result.model
 
     sources = [
         RetrievedSource(
