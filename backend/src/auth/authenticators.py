@@ -8,6 +8,7 @@ import jwt
 from fastapi import Request
 from starlette.concurrency import run_in_threadpool
 from src.config import AuthSettings, Settings
+from src.middleware.network import is_trusted, parse_networks
 
 from .principal import AuthMethod, Principal, as_values, claim_at, map_roles
 
@@ -152,6 +153,45 @@ class JwtAuthenticator:
         )
 
 
+class TrustedHeaderAuthenticator:
+    """Accept an identity asserted in headers by an authenticating reverse proxy.
+
+    For deployments behind oauth2-proxy, an Envoy/Istio ext-authz filter or a
+    corporate gateway. The headers are only as trustworthy as the network path:
+    they are honoured solely when the *direct* peer is one of
+    ``AUTH__TRUSTED_PROXY_CIDRS`` (never ``X-Forwarded-For``, which a client can
+    forge), and the API port must not be reachable except through that proxy.
+    """
+
+    mode = "trusted_header"
+
+    def __init__(self, settings: AuthSettings):
+        self.settings = settings
+        if not settings.trusted_proxy_list:
+            raise ValueError("Invalid trusted_header auth configuration: AUTH__TRUSTED_PROXY_CIDRS is required")
+        if not settings.trusted_header_subject:
+            raise ValueError("Invalid trusted_header auth configuration: AUTH__TRUSTED_HEADER_SUBJECT is empty")
+        try:
+            self.trusted = parse_networks(settings.trusted_proxy_list)
+        except ValueError as exc:
+            raise ValueError(f"Invalid AUTH__TRUSTED_PROXY_CIDRS: {exc}") from None
+
+    async def authenticate(self, request: Request) -> Principal:
+        peer = request.client.host if request.client else None
+        if not is_trusted(peer, self.trusted):
+            raise AuthenticationError(f"identity headers from untrusted peer {peer!r}")
+
+        s = self.settings
+        sep = s.trusted_header_separator or ","
+        return build_principal(
+            subject=request.headers.get(s.trusted_header_subject),
+            raw_roles=as_values(request.headers.get(s.trusted_header_roles), sep) if s.trusted_header_roles else frozenset(),
+            groups=as_values(request.headers.get(s.trusted_header_groups), sep) if s.trusted_header_groups else frozenset(),
+            auth_method="trusted_header",
+            settings=s,
+        )
+
+
 def make_authenticator(settings: Settings) -> Authenticator:
     """Build the authenticator for the configured mode.
 
@@ -165,4 +205,6 @@ def make_authenticator(settings: Settings) -> Authenticator:
         return DisabledAuthenticator()
     if mode == "jwt":
         return JwtAuthenticator(settings.auth)
-    raise ValueError(f"AUTH__MODE={mode!r} is not supported yet")
+    if mode == "trusted_header":
+        return TrustedHeaderAuthenticator(settings.auth)
+    raise ValueError(f"Unsupported AUTH__MODE: {mode!r}")
