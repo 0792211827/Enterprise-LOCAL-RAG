@@ -181,6 +181,80 @@ class RedisSettings(BaseConfigSettings):
     ttl_hours: int = 6  # Cache TTL in hours
 
 
+def split_csv(value: str) -> List[str]:
+    """Split a comma-separated setting into trimmed, non-empty items."""
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+class AuthSettings(BaseConfigSettings):
+    """Identity intake from the host application's SSO.
+
+    The platform never issues sessions or stores passwords: it accepts an
+    identity asserted by the buyer's IdP (a signed JWT) or by an authenticating
+    reverse proxy (trusted headers). ``disabled`` -- the default -- keeps the
+    API open exactly as before.
+
+    List-valued settings are comma-separated strings, e.g. ``RS256,ES256``.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="AUTH__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    mode: Literal["disabled", "jwt", "trusted_header"] = "disabled"
+
+    # jwt mode: validate against the IdP's JWKS, or a static PEM when air-gapped.
+    jwks_url: str = ""
+    public_key_path: str = ""
+    issuer: str = ""
+    audience: str = ""
+    algorithms: str = "RS256,ES256"
+    leeway_seconds: int = 30
+    jwks_cache_seconds: int = 600
+
+    # Claim mapping (both modes). Dotted paths reach nested claims, e.g.
+    # realm_access.roles for Keycloak.
+    subject_claim: str = "sub"
+    roles_claim: str = "roles"
+    groups_claim: str = "groups"
+    admin_roles: str = "rag-admin"
+    query_roles: str = "rag-user"
+    auditor_roles: str = "rag-auditor"
+    admin_can_read_audit: bool = True
+
+    # trusted_header mode: only honoured from these proxy addresses.
+    trusted_header_subject: str = "X-Forwarded-User"
+    trusted_header_groups: str = "X-Forwarded-Groups"
+    trusted_header_roles: str = "X-Forwarded-Roles"
+    trusted_header_separator: str = ","
+    # Also governs which peers may set X-Forwarded-For for client IP capture.
+    trusted_proxy_cidrs: str = ""
+
+    @property
+    def algorithm_list(self) -> List[str]:
+        return split_csv(self.algorithms)
+
+    @property
+    def admin_role_values(self) -> List[str]:
+        return split_csv(self.admin_roles)
+
+    @property
+    def query_role_values(self) -> List[str]:
+        return split_csv(self.query_roles)
+
+    @property
+    def auditor_role_values(self) -> List[str]:
+        return split_csv(self.auditor_roles)
+
+    @property
+    def trusted_proxy_list(self) -> List[str]:
+        return split_csv(self.trusted_proxy_cidrs)
+
+
 class Settings(BaseConfigSettings):
     app_version: str = "0.1.0"
     debug: bool = True
@@ -204,6 +278,7 @@ class Settings(BaseConfigSettings):
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     vlm: VLMSettings = Field(default_factory=VLMSettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
 
     @field_validator("postgres_database_url")
     @classmethod

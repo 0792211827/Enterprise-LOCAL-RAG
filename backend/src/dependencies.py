@@ -12,6 +12,7 @@ else:
     except ImportError:
         pass
 
+from src.auth import Principal, get_principal
 from src.config import Settings
 from src.db.interfaces.base import BaseDatabase
 from src.services.agents.agentic_rag import AgenticRAGService
@@ -100,6 +101,7 @@ OllamaDep = Annotated[OllamaClient, Depends(get_ollama_client)]
 LangfuseDep = Annotated[LangfuseTracer, Depends(get_langfuse_tracer)]
 CacheDep = Annotated[CacheClient | None, Depends(get_cache_client)]
 LLMProviderDep = Annotated[LLMProvider, Depends(get_llm_provider)]
+PrincipalDep = Annotated[Principal, Depends(get_principal)]
 
 
 def get_ingestion_service(

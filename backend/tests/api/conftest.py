@@ -72,6 +72,11 @@ async def client(monkeypatch):
     monkeypatch.setattr(main, "make_vlm_provider", lambda settings: None)
     monkeypatch.setattr(main, "make_langfuse_tracer", lambda: MagicMock())
     monkeypatch.setattr(main, "make_cache_client", lambda settings: None)
+    # Pin auth off so a developer's .env (e.g. AUTH__MODE=jwt) cannot change
+    # the behaviour these tests assert.
+    from src.auth import DisabledAuthenticator
+
+    monkeypatch.setattr(main, "make_authenticator", lambda settings: DisabledAuthenticator())
 
     async with LifespanManager(main.app) as manager:
         async with AsyncClient(

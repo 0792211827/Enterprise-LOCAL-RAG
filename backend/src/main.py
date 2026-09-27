@@ -5,12 +5,14 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from src.auth import make_authenticator
 from src.config import get_settings
 from src.db.factory import make_database
 from src.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
 from src.routers import (
     agentic_ask,
     api_keys,
+    auth,
     applications,
     chat_completions,
     documents,
@@ -48,6 +50,11 @@ async def lifespan(app: FastAPI):
 
     settings = get_settings()
     app.state.settings = settings
+
+    # Built first: an incomplete auth configuration must stop startup before
+    # anything else is initialised, not surface as 500s on the first request.
+    app.state.authenticator = make_authenticator(settings)
+    logger.info("Authentication mode: %s", settings.auth.mode)
 
     database = make_database()
     app.state.database = database
@@ -125,7 +132,7 @@ app.add_middleware(
 
 # Added last so it is outermost: every response, including CORS preflights and
 # errors raised by inner middleware, carries the correlation ID.
-app.add_middleware(RequestContextMiddleware)
+app.add_middleware(RequestContextMiddleware, trusted_proxies=get_settings().auth.trusted_proxy_list)
 
 # Include routers
 app.include_router(ping.router, prefix="/api/v1")  # Health check endpoint
@@ -142,6 +149,7 @@ app.include_router(providers.router)
 app.include_router(retrieval.router)
 app.include_router(system.router)
 app.include_router(api_keys.router)
+app.include_router(auth.router)
 
 # Mounted at bare /v1 (not /api/v1) so stock OpenAI SDK clients work unmodified:
 # they append /chat/completions to a base_url ending in /v1.
