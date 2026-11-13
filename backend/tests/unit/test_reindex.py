@@ -95,7 +95,7 @@ def test_rejected_chunks_stop_the_swap_and_name_the_failure(legacy, monkeypatch,
     assert code == 0 and legacy.resolve(ALIAS) != ALIAS
 
 
-def test_a_second_run_builds_the_next_version_and_keeps_the_previous_for_rollback(legacy, monkeypatch):
+def test_a_second_run_builds_the_next_version_and_drops_the_previous_so_deleted_chunks_do_not_linger(legacy, monkeypatch):
     run(legacy, monkeypatch)
     first = legacy.resolve(ALIAS)
 
@@ -103,11 +103,18 @@ def test_a_second_run_builds_the_next_version_and_keeps_the_previous_for_rollbac
 
     assert code == 0
     second = legacy.resolve(ALIAS)
-    assert second != first and first in legacy.indices_data
+    assert second != first and first not in legacy.indices_data
     assert legacy.aliases[ALIAS] == [second]
 
-    code, _ = run(legacy, monkeypatch, "--re-embed", "--delete-old")
-    assert code == 0 and second not in legacy.indices_data
+
+def test_keep_old_retains_the_previous_index_for_rollback(legacy, monkeypatch, capsys):
+    run(legacy, monkeypatch)
+    first = legacy.resolve(ALIAS)
+
+    code, _ = run(legacy, monkeypatch, "--re-embed", "--keep-old")
+
+    assert code == 0 and first in legacy.indices_data
+    assert "deleted or purged" in capsys.readouterr().out
 
 
 def test_dry_run_reports_the_plan_and_changes_nothing(legacy, monkeypatch, capsys):

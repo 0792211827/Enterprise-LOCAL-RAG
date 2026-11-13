@@ -78,7 +78,7 @@ def _source_dimension(raw: Any, index: str) -> Optional[int]:
 
 
 def _scroll(raw: Any, index: str, batch_size: int):
-    """Every document of ``index`` in pages, as ``(total_hint, page)``; the scroll is cleared when the caller is done."""
+    """Every document of ``index``, a page of hits at a time; the scroll is cleared when the caller is done."""
     response = raw.search(index=index, body={"query": {"match_all": {}}}, scroll=SCROLL, size=batch_size)
     scroll_id = response.get("_scroll_id")
     try:
@@ -109,7 +109,7 @@ async def run_reindex(
     embeddings_factory: Optional[Callable[[], Any]] = None,
     re_embed: bool = False,
     batch_size: int = 200,
-    delete_old: bool = False,
+    keep_old: bool = False,
     dry_run: bool = False,
     say: Callable[[str], None] = print,
 ) -> ReindexResult:
@@ -206,10 +206,13 @@ async def run_reindex(
     say(f"Swapped: '{alias}' now points at '{target}'.")
     if not live.is_alias:
         say(f"The old index '{live.index}' had to be removed to free its name; it is not kept for rollback.")
-    elif delete_old:
+    elif keep_old:
+        say(
+            f"The previous index '{live.index}' is kept for rollback. It still holds every chunk it had, including any "
+            f"that are later deleted or purged from '{alias}' (private Attachment chunks too): DELETE {live.index} when done."
+        )
+    else:
         raw.indices.delete(index=live.index)
         result.removed_old = True
-        say(f"Deleted the previous index '{live.index}'.")
-    else:
-        say(f"The previous index '{live.index}' is kept for rollback; remove it with --delete-old or DELETE {live.index}.")
+        say(f"Deleted the previous index '{live.index}' (use --keep-old to retain it for rollback).")
     return result

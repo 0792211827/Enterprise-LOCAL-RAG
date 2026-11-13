@@ -187,7 +187,12 @@ documented list. Key groups:
   swaps the alias; it is never run implicitly, and an interrupted run resumes
   when run again. Pause ingestion while it runs. On a deployment still on a
   concrete index the old index is removed in the swap (take a snapshot first if you
-  want a way back); later runs keep the previous index until `--delete-old`.
+  want a way back). The previous index is deleted after every swap unless you pass
+  `--keep-old`: a kept index still holds chunks that are later deleted or purged
+  (private Attachment chunks included), so remove it when you are done. Run the
+  reindex before relying on large Attachments: on an index still on nmslib a small
+  private partition is searched with the post-filtering engine and may return few
+  passages.
 - **LLM** (`LLM__*`) — provider, endpoint, model, timeout, max tokens. Ollama is
   the default; llama.cpp and Ollama's `/v1` are verified OpenAI-compatible
   backends, vLLM and TGI are not yet. See
@@ -492,7 +497,7 @@ with citations that open the source Document and passage.
   pipeline and no capability detection, so a text-only model will simply fail or ignore them.
   Only OpenAI-compatible endpoints (`LLM__PROVIDER=openai-compatible`, e.g. vLLM, llama.cpp,
   Ollama's `/v1`) can take images; on the native Ollama client the send is refused with
-  `409`. Images follow the Conversation: owner-only, removed one by one, deleted with the
+  `409`. If the switch is turned off later, images already stored are no longer sent. Images follow the Conversation: owner-only, removed one by one, deleted with the
   Conversation and by retention. Audit records carry type, size and a digest only.
 - **Per-user rate limits.** Each employee may send `CHAT__RATE_LIMIT_PER_MINUTE` messages
   a minute (default 30) and have `CHAT__MAX_CONCURRENT_GENERATIONS` answers being written

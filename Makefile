@@ -83,9 +83,9 @@ chat-purge: ## Delete Conversations idle longer than DAYS (or CHAT__RETENTION_DA
 # Rebuild the chunk index on the current mapping (lucene, EMBEDDING__DIMENSION) and swap the alias. Explicit and
 # resumable: run it again after an interruption. Pause ingestion while it runs (see docs/adr/0001).
 #   make reindex DRY_RUN=1
-#   make reindex RE_EMBED=1 DELETE_OLD=1
+#   make reindex RE_EMBED=1 KEEP_OLD=1   (KEEP_OLD retains the previous index; it holds deleted chunks until removed)
 reindex: ## Rebuild the chunk index (lucene engine / new embedding model) and swap the alias
-	docker exec rag-api python -m src.cli.reindex $(if $(DRY_RUN),--dry-run) $(if $(RE_EMBED),--re-embed) $(if $(DELETE_OLD),--delete-old)
+	docker exec rag-api python -m src.cli.reindex $(if $(DRY_RUN),--dry-run) $(if $(RE_EMBED),--re-embed) $(if $(KEEP_OLD),--keep-old)
 
 # Upload-area cleanup. Off unless asked for: removes uploaded files older than DAYS
 # (default INGESTION__UPLOAD_RETENTION_DAYS) that no queued or processing document needs.

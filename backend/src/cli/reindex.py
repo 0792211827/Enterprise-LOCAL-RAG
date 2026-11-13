@@ -6,7 +6,7 @@ It is never run implicitly, and a run that stops part-way is resumed by running 
     python -m src.cli.reindex --dry-run         # show the plan, change nothing
     python -m src.cli.reindex                   # build, copy, swap
     python -m src.cli.reindex --re-embed        # also recompute every vector (a new model of the same dimension)
-    python -m src.cli.reindex --delete-old      # drop the previous index once the swap succeeded
+    python -m src.cli.reindex --keep-old        # keep the previous index for rollback (default: delete it after the swap)
 
 or ``make reindex`` against the running ``rag-api`` container. Pause ingestion while it runs: chunks written to
 the old index during the copy make the counts disagree, and the swap is then refused (run it again). Search keeps
@@ -27,7 +27,11 @@ def main(argv: Optional[list] = None, opensearch: Any = None, embeddings: Any = 
     parser.add_argument("--dry-run", action="store_true", help="Show what would happen and change nothing")
     parser.add_argument("--re-embed", action="store_true", help="Recompute every vector with the configured embedding model")
     parser.add_argument("--batch-size", type=int, default=200, help="Chunks copied per request (default 200)")
-    parser.add_argument("--delete-old", action="store_true", help="Delete the previous index after the alias is swapped")
+    parser.add_argument(
+        "--keep-old",
+        action="store_true",
+        help="Keep the previous index for rollback. It keeps chunks later deleted or purged, so remove it when done",
+    )
     args = parser.parse_args(argv)
 
     if settings is None:
@@ -54,7 +58,7 @@ def main(argv: Optional[list] = None, opensearch: Any = None, embeddings: Any = 
                 embeddings_factory=embeddings_factory,
                 re_embed=args.re_embed,
                 batch_size=args.batch_size,
-                delete_old=args.delete_old,
+                keep_old=args.keep_old,
                 dry_run=args.dry_run,
             )
         )

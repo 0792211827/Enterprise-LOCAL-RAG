@@ -161,7 +161,12 @@ class OpenSearchClient:
         """
         try:
             if force and self.client.indices.exists(index=self.index_name):
-                self.client.indices.delete(index=self.index_name)
+                # After a reindex the name is an alias, which cannot itself be deleted: delete what it points at.
+                if self.client.indices.exists_alias(name=self.index_name):
+                    for concrete in list(self.client.indices.get_alias(name=self.index_name)):
+                        self.client.indices.delete(index=concrete)
+                else:
+                    self.client.indices.delete(index=self.index_name)
                 logger.info(f"Deleted existing hybrid index: {self.index_name}")
 
             if not self.client.indices.exists(index=self.index_name):

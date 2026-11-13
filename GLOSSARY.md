@@ -33,7 +33,7 @@ A private, multi-turn exchange between one End user and one Application, readabl
 _Avoid_: Chat session, thread
 
 **Attachment**:
-A file or image an End user adds to a message in a Conversation; private to that Conversation and removed with it.
+A file or image an End user adds to a message in a Conversation; private to that Conversation and removed with it. A document too long for the prompt is *searched* instead: its chunks sit in a private partition of the chunk index that only its owner's Conversation can query.
 _Avoid_: Upload, chat file
 
 **Connector**:

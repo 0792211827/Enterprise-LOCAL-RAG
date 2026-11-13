@@ -409,7 +409,10 @@ async def upload_attachment(
         )
     except Exception:
         if chunk_count is not None:
-            opensearch.delete_attachment_chunks(str(conversation.id), str(attachment_id))
+            try:
+                opensearch.delete_attachment_chunks(str(conversation.id), str(attachment_id))
+            except Exception as cleanup:  # noqa: BLE001 - the original failure is the one to report
+                logger.error("Could not remove the chunks of an Attachment that failed to save: %s", type(cleanup).__name__)
         raise
     return _attachment_view(created, searched=chunk_count is not None)
 
