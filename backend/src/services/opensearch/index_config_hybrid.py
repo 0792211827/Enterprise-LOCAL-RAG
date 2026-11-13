@@ -5,6 +5,12 @@ using HNSW algorithm for approximate nearest neighbor search.
 """
 
 
+# lucene filters before it searches, so a narrow scope (one small Knowledge Base, one Conversation) still gets a full
+# set of nearest neighbours. Indices built before ADR-0001 use nmslib, which only post-filters; the reindex
+# command moves them (``python -m src.cli.reindex``).
+KNN_ENGINE = "lucene"
+
+
 def build_chunks_mapping(dimension: int) -> dict:
     """Index mapping for document chunks with vector embeddings of ``dimension``."""
     return {
@@ -44,7 +50,7 @@ def build_chunks_mapping(dimension: int) -> dict:
                     "method": {
                         "name": "hnsw",  # Hierarchical Navigable Small World
                         "space_type": "cosinesimil",  # Cosine similarity
-                        "engine": "nmslib",
+                        "engine": KNN_ENGINE,
                         "parameters": {
                             "ef_construction": 512,  # Higher value = better recall, slower indexing
                             "m": 16,  # Number of bi-directional links

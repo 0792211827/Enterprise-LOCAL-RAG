@@ -28,8 +28,9 @@ def check_index_dimension(opensearch: Any, configured: int) -> Optional[str]:
 
     message = (
         f"Ingestion is disabled: the chunk index '{opensearch.index_name}' holds {existing}-dimension vectors but "
-        f"EMBEDDING__DIMENSION is {configured}. A reindex is required. Until the reindex command is available, either "
-        f"set EMBEDDING__DIMENSION back to {existing}, or delete the index and re-ingest every document."
+        f"EMBEDDING__DIMENSION is {configured}. Run the reindex command to rebuild the index at {configured} "
+        f"dimensions (`make reindex`, or `python -m src.cli.reindex` in the API container; add --dry-run to preview), "
+        f"or set EMBEDDING__DIMENSION back to {existing}. Search keeps working until then."
     )
     logger.error(message)
     return message

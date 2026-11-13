@@ -24,7 +24,7 @@ No secrets, tokens or customer data are recorded in this file.
 
 | # | Feature | Comparison claim | Verified status | Decision |
 |---|---------|------------------|-----------------|----------|
-| 1 | Hybrid search (BM25 + kNN + RRF) | Present | **COMPLETE** (RRF only; no cross-encoder reranker). One engine caveat (nmslib post-filter) | Preserve; add regression/benchmark tests |
+| 1 | Hybrid search (BM25 + kNN + RRF) | Present | **COMPLETE** (RRF, optional reranker). New indices use lucene (pre-filter); an index built earlier keeps the nmslib post-filter caveat until `make reindex` | Preserve; add regression/benchmark tests |
 | 2 | Agentic retrieval (LangGraph) | Present | **COMPLETE** — works, tested, and (Phase 4) runs on the configured `LLM__PROVIDER`; verified live on native Ollama, Ollama `/v1` and llama.cpp. Answer quality depends on model size (a 1B model's grader behaved differently under llama.cpp) | Preserve; add a recall/behaviour benchmark with a larger model |
 | 3 | Docker/Compose deployment | Present | **COMPLETE** (API stack up on this machine; hardened overlay validates) | Preserve |
 | 4 | Ad-hoc chat file/image attachment | Partial | **MISSING** (no chat attachment path at all) | Defer; later cycle |
@@ -41,7 +41,7 @@ No secrets, tokens or customer data are recorded in this file.
 | 15 | NVIDIA GPU support | Missing / broken | **MISSING** — no compose GPU reservation anywhere; `/system/gpu` runs `nvidia-smi` inside the *API* container, so it cannot report Ollama's GPU use | Implement H3 |
 | 16 | Embedding dimension from config | (not in comparison) | **IMPLEMENTED** — the mapping is built from `EMBEDDING__DIMENSION`; `OPENSEARCH__VECTOR_DIMENSION` is deprecated and warns; a stale index sets an ingestion `409` guard | None (reindex command is a later ticket) |
 | 17 | Hardened compose overlay (S5) | (not in comparison) | **COMPLETE** (config validates; not run live in this audit) | Preserve |
-| 18 | Document-level ACLs (S3a) | (not in comparison) | **MISSING**; blocked on the kNN-engine decision | Defer |
+| 18 | Document-level ACLs (S3a) | (not in comparison) | **MISSING**; the kNN-engine blocker is resolved (lucene, ticket 16) | Defer |
 
 Not required (kept out): see §5.
 
@@ -52,7 +52,7 @@ Not required (kept out): see §5.
 - **Paths:** `backend/src/services/opensearch/{client.py,query_builder.py,index_config_hybrid.py}`; `routers/hybrid_search.py`.
 - **How it works:** a BM25 + kNN `hybrid` query is fused by an OpenSearch search pipeline using **RRF** (`hybrid-rrf-pipeline`, `index_config_hybrid.py`). No cross-encoder or other reranker exists (`grep rerank` returns nothing).
 - **Evidence:** Test: `test_opensearch_query_builder.py`, `test_opensearch_kb_scoping.py`, `test_opensearch_empty_scope.py`, `api/routers/test_hybrid_search.py`. Live: BM25 search returned the expected KB's chunk after real ingestion.
-- **Caveat:** the kNN field uses the `nmslib` engine, so KB filters are **post-filters**. A narrowly scoped search can return fewer results than exist. This is mitigated with 10× oversampling (`KNN_FILTER_OVERSAMPLE`, `client.py`). It cannot leak data, but it can under-return. See ADR-0004.
+- **Engine:** the kNN field uses `lucene`, which filters before it searches (measured recall@10 on a 40-chunk scope in a 4,040-chunk index: nmslib 0.10, lucene 1.00). An index built before that uses `nmslib`, whose post-filter can under-return (mitigated by 10× oversampling, `KNN_FILTER_OVERSAMPLE`); `make reindex` moves it. It cannot leak data. See ADR-0001 and ADR-0004.
 - **Not verified:** the vector/RRF leg ran only in unit tests with mocks. The live check used `use_hybrid=false`. Retrieval quality has no benchmark.
 - **Acceptance for "proven":** a regression test that seeds known chunks and asserts the RRF ordering, and a small recall benchmark. No code change needed.
 
@@ -180,7 +180,7 @@ Not required (kept out): see §5.
 
 ### 3.18 Document-level ACLs (S3a): MISSING
 
-- Designed (side table + `acl_tags` keyword on chunks), but blocked on the kNN-engine decision (nmslib → lucene/faiss needs a reindex). Defer.
+- Designed (side table + `acl_tags` keyword on chunks). The kNN-engine blocker is resolved: lucene and `make reindex` shipped (ticket 16). Not yet built (ticket 19).
 
 ### 3.19 Other things found while auditing (not in the comparison)
 
@@ -210,4 +210,4 @@ Web search; browser/terminal code execution; persistent cross-chat memory; conve
 1. **LDAP**: needed, or is IdP-only federation sufficient? (Register status: BLOCKED / DECISION REQUIRED.)
 2. **First feature to implement** (roadmap recommends Phase 3 / H1, backend verification, because it is verifiable on this machine; H3 GPU first only if an NVIDIA host is available).
 3. Whether API-key **expiry** is wanted, and whether scopes/rate limits are ever needed.
-4. The **kNN engine** (nmslib → lucene) decision, which gates S3a and affects filtered-search recall.
+4. ~~The kNN engine decision~~ resolved: lucene (ADR-0001).

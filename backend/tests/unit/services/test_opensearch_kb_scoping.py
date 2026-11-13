@@ -72,3 +72,40 @@ def test_knn_oversamples_only_when_filtered():
     assert knn_k(10, []) == 10
     assert knn_k(10, [{"terms": {"knowledge_base_id": KB_IDS}}]) == 100
     assert knn_k(500, [{"terms": {}}]) == KNN_MAX_CANDIDATES
+
+
+def _lucene(client):
+    client.client.indices.get_mapping.return_value = {
+        "rag-documents-chunks-v1": {"mappings": {"properties": {"embedding": {"method": {"engine": "lucene"}}}}}
+    }
+
+
+def test_on_lucene_the_scope_filters_inside_the_knn_clause(client):
+    """lucene filters before it searches: the filter goes inside knn, so a narrow scope still gets k neighbours."""
+    _lucene(client)
+    client.search_unified(query="q", query_embedding=[0.1] * 8, size=5, use_hybrid=True, knowledge_base_ids=KB_IDS)
+    body = client.client.search.call_args.kwargs["body"]
+    _bm25, knn_leg = body["query"]["hybrid"]["queries"]
+
+    knn = knn_leg["knn"]["embedding"]
+    assert {"terms": {"knowledge_base_id": KB_IDS}} in knn["filter"]["bool"]["filter"]
+    assert knn["k"] == 10  # size * 2, no oversampling
+
+
+def test_on_lucene_vector_search_filters_inside_knn_too(client):
+    _lucene(client)
+    client.search_chunks_vector(query_embedding=[0.1] * 8, size=5, knowledge_base_ids=KB_IDS)
+    body = client.client.search.call_args.kwargs["body"]
+    knn = body["query"]["knn"]["embedding"]
+    assert {"terms": {"knowledge_base_id": KB_IDS}} in knn["filter"]["bool"]["filter"]
+    assert knn["k"] == 5
+
+
+def test_stats_work_through_the_alias(client):
+    """Stats are keyed by the physical index; the platform only knows the alias."""
+    client.client.indices.exists.return_value = True
+    client.client.indices.stats.return_value = {
+        "indices": {"rag-documents-chunks-v3": {"total": {"docs": {"count": 7, "deleted": 0}, "store": {"size_in_bytes": 9}}}}
+    }
+    stats = client.get_index_stats()
+    assert stats["exists"] is True and stats["document_count"] == 7

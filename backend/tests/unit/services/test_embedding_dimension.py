@@ -68,7 +68,7 @@ def test_missing_index_sets_no_guard():
 def test_mismatch_explains_the_fix():
     message = check_index_dimension(_opensearch(1024), configured=768)
     assert "1024" in message and "768" in message
-    assert "reindex" in message.lower()
+    assert "python -m src.cli.reindex" in message
 
 
 def test_unreachable_opensearch_sets_no_guard():

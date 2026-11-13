@@ -1,5 +1,5 @@
 .PHONY: help start stop restart status logs health setup format lint test test-cov \
-        frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup eval eval-compare start-hardened health-hardened
+        frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup reindex eval eval-compare start-hardened health-hardened
 
 # The virtualenv lives at the repo root, not in backend/. uv resolves this
 # relative to the project root (backend/, where pyproject.toml is).
@@ -79,6 +79,13 @@ audit-purge: ## Delete audit events older than DAYS (or AUDIT__RETENTION_DAYS)
 #   make chat-purge DAYS=30 DRY_RUN=1
 chat-purge: ## Delete Conversations idle longer than DAYS (or CHAT__RETENTION_DAYS)
 	docker exec rag-api python -m src.cli.chat_purge $(if $(DAYS),--days $(DAYS)) $(if $(DRY_RUN),--dry-run)
+
+# Rebuild the chunk index on the current mapping (lucene, EMBEDDING__DIMENSION) and swap the alias. Explicit and
+# resumable: run it again after an interruption. Pause ingestion while it runs (see docs/adr/0001).
+#   make reindex DRY_RUN=1
+#   make reindex RE_EMBED=1 DELETE_OLD=1
+reindex: ## Rebuild the chunk index (lucene engine / new embedding model) and swap the alias
+	docker exec rag-api python -m src.cli.reindex $(if $(DRY_RUN),--dry-run) $(if $(RE_EMBED),--re-embed) $(if $(DELETE_OLD),--delete-old)
 
 # Upload-area cleanup. Off unless asked for: removes uploaded files older than DAYS
 # (default INGESTION__UPLOAD_RETENTION_DAYS) that no queued or processing document needs.

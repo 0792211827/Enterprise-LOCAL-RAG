@@ -146,7 +146,7 @@ The live checks changed state in the developer's existing stack volumes: two tem
 |---|---|---|
 | R1 | **Open by default** | `AUTH__MODE=disabled` is the shipped default; a fresh `make start` exposes all admin routes. Deployment docs must say so. `GET /system/security` reports the actual state |
 | R2 | Provider `/test` and `/models` call admin-supplied URLs (SSRF-class, admin-only) | No host allowlist exists |
-| R3 | nmslib kNN post-filtering | Narrow-scope searches can under-return. No leak. Durable fix is the lucene engine + reindex (ADR-0004) |
+| R3 | nmslib kNN post-filtering | Narrow-scope searches can under-return. No leak. **Fixed for new indices (lucene); existing ones move with `make reindex`** (ADR-0001) |
 | R4 | Hardcoded 1024 dimension | Changing the embedding model breaks indexing |
 | R5 | OpenSearch and Redis unauthenticated inside the network | Documented; hardened overlay depends on network isolation |
 | R6 | Upload handling | No size cap/type allowlist/cleanup; filename is embedded in the path |

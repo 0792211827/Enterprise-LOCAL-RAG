@@ -105,6 +105,7 @@ make frontend-dev    # frontend dev server on :3001
 make frontend-build  # frontend production build + type check
 make audit-purge DAYS=365  # delete audit events older than 365 days (DRY_RUN=1 to count)
 make uploads-cleanup DAYS=14  # remove stale uploaded files (off unless run; DRY_RUN=1 to count)
+make reindex             # rebuild the chunk index on lucene / a new embedding model, then swap the alias (DRY_RUN=1 to preview)
 make chat-purge DAYS=30  # delete Conversations idle for 30+ days (the API also does this daily; DRY_RUN=1 to count)
 make clean     # tear down + prune
 ```
@@ -178,8 +179,15 @@ documented list. Key groups:
   `EMBEDDING__DIMENSION` is the single source of truth for the chunk index
   mapping (`OPENSEARCH__VECTOR_DIMENSION` is deprecated and only warns). If an
   existing index was built with a different dimension, startup logs an error and
-  ingestion returns `409` until the index is rebuilt; search and the rest of the
-  API keep working.
+  ingestion returns `409` until the index is rebuilt (`make reindex`); search and
+  the rest of the API keep working. The same command moves an index built before
+  the lucene engine (which filters before it searches, so a narrow scope still
+  returns a full result set) onto it, and handles a change of embedding model
+  (`--re-embed`). It builds `rag-documents-chunks-vN`, copies the chunks, then
+  swaps the alias; it is never run implicitly, and an interrupted run resumes
+  when run again. Pause ingestion while it runs. On a deployment still on a
+  concrete index the old index is removed in the swap (take a snapshot first if you
+  want a way back); later runs keep the previous index until `--delete-old`.
 - **LLM** (`LLM__*`) — provider, endpoint, model, timeout, max tokens. Ollama is
   the default; llama.cpp and Ollama's `/v1` are verified OpenAI-compatible
   backends, vLLM and TGI are not yet. See

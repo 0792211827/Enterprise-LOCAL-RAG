@@ -33,7 +33,7 @@ Based on the code-verified [`FEATURE_REGISTER.md`](FEATURE_REGISTER.md) and [`CO
 | New: eval harness | **Implemented** (tickets 05, 06): Golden sets, recall@k, MRR, groundedness, report compare | `docs/evaluation.md` |
 | New: reranker | **Implemented** (ticket 08), on one retrieval seam (ticket 07) | `services/retrieval.py`, `services/rerank/` |
 
-Phase 12 (document-level restrictions) and the lucene reindex remain open; the recall test comes first (ADR-0001).
+The seeded recall test and the lucene reindex command are **implemented** (ticket 16; `make reindex`, ADR-0001). Phase 12 (document-level restrictions) remains open.
 
 The order is therefore **revised**: steps 2–5 are complete, so the Hardware/Backend track and a small isolation-hardening pass come first.
 
@@ -136,7 +136,7 @@ H1 is verifiable on this machine (Ollama's own `/v1` and llama.cpp run on a Mac)
 
 ## Phase 12: S3a, document-level ACLs (L, deferred)
 
-- Side table `document_acl_tags`, an additive `acl_tags` keyword in the chunk mapping, scope filter `kb ∈ permitted AND (acl_tags ∈ principal values OR untagged)`. **Precondition:** switch the kNN engine from nmslib to lucene/faiss with an alias-swap reindex (ADR-0004), as filter selectivity makes the 10× oversampling unreliable.
+- Side table `document_acl_tags`, an additive `acl_tags` keyword in the chunk mapping, scope filter `kb ∈ permitted AND (acl_tags ∈ principal values OR untagged)`. **Precondition (met, ticket 16):** the kNN engine moved from nmslib to lucene with an alias-swap reindex (`make reindex`, ADR-0001); filters now go inside the kNN clause.
 
 ## Cross-cutting risks and mitigations
 

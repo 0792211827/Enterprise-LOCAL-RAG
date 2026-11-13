@@ -1,28 +1,27 @@
 """Unified OpenSearch client supporting both simple BM25 and hybrid search."""
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from opensearchpy import OpenSearch
 from src.config import Settings
 
-from .index_config_hybrid import HYBRID_RRF_PIPELINE, build_chunks_mapping
+from .index_config_hybrid import HYBRID_RRF_PIPELINE, KNN_ENGINE, build_chunks_mapping
 from .query_builder import QueryBuilder
 
 logger = logging.getLogger(__name__)
 
 
-# The chunk index uses the nmslib k-NN engine (see index_config_hybrid.py).
-# OpenSearch only does efficient *pre*-filtering for the faiss and lucene
-# engines; with nmslib a filter wrapped around a knn clause is applied as a
-# *post*-filter -- ANN returns the global top-k first, then the filter discards
-# everything outside the requested knowledge bases. A narrowly-scoped search can
-# therefore come back empty even though matching chunks exist. Oversampling k
-# when a filter is present keeps enough candidates alive to survive it.
+# New chunk indices use the lucene k-NN engine (see index_config_hybrid.py), which filters *before* it searches:
+# the filter goes inside the knn clause and k neighbours come back however narrow the scope.
 #
-# The durable fix is "engine": "lucene" in the mapping plus a full reindex.
+# An index built before ADR-0001 still uses nmslib, which only *post*-filters: ANN returns the global top-k
+# first, then a filter wrapped around it discards everything outside the scope, so a narrow search can come back
+# short. Until ``python -m src.cli.reindex`` has moved the index, oversampling k keeps enough candidates alive.
 KNN_FILTER_OVERSAMPLE = 10
 KNN_MAX_CANDIDATES = 1000
+KNN_ENGINE_RECHECK_SECONDS = 60.0  # how long a read of the index's engine is trusted (a reindex swaps it live)
 
 
 def scope_matches_nothing(knowledge_base_ids: Optional[List[str]]) -> bool:
@@ -49,6 +48,9 @@ def knn_k(size: int, filter_clause: Any) -> int:
 
 class OpenSearchClient:
     """OpenSearch client supporting BM25 and hybrid search with native RRF."""
+
+    _engine: Optional[str] = None
+    _engine_read_at: Optional[float] = None
 
     def __init__(self, host: str, settings: Settings):
         self.host = host
@@ -83,6 +85,32 @@ class OpenSearchClient:
         dimension = properties.get("embedding", {}).get("dimension")
         return int(dimension) if dimension is not None else None
 
+    def knn_engine(self) -> Optional[str]:
+        """The k-NN engine of the live chunk index, or None when unknown (no index yet, cluster unreachable)."""
+        now = time.monotonic()
+        if self._engine_read_at is None or now - self._engine_read_at > KNN_ENGINE_RECHECK_SECONDS:
+            try:
+                mapping = self.client.indices.get_mapping(index=self.index_name)
+                properties = next(iter(mapping.values()))["mappings"]["properties"]
+                engine = properties.get("embedding", {}).get("method", {}).get("engine")
+            except Exception:  # noqa: BLE001 - unknown means the filter-around-knn form, which every engine accepts
+                engine = None
+            self._engine, self._engine_read_at = engine, now
+        return self._engine
+
+    def _knn_query(self, vector: List[float], k: int, filters: List[Dict[str, Any]], must_not: List[Dict[str, Any]]):
+        """A kNN clause restricted by ``filters`` and ``must_not``, in the form the index's engine filters correctly.
+
+        :param k: neighbours wanted; widened here when the engine can only post-filter.
+        """
+        if not filters and not must_not:
+            return {"knn": {"embedding": {"vector": vector, "k": k}}}
+        restriction = {"bool": {**({"filter": filters} if filters else {}), **({"must_not": must_not} if must_not else {})}}
+        if self.knn_engine() == KNN_ENGINE:
+            return {"knn": {"embedding": {"vector": vector, "k": k, "filter": restriction}}}
+        wide = min(k * KNN_FILTER_OVERSAMPLE, KNN_MAX_CANDIDATES)
+        return {"bool": {"must": [{"knn": {"embedding": {"vector": vector, "k": wide}}}], **restriction["bool"]}}
+
     def get_index_stats(self) -> Dict[str, Any]:
         """Get statistics for the hybrid index."""
         try:
@@ -90,7 +118,8 @@ class OpenSearchClient:
                 return {"index_name": self.index_name, "exists": False, "document_count": 0}
 
             stats_response = self.client.indices.stats(index=self.index_name)
-            index_stats = stats_response["indices"][self.index_name]["total"]
+            # Keyed by the physical index, which is not the alias the platform knows the index by.
+            index_stats = next(iter(stats_response["indices"].values()))["total"]
 
             return {
                 "index_name": self.index_name,
@@ -206,12 +235,9 @@ class OpenSearchClient:
 
             search_body = {
                 "size": size,
-                "query": {"knn": {"embedding": {"vector": query_embedding, "k": knn_k(size, filter_clause)}}},
+                "query": self._knn_query(query_embedding, size, filter_clause, []),
                 "_source": {"excludes": ["embedding"]},
             }
-
-            if filter_clause:
-                search_body["query"] = {"bool": {"must": [search_body["query"]], "filter": filter_clause}}
 
             response = self.client.search(index=self.index_name, body=search_body)
 
@@ -347,9 +373,7 @@ class OpenSearchClient:
         # builder, but the kNN leg is raw -- without the same filter, chunks from
         # other knowledge bases still surface through the vector side.
         kb_filter = [{"terms": {"knowledge_base_id": knowledge_base_ids}}] if knowledge_base_ids else []
-        knn_query: Dict[str, Any] = {"knn": {"embedding": {"vector": query_embedding, "k": knn_k(size * 2, kb_filter)}}}
-        if kb_filter:
-            knn_query = {"bool": {"must": [knn_query], "filter": kb_filter}}
+        knn_query = self._knn_query(query_embedding, size * 2, kb_filter, [])
 
         hybrid_query = {"hybrid": {"queries": [bm25_query, knn_query]}}
 
