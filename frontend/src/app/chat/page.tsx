@@ -4,7 +4,7 @@ import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { EmptyState, ErrorState, LoadingState, Modal, PageHeader, confirmDialog } from "@/components/ui";
 import { ApiError } from "@/lib/api/client";
 import { chatApi } from "@/lib/api/resources";
-import type { ChatCitation, ConversationSummary, MessageFeedback } from "@/lib/api/types";
+import type { ChatAttachment, ChatCitation, ConversationSummary, MessageFeedback } from "@/lib/api/types";
 
 interface Turn {
   id?: string; // the saved message's id; known once an answer is complete
@@ -12,9 +12,15 @@ interface Turn {
   text: string;
   citations: ChatCitation[];
   feedback?: MessageFeedback | null;
+  attachments?: ChatAttachment[];
   error?: string;
   streaming?: boolean;
 }
+
+const ACCEPTED = ".pdf,.docx,.pptx,.xlsx,.txt,.md,.markdown,.csv";
+
+const formatSize = (bytes: number) =>
+  bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 export default function ChatPage() {
   const queryClient = useQueryClient();
@@ -27,8 +33,13 @@ export default function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [cited, setCited] = useState<ChatCitation | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [pending, setPending] = useState<ChatAttachment[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const abort = useRef<AbortController | null>(null);
   const bottom = useRef<HTMLDivElement | null>(null);
+  const currentId = useRef<string | null>(null);
 
   // Default to the first Application offered; keep the choice while it is still offered.
   useEffect(() => {
@@ -40,6 +51,9 @@ export default function ChatPage() {
   useEffect(() => {
     return () => abort.current?.abort();
   }, []);
+  useEffect(() => {
+    currentId.current = conversationId;
+  }, [conversationId]);
 
   const refreshHistory = () => queryClient.invalidateQueries({ queryKey: ["chat", "conversations"] });
 
@@ -79,6 +93,8 @@ export default function ChatPage() {
     setTurns([]);
     setBusy(false);
     setOpenError(null);
+    setPending([]);
+    setAttachError(null);
   }
 
   const choose = (id: string) => {
@@ -101,8 +117,11 @@ export default function ChatPage() {
           text: m.content,
           citations: m.citations,
           feedback: m.feedback,
+          attachments: m.attachments,
         })),
       );
+      setPending(detail.pending_attachments);
+      setAttachError(null);
     } catch (err) {
       setOpenError((err as Error).message);
     }
@@ -112,11 +131,14 @@ export default function ChatPage() {
     e.preventDefault();
     const query = draft.trim();
     if (!query || !application || busy) return;
+    const sending = pending;
     setDraft("");
+    setPending([]);
+    setAttachError(null);
     setBusy(true);
     setTurns((all) => [
       ...all,
-      { role: "user", text: query, citations: [] },
+      { role: "user", text: query, citations: [], attachments: sending },
       { role: "assistant", text: "", citations: [], streaming: true },
     ]);
     const controller = new AbortController();
@@ -150,6 +172,51 @@ export default function ChatPage() {
       patchLast((t) => ({ ...t, streaming: false }));
       setBusy(false);
       refreshHistory();
+      // Whatever the server did not send with this message is still waiting to be sent.
+      const id = currentId.current;
+      if (id) {
+        chatApi
+          .attachments(id)
+          .then((all) => setPending(all.filter((a) => !a.attached_to)))
+          .catch(() => {});
+      }
+    }
+  };
+
+  const attach = async (files: FileList | null) => {
+    if (!files?.length || !application || uploading) return;
+    setAttachError(null);
+    setUploading(true);
+    try {
+      let id = conversationId;
+      if (!id) {
+        id = (await chatApi.startConversation(application.id)).id;
+        setConversationId(id);
+        refreshHistory();
+      }
+      for (const file of Array.from(files)) {
+        const added = await chatApi.attach(id, file);
+        setPending((all) => [...all, added]);
+      }
+    } catch (err) {
+      setAttachError((err as Error).message);
+    } finally {
+      setUploading(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+
+  const detach = async (attachment: ChatAttachment) => {
+    if (!conversationId) return;
+    setAttachError(null);
+    try {
+      await chatApi.removeAttachment(conversationId, attachment.id);
+      setPending((all) => all.filter((a) => a.id !== attachment.id));
+      setTurns((all) =>
+        all.map((t) => (t.attachments ? { ...t, attachments: t.attachments.filter((a) => a.id !== attachment.id) } : t)),
+      );
+    } catch (err) {
+      setAttachError((err as Error).message);
     }
   };
 
@@ -246,6 +313,7 @@ export default function ChatPage() {
               turn={turn}
               onCite={setCited}
               conversationId={conversationId}
+              onDetach={detach}
               onRated={(feedback) =>
                 setTurns((all) => all.map((t) => (t.id && t.id === turn.id ? { ...t, feedback } : t)))
               }
@@ -254,7 +322,38 @@ export default function ChatPage() {
           <div ref={bottom} />
         </div>
 
-        <form onSubmit={send} className="mt-4 flex gap-3">
+        {(pending.length > 0 || attachError) && (
+          <div className="mt-3">
+            {pending.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                {pending.map((a) => (
+                  <AttachmentChip key={a.id} attachment={a} onRemove={() => detach(a)} />
+                ))}
+              </div>
+            )}
+            {attachError && <p className="mt-1 text-xs text-red-600">{attachError}</p>}
+          </div>
+        )}
+        <form onSubmit={send} className="mt-3 flex gap-3">
+          <input
+            ref={fileInput}
+            type="file"
+            accept={ACCEPTED}
+            multiple
+            className="hidden"
+            onChange={(e) => attach(e.target.files)}
+            aria-label="Attach documents"
+          />
+          <button
+            type="button"
+            className="btn"
+            onClick={() => fileInput.current?.click()}
+            disabled={busy || uploading || !application}
+            title="Attach documents (PDF, DOCX, PPTX, XLSX, TXT, MD, CSV) to ask about them. Only you can see them, and they are deleted with this conversation."
+            aria-label="Attach a document"
+          >
+            {uploading ? "Reading…" : "📎"}
+          </button>
           <input
             className="input flex-1"
             placeholder="Ask a question…"
@@ -275,14 +374,48 @@ export default function ChatPage() {
   );
 }
 
+function AttachmentChip({
+  attachment,
+  onRemove,
+  onDark = false,
+}: {
+  attachment: ChatAttachment;
+  onRemove?: () => void;
+  onDark?: boolean;
+}) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ring-1 ${
+        onDark ? "bg-brand-700 text-white ring-brand-500" : "bg-white text-slate-700 ring-slate-200"
+      }`}
+      title={`${attachment.filename} (${attachment.kind.toUpperCase()}, ${formatSize(attachment.size_bytes)})`}
+    >
+      📄 <span className="max-w-[12rem] truncate">{attachment.filename}</span>
+      <span className="opacity-60">{formatSize(attachment.size_bytes)}</span>
+      {onRemove && (
+        <button
+          type="button"
+          className="ml-1 opacity-70 hover:opacity-100"
+          onClick={onRemove}
+          aria-label={`Remove ${attachment.filename}`}
+        >
+          ✕
+        </button>
+      )}
+    </span>
+  );
+}
+
 function Bubble({
   turn,
   onCite,
   conversationId,
+  onDetach,
   onRated,
 }: {
   turn: Turn;
   onCite: (c: ChatCitation) => void;
+  onDetach: (a: ChatAttachment) => void;
   conversationId: string | null;
   onRated: (feedback: MessageFeedback | null) => void;
 }) {
@@ -297,6 +430,13 @@ function Bubble({
         <div className="whitespace-pre-wrap">
           {turn.text || (turn.streaming && !turn.error ? <span className="text-slate-400">Thinking…</span> : null)}
         </div>
+        {mine && !!turn.attachments?.length && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {turn.attachments.map((a) => (
+              <AttachmentChip key={a.id} attachment={a} onRemove={conversationId ? () => onDetach(a) : undefined} onDark />
+            ))}
+          </div>
+        )}
         {turn.error && <div className="mt-2 text-xs text-red-600">{turn.error}</div>}
         {turn.citations.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-200 pt-2">

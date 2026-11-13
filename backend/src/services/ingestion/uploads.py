@@ -43,8 +43,11 @@ def stored_path(settings: Settings, knowledge_base_id: object, checksum: str, fi
     return upload_root(settings) / str(knowledge_base_id) / f"{checksum}{safe_extension(filename)}"
 
 
-async def read_capped(file: UploadFile, max_mb: int) -> bytes:
-    """Read an upload, refusing with 413 as soon as it exceeds ``max_mb`` (never buffering past the cap)."""
+async def read_capped(file: UploadFile, max_mb: int, setting: str = "INGESTION__MAX_UPLOAD_MB") -> bytes:
+    """Read an upload, refusing with 413 as soon as it exceeds ``max_mb`` (never buffering past the cap).
+
+    ``setting`` names the configuration that sets the cap, for the error message.
+    """
     limit = max_mb * 1024 * 1024
     chunks, size = [], 0
     while True:
@@ -55,6 +58,6 @@ async def read_capped(file: UploadFile, max_mb: int) -> bytes:
         if size > limit:
             raise HTTPException(
                 status_code=413,
-                detail=f"The file is larger than the {max_mb} MB upload limit (INGESTION__MAX_UPLOAD_MB).",
+                detail=f"The file is larger than the {max_mb} MB upload limit ({setting}).",
             )
         chunks.append(chunk)

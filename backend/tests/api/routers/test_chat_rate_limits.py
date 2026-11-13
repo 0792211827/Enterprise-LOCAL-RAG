@@ -4,7 +4,7 @@ import asyncio
 import json
 
 from src.services.chat import ChatLimiter, RateLimited
-from tests.chat_support import ask, caller, exchange, start_conversation, stack, world  # noqa: F401
+from tests.chat_support import ask, caller, exchange, stack, start_conversation, world  # noqa: F401
 
 BASE = "/api/v1/chat/conversations"
 

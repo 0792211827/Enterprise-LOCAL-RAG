@@ -58,3 +58,25 @@ class MessageFeedback(Base):
     shared = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+
+
+class ConversationAttachment(Base):
+    """A document an employee attached to a Conversation: its extracted text, which goes into the prompt in full.
+
+    Visible only to the Conversation's owner, inside that Conversation. The uploaded file itself is not kept: it is
+    parsed and discarded, so what is stored (and deleted with the Conversation) is this row. ``message_id`` is
+    empty until the next message is sent, then names the question the file was attached to.
+    """
+
+    __tablename__ = "chat_attachments"
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    conversation_id = Column(GUID(), ForeignKey("chat_conversations.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner_subject = Column(String, nullable=False)
+    message_id = Column(GUID(), nullable=True)
+    filename = Column(String, nullable=False)
+    kind = Column(String, nullable=False)  # pdf, docx, pptx, xlsx, txt, md or csv -- what the content is, not the extension
+    size_bytes = Column(Integer, nullable=False)
+    token_estimate = Column(Integer, nullable=False)
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)

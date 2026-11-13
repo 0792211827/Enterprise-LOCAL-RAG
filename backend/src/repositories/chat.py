@@ -7,12 +7,12 @@ ratings listing (identifiers, never text) and exchanges the owner explicitly sha
 
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from src.models.chat import Conversation, ConversationMessage, MessageFeedback
+from src.models.chat import Conversation, ConversationAttachment, ConversationMessage, MessageFeedback
 
 DELETE_BATCH = 500
 
@@ -75,18 +75,23 @@ class ConversationRepository:
         answer_id: UUID,
         title: Optional[str] = None,
         attempts: int = 3,
+        attachment_ids: Sequence[UUID] = (),
     ) -> None:
         """Save a question and its answer together, as the next two turns. Retries if a concurrent send took
-        the positions first (the unique position constraint refuses the loser rather than interleave turns)."""
+        the positions first (the unique position constraint refuses the loser rather than interleave turns).
+        ``attachment_ids`` are the pending Attachments the question carried; they now belong to it."""
         for attempt in range(attempts):
             last = self.session.scalar(
                 select(func.coalesce(func.max(ConversationMessage.position), 0)).where(
                     ConversationMessage.conversation_id == conversation.id
                 )
             )
+            question_id = uuid4()
             self.session.add_all(
                 [
-                    ConversationMessage(conversation_id=conversation.id, position=last + 1, role="user", content=question),
+                    ConversationMessage(
+                        id=question_id, conversation_id=conversation.id, position=last + 1, role="user", content=question
+                    ),
                     ConversationMessage(
                         id=answer_id,
                         conversation_id=conversation.id,
@@ -97,6 +102,16 @@ class ConversationRepository:
                     ),
                 ]
             )
+            if attachment_ids:
+                self.session.execute(
+                    update(ConversationAttachment)
+                    .where(
+                        ConversationAttachment.id.in_(list(attachment_ids)),
+                        ConversationAttachment.conversation_id == conversation.id,
+                        ConversationAttachment.message_id.is_(None),
+                    )
+                    .values(message_id=question_id)
+                )
             if title is not None:
                 conversation.title = title
             conversation.last_activity_at = datetime.now(timezone.utc)
@@ -121,6 +136,7 @@ class ConversationRepository:
         if not ids:
             return 0
         message_ids = select(ConversationMessage.id).where(ConversationMessage.conversation_id.in_(ids))
+        self.session.execute(delete(ConversationAttachment).where(ConversationAttachment.conversation_id.in_(ids)))
         self.session.execute(delete(MessageFeedback).where(MessageFeedback.message_id.in_(message_ids)))
         self.session.execute(delete(ConversationMessage).where(ConversationMessage.conversation_id.in_(ids)))
         result = self.session.execute(delete(Conversation).where(Conversation.id.in_(ids)))
@@ -153,6 +169,51 @@ class ConversationRepository:
             {"application_id": application_id, "conversations": count, "messages": messages.get(application_id, 0)}
             for application_id, count in conversations.items()
         ]
+
+
+class AttachmentRepository:
+    """Attachments of one Conversation. Every read takes the Conversation (already proven to be the caller's), so
+    an Attachment of another Conversation is simply not found."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, attachment: ConversationAttachment) -> ConversationAttachment:
+        self.session.add(attachment)
+        self.session.commit()
+        self.session.refresh(attachment)
+        return attachment
+
+    def list(self, conversation_id: UUID) -> List[ConversationAttachment]:
+        stmt = (
+            select(ConversationAttachment)
+            .where(ConversationAttachment.conversation_id == conversation_id)
+            .order_by(ConversationAttachment.created_at, ConversationAttachment.id)
+        )
+        return list(self.session.scalars(stmt))
+
+    def get(self, conversation_id: UUID, attachment_id: UUID) -> Optional[ConversationAttachment]:
+        attachment = self.session.get(ConversationAttachment, attachment_id)
+        if attachment is None or attachment.conversation_id != conversation_id:
+            return None
+        return attachment
+
+    def remove(self, attachment: ConversationAttachment) -> None:
+        self.session.delete(attachment)
+        self.session.commit()
+
+    def for_messages(self, message_ids: Sequence[UUID]) -> Dict[UUID, List[ConversationAttachment]]:
+        if not message_ids:
+            return {}
+        stmt = (
+            select(ConversationAttachment)
+            .where(ConversationAttachment.message_id.in_(message_ids))
+            .order_by(ConversationAttachment.created_at, ConversationAttachment.id)
+        )
+        grouped: Dict[UUID, List[ConversationAttachment]] = {}
+        for attachment in self.session.scalars(stmt):
+            grouped.setdefault(attachment.message_id, []).append(attachment)
+        return grouped
 
 
 class FeedbackRepository:

@@ -75,6 +75,18 @@ class MessageFeedbackView(BaseModel):
     share_with_admins: bool = False
 
 
+class AttachmentView(BaseModel):
+    """A document attached to a Conversation. ``attached_to`` is empty until the next message is sent."""
+
+    id: str
+    filename: str
+    kind: str
+    size_bytes: int
+    token_estimate: int
+    attached_to: Optional[str] = None
+    created_at: datetime
+
+
 class ChatMessageView(BaseModel):
     id: str
     role: Literal["user", "assistant"]
@@ -82,10 +94,13 @@ class ChatMessageView(BaseModel):
     citations: List[ChatCitation] = Field(default_factory=list)
     created_at: datetime
     feedback: Optional[MessageFeedbackView] = None
+    attachments: List[AttachmentView] = Field(default_factory=list)
 
 
 class ConversationDetail(ConversationSummary):
     messages: List[ChatMessageView] = Field(default_factory=list)
+    # Attached but not yet sent with a message.
+    pending_attachments: List[AttachmentView] = Field(default_factory=list)
 
 
 class ApplicationChatCounts(BaseModel):

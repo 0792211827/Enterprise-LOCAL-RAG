@@ -12,6 +12,7 @@ import type {
   ApplicationCreate,
   ApplicationRatings,
   ChatApplication,
+  ChatAttachment,
   ChatCompletionResponse,
   ChatCounts,
   ChatDocument,
@@ -197,6 +198,15 @@ export const chatApi = {
       onEvent,
       signal,
     ),
+  attachments: (conversationId: string) =>
+    apiGet<ChatAttachment[]>(`/api/v1/chat/conversations/${conversationId}/attachments`),
+  attach: (conversationId: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return apiUpload<ChatAttachment>(`/api/v1/chat/conversations/${conversationId}/attachments`, form);
+  },
+  removeAttachment: (conversationId: string, attachmentId: string) =>
+    apiSend<void>(`/api/v1/chat/conversations/${conversationId}/attachments/${attachmentId}`, "DELETE"),
   rate: (
     conversationId: string,
     messageId: string,

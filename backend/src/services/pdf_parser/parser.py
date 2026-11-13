@@ -43,3 +43,18 @@ class PDFParserService:
         except Exception as e:
             logger.error(f"Docling parsing error for {pdf_path.name}: {e}")
             raise PDFParsingException(f"Docling parsing error for {pdf_path.name}: {e}")
+
+    async def parse_document(self, path: Path) -> Optional[PdfContent]:
+        """Parse a PDF or an Office document (DOCX, PPTX, XLSX) with Docling.
+
+        :returns: the content, or ``None`` if the file is over the size or page limit.
+        :raises PDFParsingException: the file could not be read.
+        """
+        if not path.exists():
+            raise PDFValidationError(f"File not found: {path}")
+        try:
+            return await self.docling_parser.parse_document(path)
+        except (PDFValidationError, PDFParsingException):
+            raise
+        except Exception as e:
+            raise PDFParsingException(f"Docling parsing error for {path.name}: {e}")

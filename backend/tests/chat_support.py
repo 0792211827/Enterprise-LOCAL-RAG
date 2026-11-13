@@ -20,6 +20,7 @@ from src.dependencies import (
     get_langfuse_tracer,
     get_llm_provider,
     get_opensearch_client,
+    get_pdf_parser,
     get_settings,
 )
 from src.models import KnowledgeBase
@@ -68,6 +69,22 @@ class FakeTracer:
 
     def everything_sent(self) -> str:
         return json.dumps(self.sent, default=str)
+
+
+class FakeParser:
+    """Stands in for Docling: returns ``text`` for any file it is given, or raises when ``fail`` is set."""
+
+    def __init__(self):
+        self.text = "Parsed document text."
+        self.fail = False
+        self.parsed = []
+
+    async def parse_document(self, path):
+        assert path.exists()  # the parser is handed a real file, which is gone again afterwards
+        self.parsed.append(path)
+        if self.fail:
+            raise RuntimeError("corrupt")
+        return SimpleNamespace(raw_text=self.text)
 
 
 @pytest.fixture
@@ -154,6 +171,7 @@ def stack(world):
     current = {"principal": caller("alice", "staff")}
     tracer = FakeTracer()
 
+    parser = FakeParser()
     app = FastAPI()
     app.include_router(chat.router, dependencies=[Depends(require_role(Role.QUERIER))])
     app.include_router(chat_admin.router, dependencies=[Depends(require_role(Role.ADMIN))])
@@ -172,6 +190,7 @@ def stack(world):
     app.dependency_overrides[get_embeddings_service] = lambda: embeddings
     app.dependency_overrides[get_llm_provider] = lambda: llm
     app.dependency_overrides[get_langfuse_tracer] = lambda: tracer
+    app.dependency_overrides[get_pdf_parser] = lambda: parser
     app.state.audit_recorder = DatabaseAuditRecorder(opener(world.factory), level="full")
     app.state.chat_limiter = ChatLimiter(per_minute=1000, max_concurrent=100)  # generous, as by default
 
@@ -181,6 +200,7 @@ def stack(world):
         index=index,
         llm=llm,
         tracer=tracer,
+        parser=parser,
         act_as=lambda principal: current.update(principal=principal),
         use_settings=lambda value: settings.update(value=value),
         use_limiter=lambda limiter: setattr(app.state, "chat_limiter", limiter),

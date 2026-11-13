@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
@@ -176,3 +177,26 @@ class DoclingParser:
                 )
             else:
                 raise PDFParsingException(f"Failed to parse PDF with Docling: {e}")
+
+    async def parse_document(self, path: Path) -> Optional[PdfContent]:
+        """Parse a PDF, or an Office document (DOCX, PPTX, XLSX), into plain text.
+
+        A PDF goes through ``parse_pdf`` unchanged. Anything else is converted by Docling's own readers (no
+        layout models involved), under the same size limit.
+
+        :returns: the content, or ``None`` when the file is over the size or page limit.
+        """
+        if path.suffix.lower() == ".pdf":
+            return await self.parse_pdf(path)
+        try:
+            if path.stat().st_size > self.max_file_size_bytes:
+                return None
+            result = await asyncio.to_thread(self._converter.convert, str(path), max_file_size=self.max_file_size_bytes)
+            return PdfContent(
+                raw_text=result.document.export_to_text(),
+                parser_used=ParserType.DOCLING,
+                metadata={"source": "docling", "note": f"Content extracted from {path.suffix.lower()}"},
+            )
+        except Exception as e:
+            logger.error(f"Failed to parse {path.suffix} with Docling: {type(e).__name__}")
+            raise PDFParsingException(f"Failed to parse {path.suffix} with Docling: {e}")

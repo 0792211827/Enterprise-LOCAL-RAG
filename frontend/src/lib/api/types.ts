@@ -278,6 +278,17 @@ export interface MessageFeedback {
   share_with_admins: boolean;
 }
 
+/** A document attached to a Conversation. `attached_to` is null until the next message is sent. */
+export interface ChatAttachment {
+  id: string;
+  filename: string;
+  kind: string;
+  size_bytes: number;
+  token_estimate: number;
+  attached_to: string | null;
+  created_at: string;
+}
+
 export interface ConversationMessage {
   id: string;
   role: "user" | "assistant";
@@ -285,10 +296,12 @@ export interface ConversationMessage {
   citations: ChatCitation[];
   created_at: string;
   feedback: MessageFeedback | null;
+  attachments: ChatAttachment[];
 }
 
 export interface ConversationDetail extends ConversationSummary {
   messages: ConversationMessage[];
+  pending_attachments: ChatAttachment[];
 }
 
 // What admins see of chat: counts, ratings, and only the exchanges users chose to share.

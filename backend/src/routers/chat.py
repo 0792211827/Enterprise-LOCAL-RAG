@@ -7,13 +7,15 @@ shapes the result for a browser and keeps the history. A Conversation belongs to
 it and nobody else can reach it -- another caller's Conversation is a 404, exactly like one that never existed.
 """
 
+import dataclasses
+import hashlib
 import json
 import logging
 import time
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from src.dependencies import (
     AuditDep,
@@ -22,6 +24,7 @@ from src.dependencies import (
     LangfuseDep,
     LLMProviderDep,
     OpenSearchDep,
+    PDFParserDep,
     PrincipalDep,
     ProviderRegistryDep,
     RerankerDep,
@@ -31,9 +34,16 @@ from src.dependencies import (
     SettingsDep,
 )
 from src.models import AuditAction
-from src.models.chat import Conversation
-from src.repositories import ApplicationRepository, ConversationRepository, DocumentRepository, FeedbackRepository
+from src.models.chat import Conversation, ConversationAttachment
+from src.repositories import (
+    ApplicationRepository,
+    AttachmentRepository,
+    ConversationRepository,
+    DocumentRepository,
+    FeedbackRepository,
+)
 from src.schemas.api.chat import (
+    AttachmentView,
     ChatApplication,
     ChatCitation,
     ChatDocument,
@@ -46,10 +56,22 @@ from src.schemas.api.chat import (
     MessageFeedbackInput,
     MessageFeedbackView,
 )
-from src.services.applications import is_offered_to, prepare_stream, scope_application
+from src.services.applications import is_agentic, is_offered_to, prepare_stream, scope_application
 from src.services.audit import AuditContext, QueryAudit, audited_stream
-from src.services.audit.events import elapsed_ms
-from src.services.chat import RateLimited, history_for_prompt, retrieval_query, trace_chat_exchange
+from src.services.audit.events import elapsed_ms, record_event
+from src.services.chat import (
+    AttachmentError,
+    AttachmentText,
+    RateLimited,
+    estimate_tokens,
+    extract_text,
+    history_for_prompt,
+    question_with_attachments,
+    retrieval_query,
+    sniff_kind,
+    trace_chat_exchange,
+)
+from src.services.ingestion.uploads import display_name, read_capped
 from src.services.providers.llm.registry import ProviderConfigurationError
 
 logger = logging.getLogger(__name__)
@@ -110,6 +132,18 @@ def _feedback_view(feedback) -> MessageFeedbackView:
     return MessageFeedbackView(rating=feedback.rating, comment=feedback.comment, share_with_admins=feedback.shared)
 
 
+def _attachment_view(attachment: ConversationAttachment) -> AttachmentView:
+    return AttachmentView(
+        id=str(attachment.id),
+        filename=attachment.filename,
+        kind=attachment.kind,
+        size_bytes=attachment.size_bytes,
+        token_estimate=attachment.token_estimate,
+        attached_to=str(attachment.message_id) if attachment.message_id else None,
+        created_at=attachment.created_at,
+    )
+
+
 def _owned_conversation(repo: ConversationRepository, conversation_id: UUID, principal) -> Conversation:
     conversation = repo.get_owned(conversation_id, principal.subject)
     if conversation is None:
@@ -155,6 +189,9 @@ def open_conversation(conversation_id: UUID, principal: PrincipalDep, session: S
     conversation = _owned_conversation(repo, conversation_id, principal)
     messages = repo.messages(conversation.id)
     feedback = FeedbackRepository(session).for_messages([m.id for m in messages])
+    attachments = AttachmentRepository(session)
+    by_message = attachments.for_messages([m.id for m in messages])
+    pending = [a for a in attachments.list(conversation.id) if a.message_id is None]
     views = []
     for message in messages:
         rating = feedback.get(message.id)
@@ -166,9 +203,14 @@ def open_conversation(conversation_id: UUID, principal: PrincipalDep, session: S
                 citations=message.citations or [],
                 created_at=message.created_at,
                 feedback=_feedback_view(rating) if rating else None,
+                attachments=[_attachment_view(a) for a in by_message.get(message.id, [])],
             )
         )
-    return ConversationDetail(**_summary(conversation, len(messages)).model_dump(), messages=views)
+    return ConversationDetail(
+        **_summary(conversation, len(messages)).model_dump(),
+        messages=views,
+        pending_attachments=[_attachment_view(a) for a in pending],
+    )
 
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationSummary)
@@ -182,6 +224,137 @@ def rename_conversation(conversation_id: UUID, payload: ConversationRename, prin
 def delete_conversation(conversation_id: UUID, principal: PrincipalDep, session: SessionDep):
     repo = ConversationRepository(session)
     repo.delete_many([_owned_conversation(repo, conversation_id, principal).id])
+    return Response(status_code=204)
+
+
+def _record_attachment_event(audit_recorder, request, principal, application_id, outcome: str, **details) -> None:
+    """Attachment events carry metadata only: ids, type, size and a digest of the content -- never the file's name or text."""
+    context = dataclasses.replace(AuditContext.capture(request, principal), application_id=application_id)
+    record_event(audit_recorder, context, action=AuditAction.CHAT_ATTACHMENT.value, outcome=outcome, details=details)
+
+
+@router.post("/conversations/{conversation_id}/attachments", response_model=AttachmentView, status_code=201)
+async def upload_attachment(
+    conversation_id: UUID,
+    request: Request,
+    principal: PrincipalDep,
+    session: SessionDep,
+    scope: ScopeDep,
+    settings: SettingsDep,
+    parser: PDFParserDep,
+    audit_recorder: AuditDep,
+    file: UploadFile = File(...),
+):
+    """Attach a document to a Conversation, to ask about it.
+
+    The type is checked from the content, the text is extracted with the platform's parser, and the file itself is
+    not kept. All of a Conversation's Attachments go into the prompt in full, so together they must fit the token
+    budget. Only the Conversation's owner can attach, list or remove them.
+    """
+    repo = ConversationRepository(session)
+    conversation = _owned_conversation(repo, conversation_id, principal)
+    application = _offered_application(session, conversation.application_id, scope)
+    if is_agentic(application):
+        raise HTTPException(status_code=409, detail="This assistant does not take attachments.")
+    chat = settings.chat
+    attachments = AttachmentRepository(session)
+    existing = attachments.list(conversation.id)
+    attachment_id = uuid4()
+    size, raw = 0, b""
+
+    def refuse(error: AttachmentError):
+        _record_attachment_event(
+            audit_recorder, request, principal, application.id, "error",
+            event="upload", conversation_id=str(conversation_id), rejected=error.code, size_bytes=size,
+        )  # fmt: skip
+        raise HTTPException(status_code=error.status_code, detail=error.message)
+
+    pending = sum(1 for a in existing if a.message_id is None)
+    if pending >= chat.attachments_per_message:
+        refuse(
+            AttachmentError(
+                422,
+                "too_many",
+                f"At most {chat.attachments_per_message} documents can be attached to one message. Send this message or remove one.",
+            )
+        )
+    try:
+        raw = await read_capped(file, chat.attachment_max_mb, "CHAT__ATTACHMENT_MAX_MB")
+    except HTTPException as exc:
+        refuse(AttachmentError(exc.status_code, "too_large", str(exc.detail)))
+    size = len(raw)
+    limit_bytes = chat.conversation_attachments_max_mb * 1024 * 1024
+    if sum(a.size_bytes for a in existing) + size > limit_bytes:
+        refuse(
+            AttachmentError(
+                413,
+                "conversation_full",
+                f"A conversation can hold {chat.conversation_attachments_max_mb} MB of documents. Remove one to attach this file.",
+            )
+        )
+    name = display_name(file.filename)
+    try:
+        kind = sniff_kind(file.filename, raw)
+        text = await extract_text(kind, raw, parser)
+        tokens = estimate_tokens(text)
+        used = sum(a.token_estimate for a in existing)
+        if used + tokens > chat.attachment_token_budget:
+            raise AttachmentError(
+                422,
+                "over_budget",
+                f"This document is too long to include in full: it would bring the attached text to about {used + tokens:,} "
+                f"tokens, over the {chat.attachment_token_budget:,} allowed. Attach a shorter file or remove another one.",
+            )
+    except AttachmentError as error:
+        refuse(error)
+
+    _record_attachment_event(
+        audit_recorder, request, principal, application.id, "ok",
+        event="upload", conversation_id=str(conversation_id), attachment_id=str(attachment_id),
+        kind=kind, size_bytes=size, tokens=tokens, sha256=hashlib.sha256(raw).hexdigest(),
+    )  # fmt: skip
+    created = attachments.add(
+        ConversationAttachment(
+            id=attachment_id,
+            conversation_id=conversation.id,
+            owner_subject=principal.subject,
+            filename=name,
+            kind=kind,
+            size_bytes=size,
+            token_estimate=tokens,
+            text=text,
+        )
+    )
+    return _attachment_view(created)
+
+
+@router.get("/conversations/{conversation_id}/attachments", response_model=List[AttachmentView])
+def list_attachments(conversation_id: UUID, principal: PrincipalDep, session: SessionDep):
+    conversation = _owned_conversation(ConversationRepository(session), conversation_id, principal)
+    return [_attachment_view(a) for a in AttachmentRepository(session).list(conversation.id)]
+
+
+@router.delete("/conversations/{conversation_id}/attachments/{attachment_id}", status_code=204)
+def remove_attachment(
+    conversation_id: UUID,
+    attachment_id: UUID,
+    request: Request,
+    principal: PrincipalDep,
+    session: SessionDep,
+    audit_recorder: AuditDep,
+):
+    """Remove a document and its extracted text; later questions are answered without it."""
+    conversation = _owned_conversation(ConversationRepository(session), conversation_id, principal)
+    attachments = AttachmentRepository(session)
+    attachment = attachments.get(conversation.id, attachment_id)
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    _record_attachment_event(
+        audit_recorder, request, principal, conversation.application_id, "ok",
+        event="remove", conversation_id=str(conversation.id), attachment_id=str(attachment.id),
+        kind=attachment.kind, size_bytes=attachment.size_bytes,
+    )  # fmt: skip
+    attachments.remove(attachment)
     return Response(status_code=204)
 
 
@@ -247,6 +420,15 @@ async def send_message(
     conversation = _owned_conversation(repo, conversation_id, principal)
     application = _offered_application(session, conversation.application_id, scope)
     history = history_for_prompt(repo.messages(conversation.id), settings.chat.history_messages)
+    attached = AttachmentRepository(session).list(conversation.id)
+    if attached and is_agentic(application):
+        raise HTTPException(status_code=409, detail="This assistant does not take attachments. Remove them to continue.")
+    if sum(a.token_estimate for a in attached) > settings.chat.attachment_token_budget:
+        raise HTTPException(
+            status_code=422, detail="The attached documents are too long to include in full. Remove one to continue."
+        )
+    pending_attachments = [a.id for a in attached if a.message_id is None]
+    model_query = question_with_attachments(payload.query, [AttachmentText(a.filename, a.text) for a in attached])
 
     try:
         provider = providers.for_application(application, default=llm)
@@ -280,14 +462,15 @@ async def send_message(
     try:
         prepared = await prepare_stream(
             application,
-            payload.query,
+            model_query,
             opensearch,
             embeddings,
             provider,
             scope=scope,
             reranker=reranker,
             history=history,
-            search_query=retrieval_query(payload.query, history),
+            # Retrieval sees the question only: attached text is for the model, not for searching the knowledge bases.
+            search_query=retrieval_query(payload.query, history) or payload.query,
         )
     except BaseException as exc:
         if slot is not None:
@@ -315,6 +498,7 @@ async def send_message(
                 citations,
                 message_id,
                 title=_title_from(payload.query) if first_question else None,
+                attachment_ids=pending_attachments,
             )
             saved["message_id"] = str(message_id)
 

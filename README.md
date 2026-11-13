@@ -374,6 +374,7 @@ the optional debugging and observability layer.
 | `audit.export` | an export of the audit log | format and filters |
 | `audit.purge` | `make audit-purge` | cutoff, rows deleted, OS user |
 | `uploads.cleanup` | `make uploads-cleanup` | days, files removed, bytes freed, OS user |
+| `chat.attachment` | a document attached to or removed from a Conversation | event, Conversation and Attachment ids, type, size, tokens, content digest (never name or text) |
 | `chat.purge` | the daily chat retention purge, `make chat-purge` | cutoff, days, Conversations deleted (counts only) |
 
 Every event also has the `X-Request-ID`, the client IP (taken from
@@ -447,6 +448,22 @@ with citations that open the source Document and passage.
   forever) after their last message, together with their messages and ratings. The
   API runs the purge daily; `make chat-purge` runs it on demand. A purge that deletes
   something leaves a `chat.purge` audit event with counts only.
+- **Document Attachments.** An employee can attach PDF, DOCX, PPTX, XLSX, TXT, MD or CSV
+  files (📎 in the chat) and ask about them. The type is decided from the file's
+  **content** (PDF header, the parts inside an Office file, valid UTF-8 text) and must
+  agree with its extension, so a renamed file is refused (`415`). Defaults, all
+  configurable (`CHAT__ATTACHMENTS_PER_MESSAGE`, `CHAT__ATTACHMENT_MAX_MB`,
+  `CHAT__CONVERSATION_ATTACHMENTS_MAX_MB`): 5 per message, 20 MB per document, 100 MB per
+  Conversation; beyond them the error says which limit. Files are parsed with the platform's
+  Docling parser and **only the extracted text is kept**; the upload is discarded. All of a
+  Conversation's Attachments go into the prompt **in full**, under `CHAT__ATTACHMENT_TOKEN_BUDGET`
+  (default 8000 tokens, roughly 4 characters each); a file that would exceed it is refused.
+  The prompt tells the model the text is **untrusted data, not instructions**. Attachments
+  are reachable only by the Conversation's owner, inside that Conversation (another user,
+  admins included, gets `404`), can be removed one by one, and are deleted with the Conversation
+  (so also by retention). Uploads and removals leave a `chat.attachment` audit event with
+  metadata only (type, size, token count, a SHA-256 of the content), never the name or text.
+  Assistants on the agentic strategy do not take attachments (`409`).
 - **Per-user rate limits.** Each employee may send `CHAT__RATE_LIMIT_PER_MINUTE` messages
   a minute (default 30) and have `CHAT__MAX_CONCURRENT_GENERATIONS` answers being written
   at once (default 3); 0 turns a limit off. Beyond either, `POST .../messages` answers `429`

@@ -153,3 +153,57 @@ class TestPDFParserService:
         service2 = make_pdf_parser_service()
         # Should be the same instance due to @lru_cache
         assert service1 is service2
+
+
+class TestOfficeDocuments:
+    """``parse_document`` reads Office files with Docling's own readers (no models are loaded)."""
+
+    @pytest.fixture
+    def parser(self):
+        return PDFParserService(max_pages=20, max_file_size_mb=10)
+
+    @staticmethod
+    def make(tmp_path, name):
+        import docx
+        import openpyxl
+        import pptx
+
+        path = tmp_path / name
+        if name.endswith(".docx"):
+            document = docx.Document()
+            document.add_heading("Leave policy", 1)
+            document.add_paragraph("Employees get 25 days.")
+            document.save(path)
+        elif name.endswith(".xlsx"):
+            book = openpyxl.Workbook()
+            book.active.append(["name", "days"])
+            book.active.append(["alice", 25])
+            book.save(path)
+        else:
+            deck = pptx.Presentation()
+            slide = deck.slides.add_slide(deck.slide_layouts[1])
+            slide.shapes.title.text = "Leave policy"
+            slide.placeholders[1].text = "Employees get 25 days."
+            deck.save(path)
+        return path
+
+    @pytest.mark.parametrize("name", ["policy.docx", "policy.xlsx", "policy.pptx"])
+    async def test_office_documents_yield_their_text(self, parser, tmp_path, name):
+        content = await parser.parse_document(self.make(tmp_path, name))
+
+        assert content.parser_used == ParserType.DOCLING
+        assert "25" in content.raw_text
+
+    async def test_a_file_over_the_size_limit_gives_none(self, tmp_path):
+        small = PDFParserService(max_pages=20, max_file_size_mb=1)
+        path = tmp_path / "big.docx"
+        path.write_bytes(b"x" * (1024 * 1024 + 1))
+
+        assert await small.parse_document(path) is None
+
+    async def test_a_corrupt_office_file_raises_a_parsing_error(self, parser, tmp_path):
+        path = tmp_path / "broken.docx"
+        path.write_bytes(b"PK\x03\x04 this is not a real document")
+
+        with pytest.raises(PDFParsingException):
+            await parser.parse_document(path)
