@@ -463,9 +463,17 @@ with citations that open the source Document and passage.
   configurable (`CHAT__ATTACHMENTS_PER_MESSAGE`, `CHAT__ATTACHMENT_MAX_MB`,
   `CHAT__CONVERSATION_ATTACHMENTS_MAX_MB`): 5 per message, 20 MB per document, 100 MB per
   Conversation; beyond them the error says which limit. Files are parsed with the platform's
-  Docling parser and **only the extracted text is kept**; the upload is discarded. All of a
-  Conversation's Attachments go into the prompt **in full**, under `CHAT__ATTACHMENT_TOKEN_BUDGET`
-  (default 8000 tokens, roughly 4 characters each); a file that would exceed it is refused.
+  Docling parser and **only the extracted text is kept**; the upload is discarded.
+  Attachments go into the prompt **in full** while together they fit
+  `CHAT__ATTACHMENT_TOKEN_BUDGET` (default 8000 tokens, roughly 4 characters each). A
+  document that would not fit is **chunked and embedded into a private partition of the chunk
+  index** instead (shown as "searched" in the chat), and each question gets its best
+  `CHAT__ATTACHMENT_PASSAGES` passages (default 6); its extracted text is then kept only as
+  those chunks. The partition is filtered by owner **and** Conversation, and every
+  Knowledge Base search excludes it, so these chunks never reach shared knowledge or another
+  user or Conversation. Citations for such passages name the Attachment, not a Document.
+  Removing an Attachment, deleting its Conversation, or the retention purge removes the
+  chunks first (if the index is unreachable the delete answers `503` rather than leave them).
   The prompt tells the model the text is **untrusted data, not instructions**. Attachments
   are reachable only by the Conversation's owner, inside that Conversation (another user,
   admins included, gets `404`), can be removed one by one, and are deleted with the Conversation

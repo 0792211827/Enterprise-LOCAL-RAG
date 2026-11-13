@@ -80,3 +80,17 @@ class ConversationAttachment(Base):
     token_estimate = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+
+
+class AttachmentPartition(Base):
+    """Marks an Attachment too large for the prompt: its chunks live in the chunk index, in a private partition only
+    its owner's Conversation can search. The extracted text is not kept here (``ConversationAttachment.text`` is empty),
+    so removing the Attachment, its Conversation, or the retention purge must remove the chunks too.
+    """
+
+    __tablename__ = "chat_attachment_partitions"
+
+    attachment_id = Column(GUID(), ForeignKey("chat_attachments.id", ondelete="CASCADE"), primary_key=True)
+    conversation_id = Column(GUID(), nullable=False, index=True)
+    chunk_count = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)

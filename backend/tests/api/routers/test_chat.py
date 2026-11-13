@@ -123,6 +123,7 @@ def test_the_answer_streams_deltas_then_citations_then_done(stack, world):
         "chunk_id": "c1",
         "passage": "Employees get 25 days of annual leave.",
         "score": 0.9,
+        "attachment_id": None,  # only a passage of an Attachment names one
     }
     assert stack.index.search_unified.call_args.kwargs["knowledge_base_ids"] == [world.kbs["hr"]]
 

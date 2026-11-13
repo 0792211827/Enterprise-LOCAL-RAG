@@ -61,11 +61,14 @@ from src.services.audit import AuditContext, QueryAudit, audited_stream
 from src.services.audit.events import elapsed_ms, record_event
 from src.services.chat import (
     AttachmentError,
+    AttachmentExcerpts,
     AttachmentText,
     RateLimited,
     estimate_tokens,
     extract_text,
+    find_passages,
     history_for_prompt,
+    index_partition,
     question_with_attachments,
     retrieval_query,
     sniff_kind,
@@ -80,6 +83,8 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 APPLICATION_NOT_FOUND = "Application not found"
 CONVERSATION_NOT_FOUND = "Conversation not found"
+PARTITION_DELETE_FAILED = "Your documents could not be removed from the search index right now. Please try again."
+PASSAGE_SEARCH_FAILED = "Your attached documents could not be searched right now. Please try again."
 STREAM_FAILED_MESSAGE = "The answer could not be completed. Please try again."
 RATE_LIMIT_MESSAGES = {
     "rate": "You are sending messages too quickly. Please wait {seconds} seconds and try again.",
@@ -112,6 +117,34 @@ def _citations(hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     ]
 
 
+def _attachment_citations(hits: List[Dict[str, Any]], start: int) -> List[Dict[str, Any]]:
+    """One citation per Attachment passage, numbered after the Knowledge Base ones. It names the Attachment, not a Document."""
+    return [
+        ChatCitation(
+            index=start + offset,
+            attachment_id=str(hit["attachment_id"]),
+            title=hit.get("title") or "",
+            chunk_id=hit.get("chunk_id"),
+            passage=hit.get("chunk_text") or "",
+            score=float(hit.get("score") or 0.0),
+        ).model_dump()
+        for offset, hit in enumerate(hits, 1)
+        if hit.get("attachment_id")
+    ]
+
+
+def _excerpts(hits: List[Dict[str, Any]]) -> List[AttachmentExcerpts]:
+    """The passages found, grouped by the Attachment they came from, in order of first appearance."""
+    grouped: Dict[str, List[str]] = {}
+    names: Dict[str, str] = {}
+    for hit in hits:
+        key = str(hit.get("attachment_id") or "")
+        if key:
+            names.setdefault(key, hit.get("title") or "attachment")
+            grouped.setdefault(key, []).append(hit.get("chunk_text") or "")
+    return [AttachmentExcerpts(names[key], passages) for key, passages in grouped.items()]
+
+
 def _title_from(question: str) -> str:
     text = " ".join(question.split())
     return text if len(text) <= TITLE_LENGTH else text[: TITLE_LENGTH - 1].rstrip() + "…"
@@ -132,8 +165,9 @@ def _feedback_view(feedback) -> MessageFeedbackView:
     return MessageFeedbackView(rating=feedback.rating, comment=feedback.comment, share_with_admins=feedback.shared)
 
 
-def _attachment_view(attachment: ConversationAttachment) -> AttachmentView:
+def _attachment_view(attachment: ConversationAttachment, searched: bool = False) -> AttachmentView:
     return AttachmentView(
+        searched=searched,
         id=str(attachment.id),
         filename=attachment.filename,
         kind=attachment.kind,
@@ -190,6 +224,7 @@ def open_conversation(conversation_id: UUID, principal: PrincipalDep, session: S
     messages = repo.messages(conversation.id)
     feedback = FeedbackRepository(session).for_messages([m.id for m in messages])
     attachments = AttachmentRepository(session)
+    searched = attachments.partitioned_ids(conversation.id)
     by_message = attachments.for_messages([m.id for m in messages])
     pending = [a for a in attachments.list(conversation.id) if a.message_id is None]
     views = []
@@ -203,13 +238,13 @@ def open_conversation(conversation_id: UUID, principal: PrincipalDep, session: S
                 citations=message.citations or [],
                 created_at=message.created_at,
                 feedback=_feedback_view(rating) if rating else None,
-                attachments=[_attachment_view(a) for a in by_message.get(message.id, [])],
+                attachments=[_attachment_view(a, a.id in searched) for a in by_message.get(message.id, [])],
             )
         )
     return ConversationDetail(
         **_summary(conversation, len(messages)).model_dump(),
         messages=views,
-        pending_attachments=[_attachment_view(a) for a in pending],
+        pending_attachments=[_attachment_view(a, a.id in searched) for a in pending],
     )
 
 
@@ -221,9 +256,17 @@ def rename_conversation(conversation_id: UUID, payload: ConversationRename, prin
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)
-def delete_conversation(conversation_id: UUID, principal: PrincipalDep, session: SessionDep):
+def delete_conversation(conversation_id: UUID, principal: PrincipalDep, session: SessionDep, opensearch: OpenSearchDep):
     repo = ConversationRepository(session)
-    repo.delete_many([_owned_conversation(repo, conversation_id, principal).id])
+    conversation = _owned_conversation(repo, conversation_id, principal)
+    if repo.with_partitions([conversation.id]):
+        # The chunks go first: a Conversation is never reported deleted while its private chunks still exist.
+        try:
+            opensearch.delete_attachment_chunks(str(conversation.id))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Removing a Conversation's partition failed: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail=PARTITION_DELETE_FAILED)
+    repo.delete_many([conversation.id])
     return Response(status_code=204)
 
 
@@ -242,14 +285,17 @@ async def upload_attachment(
     scope: ScopeDep,
     settings: SettingsDep,
     parser: PDFParserDep,
+    opensearch: OpenSearchDep,
+    embeddings: EmbeddingsDep,
     audit_recorder: AuditDep,
     file: UploadFile = File(...),
 ):
     """Attach a document to a Conversation, to ask about it.
 
     The type is checked from the content, the text is extracted with the platform's parser, and the file itself is
-    not kept. All of a Conversation's Attachments go into the prompt in full, so together they must fit the token
-    budget. Only the Conversation's owner can attach, list or remove them.
+    not kept. Documents go into the prompt in full while together they fit the token budget; one that would not fit
+    is chunked and embedded into a private partition of the chunk index instead, and each question gets its best
+    passages. Only the Conversation's owner can attach, list or remove them.
     """
     repo = ConversationRepository(session)
     conversation = _owned_conversation(repo, conversation_id, principal)
@@ -259,7 +305,9 @@ async def upload_attachment(
     chat = settings.chat
     attachments = AttachmentRepository(session)
     existing = attachments.list(conversation.id)
+    searched_before = attachments.partitioned_ids(conversation.id)
     attachment_id = uuid4()
+    chunk_count: Optional[int] = None
     size, raw = 0, b""
 
     def refuse(error: AttachmentError):
@@ -297,13 +345,10 @@ async def upload_attachment(
         kind = sniff_kind(file.filename, raw)
         text = await extract_text(kind, raw, parser)
         tokens = estimate_tokens(text)
-        used = sum(a.token_estimate for a in existing)
-        if used + tokens > chat.attachment_token_budget:
-            raise AttachmentError(
-                422,
-                "over_budget",
-                f"This document is too long to include in full: it would bring the attached text to about {used + tokens:,} "
-                f"tokens, over the {chat.attachment_token_budget:,} allowed. Attach a shorter file or remove another one.",
+        in_full = sum(a.token_estimate for a in existing if a.id not in searched_before)
+        if in_full + tokens > chat.attachment_token_budget:
+            chunk_count = await index_partition(
+                opensearch, embeddings, settings.chunking, principal.subject, str(conversation.id), str(attachment_id), name, text
             )
     except AttachmentError as error:
         refuse(error)
@@ -312,26 +357,35 @@ async def upload_attachment(
         audit_recorder, request, principal, application.id, "ok",
         event="upload", conversation_id=str(conversation_id), attachment_id=str(attachment_id),
         kind=kind, size_bytes=size, tokens=tokens, sha256=hashlib.sha256(raw).hexdigest(),
+        searched=chunk_count is not None, **({"chunks": chunk_count} if chunk_count is not None else {}),
     )  # fmt: skip
-    created = attachments.add(
-        ConversationAttachment(
-            id=attachment_id,
-            conversation_id=conversation.id,
-            owner_subject=principal.subject,
-            filename=name,
-            kind=kind,
-            size_bytes=size,
-            token_estimate=tokens,
-            text=text,
+    try:
+        created = attachments.add(
+            ConversationAttachment(
+                id=attachment_id,
+                conversation_id=conversation.id,
+                owner_subject=principal.subject,
+                filename=name,
+                kind=kind,
+                size_bytes=size,
+                token_estimate=tokens,
+                text="" if chunk_count is not None else text,  # a searched document's text lives only in its partition
+            ),
+            chunk_count=chunk_count,
         )
-    )
-    return _attachment_view(created)
+    except Exception:
+        if chunk_count is not None:
+            opensearch.delete_attachment_chunks(str(conversation.id), str(attachment_id))
+        raise
+    return _attachment_view(created, searched=chunk_count is not None)
 
 
 @router.get("/conversations/{conversation_id}/attachments", response_model=List[AttachmentView])
 def list_attachments(conversation_id: UUID, principal: PrincipalDep, session: SessionDep):
     conversation = _owned_conversation(ConversationRepository(session), conversation_id, principal)
-    return [_attachment_view(a) for a in AttachmentRepository(session).list(conversation.id)]
+    attachments = AttachmentRepository(session)
+    searched = attachments.partitioned_ids(conversation.id)
+    return [_attachment_view(a, a.id in searched) for a in attachments.list(conversation.id)]
 
 
 @router.delete("/conversations/{conversation_id}/attachments/{attachment_id}", status_code=204)
@@ -341,14 +395,21 @@ def remove_attachment(
     request: Request,
     principal: PrincipalDep,
     session: SessionDep,
+    opensearch: OpenSearchDep,
     audit_recorder: AuditDep,
 ):
-    """Remove a document and its extracted text; later questions are answered without it."""
+    """Remove a document, its extracted text and any chunks in its partition; later questions are answered without it."""
     conversation = _owned_conversation(ConversationRepository(session), conversation_id, principal)
     attachments = AttachmentRepository(session)
     attachment = attachments.get(conversation.id, attachment_id)
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
+    if attachment.id in attachments.partitioned_ids(conversation.id):
+        try:
+            opensearch.delete_attachment_chunks(str(conversation.id), str(attachment.id))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Removing an Attachment's chunks failed: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail=PARTITION_DELETE_FAILED)
     _record_attachment_event(
         audit_recorder, request, principal, conversation.application_id, "ok",
         event="remove", conversation_id=str(conversation.id), attachment_id=str(attachment.id),
@@ -420,15 +481,34 @@ async def send_message(
     conversation = _owned_conversation(repo, conversation_id, principal)
     application = _offered_application(session, conversation.application_id, scope)
     history = history_for_prompt(repo.messages(conversation.id), settings.chat.history_messages)
-    attached = AttachmentRepository(session).list(conversation.id)
+    attachment_repo = AttachmentRepository(session)
+    attached = attachment_repo.list(conversation.id)
     if attached and is_agentic(application):
         raise HTTPException(status_code=409, detail="This assistant does not take attachments. Remove them to continue.")
-    if sum(a.token_estimate for a in attached) > settings.chat.attachment_token_budget:
+    searched = attachment_repo.partitioned_ids(conversation.id)
+    in_full = [a for a in attached if a.id not in searched]
+    if sum(a.token_estimate for a in in_full) > settings.chat.attachment_token_budget:
         raise HTTPException(
             status_code=422, detail="The attached documents are too long to include in full. Remove one to continue."
         )
     pending_attachments = [a.id for a in attached if a.message_id is None]
-    model_query = question_with_attachments(payload.query, [AttachmentText(a.filename, a.text) for a in attached])
+    found_passages: List[Dict[str, Any]] = []
+    if searched:
+        try:
+            found_passages = await find_passages(
+                opensearch,
+                embeddings,
+                retrieval_query(payload.query, history) or payload.query,
+                principal.subject,
+                str(conversation.id),
+                settings.chat.attachment_passages,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Searching a Conversation's partition failed: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail=PASSAGE_SEARCH_FAILED)
+    model_query = question_with_attachments(
+        payload.query, [AttachmentText(a.filename, a.text) for a in in_full], _excerpts(found_passages)
+    )
 
     try:
         provider = providers.for_application(application, default=llm)
@@ -508,7 +588,9 @@ async def send_message(
             async for delta in prepared.deltas():
                 answer.append(delta)
                 yield _frame({"type": "delta", "content": delta})
-            citations = _citations(prepared.hits) if citations_enabled else []
+            citations = (
+                _citations(prepared.hits) + _attachment_citations(found_passages, len(prepared.hits)) if citations_enabled else []
+            )
             yield _frame({"type": "citations", "citations": citations})
             save_exchange("".join(answer), citations)
         except Exception as exc:  # noqa: BLE001 - the stream must end cleanly

@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from src.models.chat import Conversation, ConversationAttachment, ConversationMessage, MessageFeedback
+from src.models.chat import AttachmentPartition, Conversation, ConversationAttachment, ConversationMessage, MessageFeedback
 
 DELETE_BATCH = 500
 
@@ -136,12 +136,20 @@ class ConversationRepository:
         if not ids:
             return 0
         message_ids = select(ConversationMessage.id).where(ConversationMessage.conversation_id.in_(ids))
+        self.session.execute(delete(AttachmentPartition).where(AttachmentPartition.conversation_id.in_(ids)))
         self.session.execute(delete(ConversationAttachment).where(ConversationAttachment.conversation_id.in_(ids)))
         self.session.execute(delete(MessageFeedback).where(MessageFeedback.message_id.in_(message_ids)))
         self.session.execute(delete(ConversationMessage).where(ConversationMessage.conversation_id.in_(ids)))
         result = self.session.execute(delete(Conversation).where(Conversation.id.in_(ids)))
         self.session.commit()
         return result.rowcount or 0
+
+    def with_partitions(self, conversation_ids: Sequence[UUID]) -> List[UUID]:
+        """Which of these Conversations have chunks in the private partition of the chunk index."""
+        if not conversation_ids:
+            return []
+        stmt = select(AttachmentPartition.conversation_id).where(AttachmentPartition.conversation_id.in_(list(conversation_ids))).distinct()
+        return list(self.session.scalars(stmt))
 
     def expired_ids(self, cutoff: datetime, limit: int = DELETE_BATCH) -> List[UUID]:
         """Conversations whose last activity is strictly before ``cutoff``."""
@@ -178,8 +186,16 @@ class AttachmentRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def add(self, attachment: ConversationAttachment) -> ConversationAttachment:
+    def add(self, attachment: ConversationAttachment, chunk_count: Optional[int] = None) -> ConversationAttachment:
+        """Store an Attachment; ``chunk_count`` marks it as living in the private partition of the chunk index."""
         self.session.add(attachment)
+        if chunk_count is not None:
+            self.session.flush()
+            self.session.add(
+                AttachmentPartition(
+                    attachment_id=attachment.id, conversation_id=attachment.conversation_id, chunk_count=chunk_count
+                )
+            )
         self.session.commit()
         self.session.refresh(attachment)
         return attachment
@@ -198,7 +214,13 @@ class AttachmentRepository:
             return None
         return attachment
 
+    def partitioned_ids(self, conversation_id: UUID) -> set:
+        """The Attachments of this Conversation that are searched passage by passage rather than sent in full."""
+        stmt = select(AttachmentPartition.attachment_id).where(AttachmentPartition.conversation_id == conversation_id)
+        return set(self.session.scalars(stmt))
+
     def remove(self, attachment: ConversationAttachment) -> None:
+        self.session.execute(delete(AttachmentPartition).where(AttachmentPartition.attachment_id == attachment.id))
         self.session.delete(attachment)
         self.session.commit()
 

@@ -54,11 +54,13 @@ def test_hybrid_search_scopes_both_legs(client):
     assert "knn" in knn_leg["bool"]["must"][0]
 
 
-def test_hybrid_knn_leg_is_bare_when_unscoped(client):
+def test_hybrid_knn_leg_only_excludes_attachment_partitions_when_unscoped(client):
+    """No Knowledge Base filter, but a search of "everything" still never reaches a Conversation's private chunks."""
     client.search_unified(query="q", query_embedding=[0.1] * 8, size=5, use_hybrid=True)
     body = client.client.search.call_args.kwargs["body"]
     _bm25, knn_leg = body["query"]["hybrid"]["queries"]
-    assert "knn" in knn_leg, "unscoped searches must not pay for a bool wrapper"
+    assert knn_leg["bool"] == {"must": [knn_leg["bool"]["must"][0]], "must_not": [{"exists": {"field": "conversation_id"}}]}
+    assert "filter" not in knn_leg["bool"]
 
 
 def test_vector_search_is_scoped(client):

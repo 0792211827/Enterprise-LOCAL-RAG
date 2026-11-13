@@ -244,6 +244,8 @@ export interface ChatCitation {
   chunk_id: string | null;
   passage: string;
   score: number;
+  /** Set for a passage of an Attachment: it names the Attachment (`title` is its file name), not a Document. */
+  attachment_id?: string | null;
 }
 
 export interface ChatDocument {
@@ -285,6 +287,8 @@ export interface ChatAttachment {
   kind: string;
   size_bytes: number;
   token_estimate: number;
+  /** True for a document too long for the prompt: it is searched passage by passage, not sent in full. */
+  searched?: boolean;
   attached_to: string | null;
   created_at: string;
 }

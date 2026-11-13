@@ -388,10 +388,13 @@ function AttachmentChip({
       className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ring-1 ${
         onDark ? "bg-brand-700 text-white ring-brand-500" : "bg-white text-slate-700 ring-slate-200"
       }`}
-      title={`${attachment.filename} (${attachment.kind.toUpperCase()}, ${formatSize(attachment.size_bytes)})`}
+      title={`${attachment.filename} (${attachment.kind.toUpperCase()}, ${formatSize(attachment.size_bytes)})${
+        attachment.searched ? " — too long to send in full, so it is searched for each question" : ""
+      }`}
     >
       📄 <span className="max-w-[12rem] truncate">{attachment.filename}</span>
       <span className="opacity-60">{formatSize(attachment.size_bytes)}</span>
+      {attachment.searched && <span className="rounded bg-black/10 px-1 text-[10px] uppercase">searched</span>}
       {onRemove && (
         <button
           type="button"
@@ -447,7 +450,8 @@ function Bubble({
                 className="rounded-md bg-white px-2 py-1 text-xs text-brand-700 ring-1 ring-slate-200 hover:bg-brand-50"
                 title={c.passage}
               >
-                [{c.index}] {c.title || "Source"}
+                [{c.index}] {c.attachment_id ? "📄 " : ""}
+                {c.title || "Source"}
               </button>
             ))}
           </div>
@@ -578,12 +582,15 @@ function SourceModal({ citation, onClose }: { citation: ChatCitation | null; onC
         <div className="space-y-4 text-sm">
           <div>
             <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Cited passage{citation.section_title ? ` — ${citation.section_title}` : ""}
+              {citation.attachment_id
+                ? "Passage from your attachment"
+                : `Cited passage${citation.section_title ? ` — ${citation.section_title}` : ""}`}
             </div>
             <blockquote className="rounded-lg border-l-4 border-brand-500 bg-brand-50 p-3 text-slate-700">
               {citation.passage}
             </blockquote>
           </div>
+          {!citation.attachment_id && (
           <div>
             <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Document</div>
             {doc.isLoading && <LoadingState />}
@@ -596,6 +603,7 @@ function SourceModal({ citation, onClose }: { citation: ChatCitation | null; onC
               </div>
             )}
           </div>
+          )}
         </div>
       )}
     </Modal>

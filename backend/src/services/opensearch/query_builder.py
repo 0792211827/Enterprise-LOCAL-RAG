@@ -1,7 +1,18 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Chunks of a Conversation's large Attachments live in the same index, marked by ``conversation_id``. Every search
+# that is not explicitly a partition search excludes them, so no Knowledge Base search -- scoped or not -- can return one.
+NOT_IN_A_PARTITION: Dict[str, Any] = {"exists": {"field": "conversation_id"}}
+
+
+def partition_filters(owner_subject: str, conversation_id: str) -> List[Dict[str, Any]]:
+    """The filters that confine a search to one owner's one Conversation. Both are required, or nothing is searched."""
+    if not owner_subject or not conversation_id:
+        raise ValueError("a partition search needs both the owner and the Conversation")
+    return [{"term": {"owner_subject": owner_subject}}, {"term": {"conversation_id": conversation_id}}]
 
 
 class QueryBuilder:
@@ -22,6 +33,7 @@ class QueryBuilder:
         latest_papers: bool = False,
         search_chunks: bool = False,
         knowledge_base_ids: Optional[List[str]] = None,
+        partition: Optional[Tuple[str, str]] = None,
     ):
         """Initialize query builder.
 
@@ -34,6 +46,8 @@ class QueryBuilder:
         :param latest_papers: Sort by publication date instead of relevance
         :param search_chunks: Whether searching chunks (True) or papers (False)
         :param knowledge_base_ids: Restrict results to these knowledge bases
+        :param partition: ``(owner_subject, conversation_id)``: search that Conversation's private partition, and
+            nothing else. Without it, partition chunks are excluded.
         """
         self.query = query
         self.size = size
@@ -43,6 +57,7 @@ class QueryBuilder:
         self.latest_papers = latest_papers
         self.search_chunks = search_chunks
         self.knowledge_base_ids = knowledge_base_ids
+        self.partition = partition
 
         if fields is None:
             if search_chunks:
@@ -94,6 +109,9 @@ class QueryBuilder:
         if filter_clauses:
             bool_query["filter"] = filter_clauses
 
+        if self.partition is None:
+            bool_query["must_not"] = [NOT_IN_A_PARTITION]
+
         return {"bool": bool_query}
 
     def _build_text_query(self) -> Dict[str, Any]:
@@ -124,6 +142,9 @@ class QueryBuilder:
 
         if self.knowledge_base_ids:
             filters.append({"terms": {"knowledge_base_id": self.knowledge_base_ids}})
+
+        if self.partition is not None:
+            filters.extend(partition_filters(*self.partition))
 
         return filters
 

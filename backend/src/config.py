@@ -412,6 +412,9 @@ class ChatSettings(BaseConfigSettings):
     # Roughly four characters to a token. All of a Conversation's Attachments go into the prompt in full, so
     # together they must fit this budget (it should sit well under the model's context window).
     attachment_token_budget: int = Field(default=8000, ge=1)
+    # A document that would not fit that budget is not refused: it is chunked and embedded into a partition of the
+    # chunk index only its Conversation can search, and each question gets this many of its best passages.
+    attachment_passages: int = Field(default=6, ge=1)
 
 
 class Settings(BaseConfigSettings):

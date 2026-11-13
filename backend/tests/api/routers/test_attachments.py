@@ -213,13 +213,13 @@ def test_a_conversation_can_only_hold_so_much(stack, conversation):
     assert response.status_code == 413 and "1 MB" in response.json()["detail"]
 
 
-def test_attached_text_must_fit_the_token_budget_in_full(stack, conversation):
+def test_text_over_the_budget_is_not_sent_in_full_it_is_searched(stack, conversation):
     limits(stack, attachment_token_budget=100)
     assert attach(stack, conversation, "small.txt", b"a" * 200).status_code == 201  # 50 tokens
 
-    response = attach(stack, conversation, "more.txt", b"b" * 400)  # 100 more: 150 > 100
+    response = attach(stack, conversation, "more.txt", b"b " * 200)  # 100 more: 150 > 100
 
-    assert response.status_code == 422 and "too long to include in full" in response.json()["detail"]
+    assert response.status_code == 201 and response.json()["searched"] is True  # see test_attachment_partitions.py
 
 
 @pytest.mark.parametrize("failure", ["unreadable", "empty"])

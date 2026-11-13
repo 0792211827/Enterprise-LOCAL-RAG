@@ -33,9 +33,12 @@ def main(argv: Optional[list] = None) -> int:
         print("Nothing to do: CHAT__RETENTION_DAYS is 0 (keep forever). Pass --days N to purge explicitly.", file=sys.stderr)
         return 2
 
+    from src.services.opensearch.factory import make_opensearch_client
+
     database = make_database()
     try:
-        count = purge_expired(database.get_session, days, dry_run=args.dry_run)
+        # Attachments too large for the prompt have chunks in the chunk index; they go with their Conversation.
+        count = purge_expired(database.get_session, days, dry_run=args.dry_run, opensearch=make_opensearch_client(get_settings()))
         verb = "Would delete" if args.dry_run else "Deleted"
         print(f"{verb} {count} Conversation(s) idle for more than {days} day(s).")
     finally:

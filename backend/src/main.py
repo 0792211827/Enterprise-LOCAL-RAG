@@ -123,7 +123,7 @@ async def lifespan(app: FastAPI):
 
     purge_task = None
     if settings.chat.retention_days > 0:
-        purge_task = asyncio.create_task(run_daily(database.get_session, settings.chat.retention_days))
+        purge_task = asyncio.create_task(run_daily(database.get_session, settings.chat.retention_days, opensearch=opensearch_client))
         logger.info("Chat retention: Conversations are purged %d days after their last message", settings.chat.retention_days)
     else:
         logger.info("Chat retention: Conversations are kept forever (CHAT__RETENTION_DAYS=0)")

@@ -148,3 +148,46 @@ def test_reindex_moves_a_live_nmslib_index_to_lucene_behind_the_alias(raw, names
     assert client.get_index_stats()["document_count"] == BACKGROUND_CHUNKS + NARROW_CHUNKS
     assert _recall(client, narrow) >= 0.95  # search, through the alias, on the new engine
     assert client.index_chunk({"chunk_text": "written through the alias", "knowledge_base_id": "kb-narrow"}, [0.1] * DIMENSION)
+
+
+@pytest.mark.parametrize("engine", ["nmslib", "lucene"])
+def test_attachment_partition_is_private_on_a_live_index(raw, names, monkeypatch, engine):
+    """Strict mapping gains the partition fields in place; Knowledge Base searches never see partition chunks and a
+    partition search sees only its owner's own Conversation."""
+    index = f"{names}-{engine}"
+    legacy = _mapping(engine)
+    for field in ("conversation_id", "owner_subject", "attachment_id"):
+        del legacy["mappings"]["properties"][field]  # an index built before partitions existed
+    raw.indices.create(index=index, body=legacy)
+    client = _client(raw, index, monkeypatch)
+    client.ensure_additive_fields()
+    client._create_rrf_pipeline()
+
+    vector = _unit(random.Random(1))
+    client.index_chunk({"chunk_text": "leave policy", "knowledge_base_id": "kb-1", "document_id": "d1"}, vector)
+    for owner, conversation in [("alice", "c1"), ("alice", "c2"), ("bob", "c3")]:
+        client.index_chunk(
+            {
+                "chunk_text": f"leave notes of {owner}",
+                "owner_subject": owner,
+                "conversation_id": conversation,
+                "attachment_id": f"a-{conversation}",
+            },
+            vector,
+        )
+
+    def texts(result):
+        return {hit["chunk_text"] for hit in result["hits"]}
+
+    for scope in (None, ["kb-1"]):
+        assert texts(client.search_unified("leave", vector, size=10, knowledge_base_ids=scope)) == {"leave policy"}
+        assert texts(client.search_unified("leave", size=10, use_hybrid=False, knowledge_base_ids=scope)) == {"leave policy"}
+        assert texts(client.search_chunks_vector(vector, size=10, knowledge_base_ids=scope)) == {"leave policy"}
+    assert texts(client.search_attachment_passages("leave", vector, "alice", "c1", size=10)) == {"leave notes of alice"}
+    assert texts(client.search_attachment_passages("leave", vector, "bob", "c1", size=10)) == set()
+    assert texts(client.search_attachment_passages("leave", vector, "alice", "c3", size=10)) == set()
+
+    assert client.delete_attachment_chunks("c1", "a-c1") == 1
+    assert client.delete_attachment_chunks("c2") == 1
+    assert texts(client.search_attachment_passages("leave", vector, "bob", "c3", size=10)) == {"leave notes of bob"}
+    assert texts(client.search_chunks_vector(vector, size=10)) == {"leave policy"}

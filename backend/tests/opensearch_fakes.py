@@ -146,3 +146,92 @@ def chunk(n: int, dimension: int, **extra) -> Dict[str, Any]:
         "embedding_model": "old-model",
         **extra,
     }
+
+
+class FilteringIndex:
+    """A chunk index that honours the *filters* of the queries it is sent -- bool/filter/must_not, term(s), exists
+    and a kNN clause's own filter -- and ignores relevance (every document that passes is a hit, in insertion order).
+
+    Handed to the real ``OpenSearchClient`` as its raw client, so a leak caused by a missing or wrong filter in the
+    real query-building code shows up as a document in the results.
+    """
+
+    def __init__(self):
+        from opensearchpy.serializer import JSONSerializer
+
+        self.docs: Dict[str, Dict[str, Any]] = {}
+        self.queries: List[Dict[str, Any]] = []
+        self.fail_deletes = False
+        self.transport = SimpleNamespace(serializer=JSONSerializer())
+        self.indices = SimpleNamespace(get_mapping=self._no_mapping, exists=lambda index: True)
+
+    @staticmethod
+    def _no_mapping(index):
+        raise KeyError("no mapping in the fake: the engine is unknown, so the portable query form is used")
+
+    # -- writing --------------------------------------------------------------------------------------------- #
+    def bulk(self, body, *args, **kwargs):
+        import json
+
+        lines = [json.loads(line) for line in (body if isinstance(body, str) else "\n".join(body)).splitlines() if line.strip()]
+        items = []
+        for _action, source in zip(lines[::2], lines[1::2]):
+            doc_id = uuid.uuid4().hex
+            self.docs[doc_id] = source
+            items.append({"index": {"_id": doc_id, "status": 201}})
+        return {"errors": False, "items": items}
+
+    def add(self, source: Dict[str, Any], doc_id: Optional[str] = None) -> str:
+        doc_id = doc_id or uuid.uuid4().hex
+        self.docs[doc_id] = source
+        return doc_id
+
+    # -- filtering ------------------------------------------------------------------------------------------- #
+    def matches(self, source: Dict[str, Any], query: Optional[Dict[str, Any]]) -> bool:
+        if not query:
+            return True
+        (kind, spec), = query.items()
+        if kind == "bool":
+            def listed(key):
+                value = spec.get(key, [])
+                return value if isinstance(value, list) else [value]
+
+            return (
+                all(self.matches(source, q) for q in listed("must"))
+                and all(self.matches(source, q) for q in listed("filter"))
+                and not any(self.matches(source, q) for q in listed("must_not"))
+            )
+        if kind == "terms":
+            (field, values), = spec.items()
+            return source.get(field) in values
+        if kind == "term":
+            (field, value), = spec.items()
+            return source.get(field) == (value["value"] if isinstance(value, dict) else value)
+        if kind == "exists":
+            return source.get(spec["field"]) is not None
+        if kind == "knn":
+            (inner,) = spec.values()
+            return self.matches(source, inner.get("filter"))
+        if kind == "hybrid":
+            return any(self.matches(source, q) for q in spec["queries"])
+        return True  # match_all, multi_match, ...: relevance is not modelled
+
+    def _hits(self, query):
+        return [
+            {"_id": doc_id, "_score": 1.0, "_source": {k: v for k, v in source.items() if k != "embedding"}}
+            for doc_id, source in self.docs.items()
+            if self.matches(source, query)
+        ]
+
+    def search(self, index=None, body=None, params=None, **_):
+        self.queries.append(body)
+        hits = self._hits(body.get("query"))
+        return {"hits": {"total": {"value": len(hits)}, "hits": hits[: body.get("size", 10)]}}
+
+    def delete_by_query(self, index=None, body=None, refresh=None, **_):
+        if self.fail_deletes:
+            raise ConnectionError("opensearch is down")
+        gone = [hit["_id"] for hit in self._hits(body["query"])]
+        for doc_id in gone:
+            del self.docs[doc_id]
+        return {"deleted": len(gone)}

@@ -199,6 +199,7 @@ def stack(world):
         http=TestClient(app),
         index=index,
         llm=llm,
+        embeddings=embeddings,
         tracer=tracer,
         parser=parser,
         act_as=lambda principal: current.update(principal=principal),

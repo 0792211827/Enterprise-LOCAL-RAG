@@ -2,13 +2,13 @@
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from opensearchpy import OpenSearch
 from src.config import Settings
 
-from .index_config_hybrid import HYBRID_RRF_PIPELINE, KNN_ENGINE, build_chunks_mapping
-from .query_builder import QueryBuilder
+from .index_config_hybrid import ADDITIVE_FIELDS, HYBRID_RRF_PIPELINE, KNN_ENGINE, build_chunks_mapping
+from .query_builder import NOT_IN_A_PARTITION, QueryBuilder, partition_filters
 
 logger = logging.getLogger(__name__)
 
@@ -137,8 +137,21 @@ class OpenSearchClient:
         """Setup the hybrid search index and RRF pipeline."""
         results = {}
         results["hybrid_index"] = self._create_hybrid_index(force)
+        self.ensure_additive_fields()
         results["rrf_pipeline"] = self._create_rrf_pipeline(force)
         return results
+
+    def ensure_additive_fields(self) -> None:
+        """Add to an existing index the mapping fields introduced after it was built; a no-op when it has them all."""
+        try:
+            mapping = self.client.indices.get_mapping(index=self.index_name)
+            present = next(iter(mapping.values()))["mappings"]["properties"]
+            missing = {name: spec for name, spec in ADDITIVE_FIELDS.items() if name not in present}
+            if missing:
+                self.client.indices.put_mapping(index=self.index_name, body={"properties": missing})
+                logger.info("Added fields %s to the chunk index mapping", sorted(missing))
+        except Exception as e:
+            logger.error(f"Could not add the additive fields to the chunk index mapping: {e}")
 
     def _create_hybrid_index(self, force: bool = False) -> bool:
         """Create hybrid index for all search types (BM25, vector, hybrid).
@@ -235,7 +248,7 @@ class OpenSearchClient:
 
             search_body = {
                 "size": size,
-                "query": self._knn_query(query_embedding, size, filter_clause, []),
+                "query": self._knn_query(query_embedding, size, filter_clause, [NOT_IN_A_PARTITION]),
                 "_source": {"excludes": ["embedding"]},
             }
 
@@ -354,8 +367,13 @@ class OpenSearchClient:
         categories: Optional[List[str]],
         min_score: float,
         knowledge_base_ids: Optional[List[str]] = None,
+        partition: Optional[Tuple[str, str]] = None,
     ) -> Dict[str, Any]:
-        """Native OpenSearch hybrid search with RRF pipeline."""
+        """Native OpenSearch hybrid search with RRF pipeline.
+
+        :param partition: ``(owner_subject, conversation_id)`` to search that Conversation's private partition
+            instead of the Knowledge Bases (which never include partition chunks).
+        """
         builder = QueryBuilder(
             query=query,
             size=size * 2,
@@ -364,6 +382,7 @@ class OpenSearchClient:
             latest_papers=False,
             search_chunks=True,
             knowledge_base_ids=knowledge_base_ids,
+            partition=partition,
         )
         bm25_search_body = builder.build()
 
@@ -373,7 +392,10 @@ class OpenSearchClient:
         # builder, but the kNN leg is raw -- without the same filter, chunks from
         # other knowledge bases still surface through the vector side.
         kb_filter = [{"terms": {"knowledge_base_id": knowledge_base_ids}}] if knowledge_base_ids else []
-        knn_query = self._knn_query(query_embedding, size * 2, kb_filter, [])
+        if partition is not None:
+            knn_query = self._knn_query(query_embedding, size * 2, partition_filters(*partition), [])
+        else:
+            knn_query = self._knn_query(query_embedding, size * 2, kb_filter, [NOT_IN_A_PARTITION])
 
         hybrid_query = {"hybrid": {"queries": [bm25_query, knn_query]}}
 
@@ -428,6 +450,43 @@ class OpenSearchClient:
             min_score=min_score,
             knowledge_base_ids=knowledge_base_ids,
         )
+
+    def search_attachment_passages(
+        self, query: str, query_embedding: List[float], owner_subject: str, conversation_id: str, size: int = 5
+    ) -> Dict[str, Any]:
+        """Passages of one Conversation's large Attachments, found by hybrid search inside its private partition.
+
+        Both the owner and the Conversation are required and both are filtered on; nothing else is ever searched.
+
+        :raises ValueError: if either is missing (a search that dropped a filter would widen, so none is run).
+        """
+        partition_filters(owner_subject, conversation_id)
+        try:
+            return self._search_hybrid_native(
+                query=query,
+                query_embedding=query_embedding,
+                size=size,
+                categories=None,
+                min_score=0.0,
+                partition=(owner_subject, conversation_id),
+            )
+        except Exception as e:
+            logger.error(f"Attachment passage search error: {e}")
+            return {"total": 0, "hits": []}
+
+    def delete_attachment_chunks(self, conversation_id: str, attachment_id: Optional[str] = None) -> int:
+        """Remove a Conversation's partition chunks (or one Attachment's). Unlike the best-effort Document delete, a
+        failure is raised: the caller must not report the data gone when it is not.
+
+        :returns: how many chunks were removed
+        """
+        if not conversation_id:
+            raise ValueError("deleting partition chunks needs a Conversation")
+        filters: List[Dict[str, Any]] = [{"term": {"conversation_id": conversation_id}}]
+        if attachment_id:
+            filters.append({"term": {"attachment_id": attachment_id}})
+        response = self.client.delete_by_query(index=self.index_name, body={"query": {"bool": {"filter": filters}}}, refresh=True)
+        return response.get("deleted", 0)
 
     def index_chunk(self, chunk_data: Dict[str, Any], embedding: List[float]) -> bool:
         """Index a single chunk with its embedding.

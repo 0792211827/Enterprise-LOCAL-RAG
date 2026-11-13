@@ -11,6 +11,17 @@ using HNSW algorithm for approximate nearest neighbor search.
 KNN_ENGINE = "lucene"
 
 
+# Fields added after the first release of the mapping. They are additive, so an existing index gains them in place
+# (``OpenSearchClient.ensure_additive_fields``) without a reindex.
+#   conversation_id / owner_subject / attachment_id: the private partition of a Conversation's large Attachments.
+#   A chunk with ``conversation_id`` belongs to a partition; Knowledge Base searches exclude every such chunk.
+ADDITIVE_FIELDS = {
+    "conversation_id": {"type": "keyword"},
+    "owner_subject": {"type": "keyword"},
+    "attachment_id": {"type": "keyword"},
+}
+
+
 def build_chunks_mapping(dimension: int) -> dict:
     """Index mapping for document chunks with vector embeddings of ``dimension``."""
     return {
@@ -74,6 +85,7 @@ def build_chunks_mapping(dimension: int) -> dict:
                 "embedding_model": {"type": "keyword"},
                 "created_at": {"type": "date"},
                 "updated_at": {"type": "date"},
+                **ADDITIVE_FIELDS,
             },
         },
     }

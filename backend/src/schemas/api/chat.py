@@ -33,6 +33,8 @@ class ChatCitation(BaseModel):
     chunk_id: Optional[str] = None
     passage: str = ""
     score: float = 0.0
+    # Set for a passage of an Attachment: it identifies the Attachment (``title`` is its file name), not a Document.
+    attachment_id: Optional[str] = None
 
 
 class ChatDocument(BaseModel):
@@ -83,6 +85,8 @@ class AttachmentView(BaseModel):
     kind: str
     size_bytes: int
     token_estimate: int
+    # True for a document too large for the prompt: it is searched passage by passage, not sent in full.
+    searched: bool = False
     attached_to: Optional[str] = None
     created_at: datetime
 
