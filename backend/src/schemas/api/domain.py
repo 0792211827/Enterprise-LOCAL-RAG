@@ -144,6 +144,44 @@ class DocumentResponse(BaseModel):
     updated_at: Optional[datetime]
 
 
+class DocumentRestrictionEntry(KnowledgeBaseGrantEntry):
+    """One Principal a Document is restricted to: the same group, role, subject and everyone vocabulary as a grant."""
+
+
+class DocumentRestrictionsUpdate(BaseModel):
+    """The complete set of restrictions; replaces whatever was there. An empty list clears them."""
+
+    restrictions: List[DocumentRestrictionEntry] = Field(default_factory=list, max_length=100)
+
+
+class DocumentRestrictionWarning(BaseModel):
+    principal_type: str
+    principal_value: str
+    message: str
+
+
+class DocumentRestrictionsResponse(BaseModel):
+    """A Document's restrictions. Empty means it is unrestricted and inherits its knowledge base's grants."""
+
+    document_id: UUID
+    restrictions: List[DocumentRestrictionEntry]
+    warnings: List[DocumentRestrictionWarning] = Field(
+        default_factory=list, description="Values that match no claim value the platform knows of"
+    )
+    chunks_updated: Optional[int] = Field(None, description="Indexed chunks rewritten in place by this change")
+
+
+class DocumentAccessCheck(BaseModel):
+    """Whether a hypothetical caller could read one Document: a knowledge base grant AND (no restrictions OR a match)."""
+
+    document_id: UUID
+    can_read: bool
+    reason: str
+    knowledge_base_granted: bool
+    restricted: bool
+    restriction_matched: Optional[bool] = Field(None, description="None when the Document is unrestricted")
+
+
 class IngestionJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -191,3 +191,42 @@ def test_attachment_partition_is_private_on_a_live_index(raw, names, monkeypatch
     assert client.delete_attachment_chunks("c2") == 1
     assert texts(client.search_attachment_passages("leave", vector, "bob", "c3", size=10)) == {"leave notes of bob"}
     assert texts(client.search_chunks_vector(vector, size=10)) == {"leave policy"}
+
+
+@pytest.mark.parametrize("engine", ["nmslib", "lucene"])
+def test_document_restrictions_hide_chunks_and_update_in_place_on_a_live_index(raw, names, monkeypatch, engine):
+    """Restricted chunks are invisible to a caller who matches none of their Principals on every search form, a change
+    to the restriction rewrites the indexed chunks without re-indexing, and the caller who matches sees them."""
+    index = f"{names}-{engine}"
+    legacy = _mapping(engine)
+    del legacy["mappings"]["properties"]["restriction_principals"]  # an index built before restrictions existed
+    raw.indices.create(index=index, body=legacy)
+    client = _client(raw, index, monkeypatch)
+    client.ensure_additive_fields()
+    client._create_rrf_pipeline()
+
+    vector = _unit(random.Random(2))
+    client.index_chunk({"chunk_text": "leave open", "knowledge_base_id": "kb-1", "document_id": "open"}, vector)
+    client.index_chunk({"chunk_text": "leave secret", "knowledge_base_id": "kb-1", "document_id": "secret"}, vector)
+
+    alice = ["everyone:*", "subject:alice", "group:staff"]
+    lead = alice + ["group:hr-leads"]
+
+    def titles(keys):
+        searches = (
+            client.search_unified("leave", vector, size=10, knowledge_base_ids=["kb-1"], principal_keys=keys),
+            client.search_unified("leave", size=10, use_hybrid=False, knowledge_base_ids=["kb-1"], principal_keys=keys),
+            client.search_chunks_vector(vector, size=10, knowledge_base_ids=["kb-1"], principal_keys=keys),
+        )
+        return [sorted(hit["document_id"] for hit in result["hits"]) for result in searches]
+
+    assert titles(alice) == [["open", "secret"]] * 3  # unrestricted so far
+
+    assert client.set_document_restrictions("secret", ["group:hr-leads"]) == 1
+    assert titles(alice) == [["open"]] * 3
+    assert titles(lead) == [["open", "secret"]] * 3
+    assert titles(None) == [["open", "secret"]] * 3  # no filter for an unrestricted caller
+    assert titles([]) == [["open"]] * 3  # a caller with no Principals reads only unrestricted Documents
+
+    assert client.set_document_restrictions("secret", []) == 1
+    assert titles(alice) == [["open", "secret"]] * 3

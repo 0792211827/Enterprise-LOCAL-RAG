@@ -22,6 +22,7 @@ def make_agentic_rag_service(
     knowledge_base_ids: Optional[List[str]] = None,
     llm_provider: Optional[LLMProvider] = None,
     reranker: Optional[Reranker] = None,
+    principal_keys: Optional[List[str]] = None,
 ) -> AgenticRAGService:
     """
     Create AgenticRAGService with dependency injection.
@@ -38,6 +39,7 @@ def make_agentic_rag_service(
             caller's scope); None is unscoped
         llm_provider: The configured LLM provider; every node uses it when set
         reranker: Optional reranker applied to the retriever's candidates
+        principal_keys: The caller's Principals; the retriever never returns a Document restricted to none of them
 
     Returns:
         Configured AgenticRAGService instance
@@ -48,6 +50,7 @@ def make_agentic_rag_service(
         top_k=top_k,
         use_hybrid=use_hybrid,
         knowledge_base_ids=knowledge_base_ids,
+        principal_keys=principal_keys,
     )
 
     return AgenticRAGService(

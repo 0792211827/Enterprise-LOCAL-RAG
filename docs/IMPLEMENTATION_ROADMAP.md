@@ -33,7 +33,7 @@ Based on the code-verified [`FEATURE_REGISTER.md`](FEATURE_REGISTER.md) and [`CO
 | New: eval harness | **Implemented** (tickets 05, 06): Golden sets, recall@k, MRR, groundedness, report compare | `docs/evaluation.md` |
 | New: reranker | **Implemented** (ticket 08), on one retrieval seam (ticket 07) | `services/retrieval.py`, `services/rerank/` |
 
-The seeded recall test and the lucene reindex command are **implemented** (ticket 16; `make reindex`, ADR-0001). Phase 12 (document-level restrictions) remains open.
+The seeded recall test and the lucene reindex command are **implemented** (ticket 16; `make reindex`, ADR-0001), and so is Phase 12 as **Document restrictions** (ticket 19).
 
 The order is therefore **revised**: steps 2–5 are complete, so the Hardware/Backend track and a small isolation-hardening pass come first.
 
@@ -134,9 +134,9 @@ H1 is verifiable on this machine (Ollama's own `/v1` and llama.cpp run on a Mac)
 
 - Only on a concrete interoperability requirement. Prefer one instrumentation layer over duplicating Langfuse. **Acceptance** is defined by that requirement.
 
-## Phase 12: S3a, document-level ACLs (L, deferred)
+## Phase 12: S3a, document-level ACLs (L, **implemented**, ticket 19)
 
-- Side table `document_acl_tags`, an additive `acl_tags` keyword in the chunk mapping, scope filter `kb ∈ permitted AND (acl_tags ∈ principal values OR untagged)`. **Precondition (met, ticket 16):** the kNN engine moved from nmslib to lucene with an alias-swap reindex (`make reindex`, ADR-0001); filters now go inside the kNN clause.
+- Built as Document restrictions: side table `document_restrictions`, an additive `restriction_principals` keyword in the chunk mapping, scope filter `kb ∈ permitted AND (restriction_principals ∈ principal keys OR unrestricted)`. **Precondition (met, ticket 16):** the kNN engine moved from nmslib to lucene with an alias-swap reindex (`make reindex`, ADR-0001); filters now go inside the kNN clause.
 
 ## Cross-cutting risks and mitigations
 

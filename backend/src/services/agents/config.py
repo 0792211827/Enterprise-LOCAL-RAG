@@ -19,6 +19,8 @@ class GraphConfig(BaseModel):
     :param enable_tracing: Whether to enable Langfuse tracing
     :param knowledge_base_ids: Knowledge bases the retriever may search; None is
         unscoped, [] searches nothing (the caller's retrieval scope)
+    :param principal_keys: the caller's Principals, which hide Documents restricted away from them;
+        None hides nothing (the caller's retrieval scope)
     :param metadata: Additional runtime metadata for tracking and analytics
     :param settings: Application settings instance for environment and service config
     """
@@ -30,6 +32,7 @@ class GraphConfig(BaseModel):
     top_k: int = 3
     use_hybrid: bool = True
     knowledge_base_ids: Optional[List[str]] = None
+    principal_keys: Optional[List[str]] = None
     enable_tracing: bool = True
     metadata: Dict[str, Any] = {}
     settings: Settings = Field(default_factory=get_settings)

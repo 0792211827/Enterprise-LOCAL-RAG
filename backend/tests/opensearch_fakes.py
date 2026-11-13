@@ -164,6 +164,7 @@ class FilteringIndex:
         self.fail_deletes = False
         self.transport = SimpleNamespace(serializer=JSONSerializer())
         self.indices = SimpleNamespace(get_mapping=self._no_mapping, exists=lambda index: True)
+        self.cluster = SimpleNamespace(health=lambda: {"status": "green"})
 
     @staticmethod
     def _no_mapping(index):
@@ -196,19 +197,25 @@ class FilteringIndex:
                 value = spec.get(key, [])
                 return value if isinstance(value, list) else [value]
 
+            should = listed("should")
             return (
                 all(self.matches(source, q) for q in listed("must"))
                 and all(self.matches(source, q) for q in listed("filter"))
                 and not any(self.matches(source, q) for q in listed("must_not"))
+                and (not should or not spec.get("minimum_should_match") or any(self.matches(source, q) for q in should))
             )
         if kind == "terms":
             (field, values), = spec.items()
-            return source.get(field) in values
+            held = source.get(field)
+            # A keyword field may hold several values; one match is enough, as in OpenSearch.
+            return any(v in values for v in held) if isinstance(held, list) else held in values
         if kind == "term":
             (field, value), = spec.items()
-            return source.get(field) == (value["value"] if isinstance(value, dict) else value)
+            wanted = value["value"] if isinstance(value, dict) else value
+            held = source.get(field)
+            return wanted in held if isinstance(held, list) else held == wanted
         if kind == "exists":
-            return source.get(spec["field"]) is not None
+            return source.get(spec["field"]) not in (None, [])
         if kind == "knn":
             (inner,) = spec.values()
             return self.matches(source, inner.get("filter"))
@@ -227,6 +234,19 @@ class FilteringIndex:
         self.queries.append(body)
         hits = self._hits(body.get("query"))
         return {"hits": {"total": {"value": len(hits)}, "hits": hits[: body.get("size", 10)]}}
+
+    def update_by_query(self, index=None, body=None, refresh=None, **_):
+        """Understands the one script the client sends: set ``restriction_principals`` to ``params.keys``, or remove it."""
+        self.updates = getattr(self, "updates", []) + [body]
+        script = body["script"]
+        hits = self._hits(body["query"])
+        for hit in hits:
+            source = self.docs[hit["_id"]]
+            if "remove" in script["source"]:
+                source.pop("restriction_principals", None)
+            else:
+                source["restriction_principals"] = list(script["params"]["keys"])
+        return {"updated": len(hits), "failures": []}
 
     def delete_by_query(self, index=None, body=None, refresh=None, **_):
         if self.fail_deletes:

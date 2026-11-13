@@ -22,7 +22,9 @@ import type {
   ConversationDetail,
   ConversationSummary,
   DashboardStats,
+  DocumentAccessCheck,
   DocumentItem,
+  DocumentRestrictions,
   GPUResponse,
   IngestionJob,
   KnowledgeBase,
@@ -73,6 +75,18 @@ export const documentsApi = {
   reprocess: (id: string) =>
     apiSend<IngestionJob>(`/api/v1/documents/${id}/reprocess`, "POST"),
   jobs: () => apiGet<IngestionJob[]>("/api/v1/ingestion-jobs"),
+  /** Restricted documents of a knowledge base, by document id; unrestricted ones are absent. */
+  restrictionsForKb: (kbId: string) =>
+    apiGet<Record<string, KnowledgeBaseGrantEntry[]>>(`/api/v1/knowledge-bases/${kbId}/document-restrictions`),
+  restrictions: (id: string) => apiGet<DocumentRestrictions>(`/api/v1/documents/${id}/restrictions`),
+  replaceRestrictions: (id: string, restrictions: KnowledgeBaseGrantEntry[]) =>
+    apiSend<DocumentRestrictions>(`/api/v1/documents/${id}/restrictions`, "PUT", { restrictions }),
+  accessCheck: (id: string, subject: string, groups: string, roles: string) => {
+    const params = new URLSearchParams({ subject });
+    if (groups.trim()) params.set("groups", groups);
+    if (roles.trim()) params.set("roles", roles);
+    return apiGet<DocumentAccessCheck>(`/api/v1/documents/${id}/access-check?${params}`);
+  },
   /** Latest ingestion job for a document — drives per-file stage display. */
   job: (documentId: string) =>
     apiGet<IngestionJob>(`/api/v1/documents/${documentId}/ingestion-job`),

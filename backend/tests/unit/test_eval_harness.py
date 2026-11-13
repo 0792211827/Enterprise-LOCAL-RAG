@@ -441,3 +441,64 @@ def test_compare_with_an_unreadable_report_is_a_usage_error(tmp_path, capsys):
     bad.write_text("not json")
     assert eval_cli.main(["compare", str(good), str(bad)]) == 2
     assert "bad.json" in capsys.readouterr().err
+
+
+class TestDocumentRestrictionCases:
+    """A Golden set permission case proves a Document restriction holds, through the real client and scope resolver."""
+
+    BOARD = "Board Minutes"
+    CASES = """
+cases:
+  - id: staff-cannot-read-board-minutes
+    question: budget approved
+    principal: {subject: alice, groups: [staff]}
+    must_not_return: {documents: ["Board Minutes"], passages: ["acquisition"]}
+  - id: board-can-read-board-minutes
+    question: budget approved
+    principal: {subject: bob, groups: [staff, board]}
+    expected: {documents: ["Board Minutes"]}
+"""
+
+    @pytest.fixture
+    def restricted_context(self, context, world):
+        from src.services.opensearch.client import OpenSearchClient
+
+        from tests.opensearch_fakes import FilteringIndex
+
+        fake = FilteringIndex()
+        for title, text, restriction in (
+            ("Leave Policy", "Employees get 25 days of annual leave.", None),
+            (self.BOARD, "The budget was approved. The acquisition is confidential.", ["group:board"]),
+        ):
+            fake.add(
+                {
+                    "chunk_text": text,
+                    "title": title,
+                    "document_id": title.lower().replace(" ", "-"),
+                    "knowledge_base_id": world.kb_ids["hr"],
+                    **({"restriction_principals": restriction} if restriction else {}),
+                }
+            )
+        client = OpenSearchClient.__new__(OpenSearchClient)
+        client.client, client.index_name, client.settings = fake, "chunks", None
+        context.opensearch = client
+        return context, fake
+
+    def test_a_restricted_document_passes_the_permission_case_and_stays_findable_for_its_principal(self, tmp_path, restricted_context):
+        context, _ = restricted_context
+
+        code, report = run(tmp_path, context, self.CASES)
+
+        assert code == 0, report["permissions"]
+        denied, allowed = report["cases"]
+        assert [h["title"] for h in denied["retrieved"]] == ["Leave Policy"]
+        assert allowed["recall_at_k"] == 1.0 and report["permissions"]["passed"] is True
+
+    def test_the_same_case_fails_when_the_document_is_not_restricted(self, tmp_path, restricted_context):
+        context, fake = restricted_context
+        for source in fake.docs.values():
+            source.pop("restriction_principals", None)
+
+        code, report = run(tmp_path, context, self.CASES)
+
+        assert code == 1 and report["permissions"]["violations"] == 1

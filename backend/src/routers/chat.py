@@ -41,6 +41,7 @@ from src.repositories import (
     ConversationRepository,
     DocumentRepository,
     FeedbackRepository,
+    RestrictionRepository,
 )
 from src.schemas.api.chat import (
     AttachmentView,
@@ -682,9 +683,11 @@ async def send_message(
 
 @router.get("/documents/{document_id}", response_model=ChatDocument)
 def open_document(document_id: UUID, session: SessionDep, scope: ScopeDep):
-    """The source Document behind a citation, if the caller may read its Knowledge Base."""
+    """The source Document behind a citation, if the caller may read its Knowledge Base and no restriction excludes them."""
     document = DocumentRepository(session).get_by_id(document_id)
-    if document is None or not scope.restrict([str(document.knowledge_base_id)]).permitted:
+    if document is None or not scope.permits_document(
+        str(document.knowledge_base_id), RestrictionRepository(session).keys_for_document(document.id)
+    ):
         raise HTTPException(status_code=404, detail="Document not found")
     return ChatDocument(
         id=str(document.id),

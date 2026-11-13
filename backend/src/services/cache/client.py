@@ -42,6 +42,18 @@ class CacheClient:
         key_hash = hashlib.sha256(key_string.encode()).hexdigest()[:16]
         return f"exact_cache:{key_hash}"
 
+    def clear(self) -> int:
+        """Drop every cached answer (a Document restriction changed, so any of them may have used it).
+
+        :returns: how many entries were removed; failures are logged, not raised, as for the other cache calls
+        """
+        try:
+            keys = list(self.redis.scan_iter(match="exact_cache:*"))
+            return self.redis.delete(*keys) if keys else 0
+        except Exception as e:
+            logger.error(f"Error clearing the cache: {e}")
+            return 0
+
     async def find_cached_response(self, request: AskRequest, scope_token: Optional[str] = None) -> Optional[AskResponse]:
         """Find cached response for exact query match."""
         try:

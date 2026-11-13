@@ -15,7 +15,9 @@ KNN_ENGINE = "lucene"
 # (``OpenSearchClient.ensure_additive_fields``) without a reindex.
 #   conversation_id / owner_subject / attachment_id: the private partition of a Conversation's large Attachments.
 #   A chunk with ``conversation_id`` belongs to a partition; Knowledge Base searches exclude every such chunk.
+#   restriction_principals: the Principals a Document is restricted to (``group:finance``); absent means unrestricted.
 ADDITIVE_FIELDS = {
+    "restriction_principals": {"type": "keyword"},
     "conversation_id": {"type": "keyword"},
     "owner_subject": {"type": "keyword"},
     "attachment_id": {"type": "keyword"},

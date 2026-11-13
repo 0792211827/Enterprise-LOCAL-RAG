@@ -235,13 +235,15 @@ def get_agentic_rag_service(
     ``scope`` and ``llm`` default to None only for direct calls; under FastAPI
     they are always resolved. Without ``llm`` the nodes use Ollama.
     """
+    decision = scope.restrict(None) if scope is not None else None
     return make_agentic_rag_service(
         opensearch_client=opensearch,
         ollama_client=ollama,
         embeddings_client=embeddings,
         langfuse_tracer=langfuse,
         model=settings.default_llm_model,
-        knowledge_base_ids=scope.restrict(None).permitted if scope is not None else None,
+        knowledge_base_ids=decision.permitted if decision is not None else None,
+        principal_keys=None if decision is None or decision.principal_keys is None else sorted(decision.principal_keys),
         llm_provider=llm,
         reranker=reranker,
     )

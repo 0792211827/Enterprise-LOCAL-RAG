@@ -1,7 +1,8 @@
 """The single retrieval seam: every answer and search path retrieves through ``retrieve``.
 
 It owns scope intersection (what the path wants to search, narrowed to what the
-caller may read), the fail-closed rule for an empty scope, and the choice of
+caller may read, and hiding the Documents restricted away from them), the
+fail-closed rule for an empty scope, and the choice of
 search method. Callers never build filters or call the index themselves, so
 anything that must apply to every path (reranking, Document restrictions) is
 added here once.
@@ -108,7 +109,11 @@ async def retrieve(
 
     if mode == RetrievalMode.VECTOR.value:
         results = opensearch.search_chunks_vector(
-            query_embedding=query_embedding, size=fetch_size, categories=categories, knowledge_base_ids=kb_ids
+            query_embedding=query_embedding,
+            size=fetch_size,
+            categories=categories,
+            knowledge_base_ids=kb_ids,
+            principal_keys=decision.principal_keys,
         )
     else:
         results = opensearch.search_unified(
@@ -121,6 +126,7 @@ async def retrieve(
             use_hybrid=mode == RetrievalMode.HYBRID.value,
             min_score=min_score,
             knowledge_base_ids=kb_ids,
+            principal_keys=decision.principal_keys,
         )
 
     results = results if isinstance(results, dict) else {}

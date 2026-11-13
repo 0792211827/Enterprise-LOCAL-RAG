@@ -30,6 +30,11 @@ class GrantPrincipalType(str, Enum):
 EVERYONE_VALUE = "*"
 
 
+def principal_key(principal_type: str, principal_value: str) -> str:
+    """One Principal as the keyword stored on chunks and matched against a caller, e.g. ``group:finance``."""
+    return f"{principal_type}:{principal_value}"
+
+
 class KnowledgeBaseGrant(Base):
     """Read access to one knowledge base for one principal.
 
@@ -60,3 +65,27 @@ class KnowledgeBaseGrant(Base):
     knowledge_base = relationship(
         "KnowledgeBase", backref=backref("grants", cascade="all, delete-orphan")
     )
+
+
+class DocumentRestriction(Base):
+    """One Principal a Document is restricted to (ADR-0001).
+
+    A Document with no rows inherits its Knowledge Base's grants. With rows, a caller reads it only if they hold a
+    Knowledge Base Grant *and* match at least one row here: restrictions only narrow, never widen. Rows use the same
+    type/value vocabulary as grants.
+    """
+
+    __tablename__ = "document_restrictions"
+    __table_args__ = (
+        UniqueConstraint("document_id", "principal_type", "principal_value", name="uq_document_restriction"),
+    )
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    document_id = Column(GUID(), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    principal_type = Column(String, nullable=False)
+    principal_value = Column(String, nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+    created_by = Column(String, nullable=True)
+
+    # A backref, as for grants, keeps document.py untouched while ORM deletes of a Document remove its restrictions.
+    document = relationship("Document", backref=backref("restrictions", cascade="all, delete-orphan"))

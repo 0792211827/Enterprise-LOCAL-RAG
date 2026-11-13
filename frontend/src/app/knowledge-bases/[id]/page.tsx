@@ -2,7 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import {
   EmptyState,
   ErrorState,
@@ -14,12 +14,14 @@ import {
 } from "@/components/ui";
 import { documentsApi, knowledgeBasesApi } from "@/lib/api/resources";
 import { AccessPanel } from "./AccessPanel";
+import { RestrictionEditor } from "./RestrictionEditor";
 
 export default function KnowledgeBaseDetailPage() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [restrictingId, setRestrictingId] = useState<string | null>(null);
 
   // Both poll: ingestion runs in a background task that finishes *after* the
   // upload response, so the KB counters change with no request to hang an
@@ -33,6 +35,11 @@ export default function KnowledgeBaseDetailPage() {
     queryKey: ["docs", id],
     queryFn: () => documentsApi.listForKb(id),
     refetchInterval: 5_000,
+  });
+
+  const restricted = useQuery({
+    queryKey: ["doc-restriction-map", id],
+    queryFn: () => documentsApi.restrictionsForKb(id),
   });
 
   const upload = useMutation({
@@ -133,9 +140,17 @@ export default function KnowledgeBaseDetailPage() {
             </thead>
             <tbody>
               {docs.data.map((d) => (
-                <tr key={d.id} className="border-t border-slate-100">
+                <Fragment key={d.id}>
+                <tr className="border-t border-slate-100">
                   <td className="px-5 py-3">
-                    <div className="font-medium text-slate-700">{d.title}</div>
+                    <div className="font-medium text-slate-700">
+                      {d.title}
+                      {restricted.data?.[d.id] && (
+                        <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-800">
+                          Restricted · {restricted.data[d.id].length}
+                        </span>
+                      )}
+                    </div>
                     {d.error && <div className="text-xs text-red-500">{d.error}</div>}
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-500">
@@ -147,6 +162,12 @@ export default function KnowledgeBaseDetailPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex justify-end gap-2">
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => setRestrictingId(restrictingId === d.id ? null : d.id)}
+                      >
+                        {restrictingId === d.id ? "Close" : "Restrict"}
+                      </button>
                       <button
                         className="btn btn-secondary"
                         onClick={() => reprocess.mutate(d.id)}
@@ -164,6 +185,14 @@ export default function KnowledgeBaseDetailPage() {
                     </div>
                   </td>
                 </tr>
+                {restrictingId === d.id && (
+                  <tr className="border-t border-slate-100 bg-slate-50">
+                    <td colSpan={5} className="px-5 py-4">
+                      <RestrictionEditor kbId={id} documentId={d.id} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

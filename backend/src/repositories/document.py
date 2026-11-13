@@ -49,6 +49,12 @@ class DocumentRepository:
             stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)
         return self.session.scalar(stmt) or 0
 
+    def restriction_keys(self, document_id: UUID) -> List[str]:
+        """The Principals the document is restricted to, as stored on its chunks; empty when it is unrestricted."""
+        from src.repositories.restrictions import RestrictionRepository
+
+        return RestrictionRepository(self.session).keys_for_document(document_id)
+
     def update_status(self, document: Document, status: str, error: Optional[str] = None) -> Document:
         document.status = status
         if error is not None:

@@ -7,6 +7,7 @@ from .grants import GrantRepository
 from .ingestion import IngestionJobRepository
 from .knowledge_base import KnowledgeBaseRepository
 from .provider import ProviderRepository
+from .restrictions import RestrictionRepository
 from .retrieval import RetrievalConfigurationRepository
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "RetrievalConfigurationRepository",
     "IngestionJobRepository",
     "GrantRepository",
+    "RestrictionRepository",
     "AuditEventRepository",
     "AuditFilters",
     "ConversationRepository",

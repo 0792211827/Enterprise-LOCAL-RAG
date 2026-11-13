@@ -221,6 +221,28 @@ export interface KnowledgeBaseGrant extends KnowledgeBaseGrantEntry {
   created_by: string | null;
 }
 
+export interface DocumentRestrictionWarning {
+  principal_type: GrantPrincipalType;
+  principal_value: string;
+  message: string;
+}
+
+export interface DocumentRestrictions {
+  document_id: string;
+  restrictions: KnowledgeBaseGrantEntry[];
+  warnings: DocumentRestrictionWarning[];
+  chunks_updated: number | null;
+}
+
+export interface DocumentAccessCheck {
+  document_id: string;
+  can_read: boolean;
+  reason: string;
+  knowledge_base_granted: boolean;
+  restricted: boolean;
+  restriction_matched: boolean | null;
+}
+
 export interface KnowledgeBaseAccessCheck {
   unrestricted: boolean;
   reason: string;

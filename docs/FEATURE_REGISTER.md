@@ -41,7 +41,7 @@ No secrets, tokens or customer data are recorded in this file.
 | 15 | NVIDIA GPU support | Missing / broken | **MISSING** — no compose GPU reservation anywhere; `/system/gpu` runs `nvidia-smi` inside the *API* container, so it cannot report Ollama's GPU use | Implement H3 |
 | 16 | Embedding dimension from config | (not in comparison) | **IMPLEMENTED** — the mapping is built from `EMBEDDING__DIMENSION`; `OPENSEARCH__VECTOR_DIMENSION` is deprecated and warns; a stale index sets an ingestion `409` guard | None (reindex command is a later ticket) |
 | 17 | Hardened compose overlay (S5) | (not in comparison) | **COMPLETE** (config validates; not run live in this audit) | Preserve |
-| 18 | Document-level ACLs (S3a) | (not in comparison) | **MISSING**; the kNN-engine blocker is resolved (lucene, ticket 16) | Defer |
+| 18 | Document-level ACLs (S3a) | (not in comparison) | **IMPLEMENTED** as Document restrictions (ticket 19, ADR-0001): a Grant AND (no restriction OR a match) on every retrieval path | Preserve |
 
 Not required (kept out): see §5.
 
@@ -180,9 +180,12 @@ Not required (kept out): see §5.
 
 - `compose.hardened.yml` removes host ports from data stores and rebinds API/UI/Langfuse to `RAG_BIND_ADDRESS` (default `127.0.0.1`); `make start-hardened`, `make health-hardened`. Config validates. **BLOCKED:** not brought up live in this audit (it would conflict with the port remap used here); the "closed ports" claim is code-verified only. Residual: OpenSearch and Redis run without authentication *inside* the network (documented in the README).
 
-### 3.18 Document-level ACLs (S3a): MISSING
+### 3.18 Document-level ACLs (S3a): IMPLEMENTED (Document restrictions, ticket 19)
 
-- Designed (side table + `acl_tags` keyword on chunks). The kNN-engine blocker is resolved: lucene and `make reindex` shipped (ticket 16). Not yet built (ticket 19).
+- **Paths:** `models/access.py` (`DocumentRestriction`), `repositories/restrictions.py`, `services/access/scope.py` (`RetrievalScope.principal_keys`, `permits_document`), `services/opensearch/{query_builder,client}.py` (`restriction_principals` filter, `set_document_restrictions`), `services/retrieval.py` (the one seam), `routers/documents.py` (`/documents/{id}/restrictions`, `/documents/{id}/access-check`), `frontend/src/app/knowledge-bases/[id]/RestrictionEditor.tsx`.
+- **Rule:** Knowledge Base Grant AND (no restrictions OR any restriction matches). Restrictions only narrow; an unrestricted Document inherits the Grants. Principals use the Grant vocabulary (`group`, `role`, `subject`, `everyone`).
+- **Mechanism:** each chunk carries an additive `restriction_principals` keyword field; the scope resolver emits the caller's Principals and the filter goes into the BM25 query and inside the kNN clause (lucene pre-filters). Changing a restriction rewrites the existing chunks with `update_by_query`; nothing is re-ingested.
+- **Evidence:** Test: `api/routers/test_document_restrictions.py` (legacy `/ask`, `/stream`, `/hybrid-search`, the playground, chat, the agentic retriever on both entry points, citation opening, never-widening, the admin API, the access check), `test_eval_harness.py::TestDocumentRestrictionCases` (Golden set permission case). **Live** (OpenSearch 2.19, both engines): `integration/test_narrow_scope_recall.py::test_document_restrictions_hide_chunks_and_update_in_place_on_a_live_index`.
 
 ### 3.19 Other things found while auditing (not in the comparison)
 

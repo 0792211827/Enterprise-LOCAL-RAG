@@ -308,6 +308,33 @@ base unreadable until it has grants. To migrate gradually, start with
 queriers. Add grants, check them with the access preview, then switch to
 `deny`.
 
+### Document restrictions
+
+A **Document restriction** narrows who may read one Document inside a
+knowledge base, so a single sensitive file does not need its own knowledge
+base. A caller reads a Document only if they hold a Grant on its knowledge
+base **and** (the Document has no restrictions **or** they match at least one).
+Restrictions can never widen access, and an unrestricted Document inherits the
+Grants. They use the same `group` / `role` / `subject` / `everyone` vocabulary
+as Grants and hide the Document from every answer, citation and search on every
+path (legacy routes, the agentic graph, the playground, chat, `/v1`).
+
+Set and clear them in the admin UI (**Knowledge Bases → a Document →
+Restrict**) or via `GET`/`PUT`/`DELETE /api/v1/documents/{id}/restrictions`
+(`PUT` replaces the whole set; an empty set clears it). The response warns about
+any value that matches no claim value the platform has seen (named by a Grant,
+configured as a role mapping, or carried by a caller in the audit log), which
+is usually a typo that would hide the Document from everyone.
+`GET /api/v1/documents/{id}/access-check?subject=…&groups=…&roles=…` shows
+whether an identity could read a Document and why.
+
+A change updates the already-indexed chunks in place (no re-ingestion). The
+index needs the lucene engine, so older deployments run `make reindex` once
+(see ADR-0001) so narrow filters still return full result sets. API-key
+callers and `AUTH__MODE=disabled` are unrestricted, as for Grants, and cached
+answers are never shared between callers holding different Principals (and are
+dropped when a restriction changes).
+
 ### API keys on `/v1/chat/completions`
 
 Each application gets API keys (`sk-...`). With `API_KEYS__ENFORCE=true`, a

@@ -188,7 +188,9 @@ class TestIndexPayloadMatchesMapping:
             metadata=SimpleNamespace(chunk_index=0, word_count=2, start_char=0, end_char=10, section_title=None),
         )
 
-        payload = service._build_index_payload(document, knowledge_base, [chunk], [[0.0] * 1024])
+        payload = service._build_index_payload(
+            document, knowledge_base, [chunk], [[0.0] * 1024], restriction_keys=["group:hr-leads"]
+        )
         written = set(payload[0]["chunk_data"]) | {"embedding"}
 
         assert not (written - mapped), f"unmapped fields would be rejected: {sorted(written - mapped)}"
@@ -290,6 +292,16 @@ class TestSingleRetrievalSeam:
             "scope", "requested_kb_ids", "mode", "size", "from_", "categories", "latest", "min_score",
             "query_embedding", "fall_back_to_bm25",
         } <= set(params)
+
+
+    def test_the_index_client_accepts_what_the_seam_passes_for_document_restrictions(self):
+        import inspect
+
+        from src.services.opensearch.client import OpenSearchClient
+
+        for method in ("search_unified", "search_chunks_vector", "search_chunks_hybrid"):
+            assert "principal_keys" in inspect.signature(getattr(OpenSearchClient, method)).parameters, method
+        assert list(inspect.signature(OpenSearchClient.set_document_restrictions).parameters)[1:] == ["document_id", "principal_keys"]
 
 
 class TestChatCollaborators:

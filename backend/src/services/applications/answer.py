@@ -190,6 +190,7 @@ async def answer_agentic(
         top_k=top_k,
         use_hybrid=mode != RetrievalMode.BM25.value,
         knowledge_base_ids=decision.permitted,
+        principal_keys=None if decision.principal_keys is None else sorted(decision.principal_keys),
         llm_provider=llm,
         reranker=reranker,
     )

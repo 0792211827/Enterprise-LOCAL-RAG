@@ -93,9 +93,16 @@ class IngestionService:
 
             # Stage 4: index into OpenSearch (reusing the hybrid index).
             mark_stage("index")
-            index_payload = self._build_index_payload(document, knowledge_base, chunks, embeddings)
+            restriction_keys = self._restriction_keys(document, document_repo)
+            index_payload = self._build_index_payload(document, knowledge_base, chunks, embeddings, restriction_keys)
             index_result = self.opensearch_client.bulk_index_chunks(index_payload)
             indexed = index_result.get("success", 0) if isinstance(index_result, dict) else 0
+
+            # An admin may have changed the restriction while the chunks were being built: their update found no
+            # chunks to rewrite yet, so the ones just indexed would otherwise keep the old restriction.
+            current_keys = self._restriction_keys(document, document_repo)
+            if current_keys != restriction_keys:
+                self.opensearch_client.set_document_restrictions(str(document.id), current_keys)
 
             # Persist chunk metadata rows.
             chunk_rows = self._build_chunk_rows(document, knowledge_base, chunks)
@@ -158,8 +165,18 @@ class IngestionService:
             return text, sections
         return document.raw_text or "", document.sections
 
+    @staticmethod
+    def _restriction_keys(document: Document, document_repo: Any) -> List[str]:
+        """The Principals the Document is restricted to, as stored on its chunks (empty: unrestricted)."""
+        return sorted(document_repo.restriction_keys(document.id))
+
     def _build_index_payload(
-        self, document: Document, knowledge_base: Any, chunks: List[Any], embeddings: List[List[float]]
+        self,
+        document: Document,
+        knowledge_base: Any,
+        chunks: List[Any],
+        embeddings: List[List[float]],
+        restriction_keys: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         payload = []
         for chunk, embedding in zip(chunks, embeddings):
@@ -175,6 +192,8 @@ class IngestionService:
                 "embedding_model": getattr(knowledge_base, "embedding_model", None),
                 "title": document.title or "",
             }
+            if restriction_keys:
+                chunk_data["restriction_principals"] = restriction_keys
             payload.append({"chunk_data": chunk_data, "embedding": embedding})
         return payload
 

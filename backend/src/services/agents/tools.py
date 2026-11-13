@@ -41,6 +41,7 @@ def create_retriever_tool(
     use_hybrid: bool = True,
     knowledge_base_ids: Optional[List[str]] = None,
     reranker: Optional[Reranker] = None,
+    principal_keys: Optional[List[str]] = None,
 ):
     """Create a retriever tool that wraps OpenSearch service.
 
@@ -51,13 +52,19 @@ def create_retriever_tool(
     :param knowledge_base_ids: Restrict retrieval to these knowledge bases (the
         caller's scope); None is unscoped, [] retrieves nothing
     :param reranker: optional reranker applied to the candidates the scoped search returns
+    :param principal_keys: the caller's Principals; Documents restricted to none of them are never retrieved
+        (None hides nothing)
     :returns: LangChain tool for retrieving document excerpts
     """
 
     agent_scope = (
         RetrievalScope.unrestricted("agent retriever, unscoped")
         if knowledge_base_ids is None
-        else RetrievalScope(kb_ids=frozenset(knowledge_base_ids), reason="agent retriever scope")
+        else RetrievalScope(
+            kb_ids=frozenset(knowledge_base_ids),
+            reason="agent retriever scope",
+            principal_keys=None if principal_keys is None else frozenset(principal_keys),
+        )
     )
 
     @tool

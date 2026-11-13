@@ -73,6 +73,37 @@ async def test_ingest_document_success(collaborators):
 
 
 @pytest.mark.anyio
+async def test_chunks_of_a_restricted_document_carry_its_principals(collaborators):
+    chunker, embeddings, opensearch = collaborators
+    service = IngestionService(chunker, embeddings, opensearch)
+    document = Document(id=uuid.uuid4(), knowledge_base_id=uuid.uuid4(), title="Doc", raw_text="hello world second chunk")
+    job = IngestionJob(id=uuid.uuid4(), document_id=document.id, knowledge_base_id=document.knowledge_base_id)
+    doc_repo = MagicMock()
+    doc_repo.restriction_keys.return_value = ["group:hr-leads", "subject:lena"]
+
+    await service.ingest_document(document, job, doc_repo, MagicMock(), SimpleNamespace(embedding_model="m"))
+
+    indexed = opensearch.bulk_index_chunks.call_args.args[0]
+    assert [c["chunk_data"]["restriction_principals"] for c in indexed] == [["group:hr-leads", "subject:lena"]] * 2
+    opensearch.set_document_restrictions.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_a_restriction_set_while_the_document_was_ingesting_is_applied_to_the_new_chunks(collaborators):
+    chunker, embeddings, opensearch = collaborators
+    service = IngestionService(chunker, embeddings, opensearch)
+    document = Document(id=uuid.uuid4(), knowledge_base_id=uuid.uuid4(), title="Doc", raw_text="hello world second chunk")
+    job = IngestionJob(id=uuid.uuid4(), document_id=document.id, knowledge_base_id=document.knowledge_base_id)
+    doc_repo = MagicMock()
+    doc_repo.restriction_keys.side_effect = [[], ["group:hr-leads"]]  # nothing when it started, a restriction by the end
+
+    await service.ingest_document(document, job, doc_repo, MagicMock(), SimpleNamespace(embedding_model="m"))
+
+    assert all("restriction_principals" not in c["chunk_data"] for c in opensearch.bulk_index_chunks.call_args.args[0])
+    opensearch.set_document_restrictions.assert_called_once_with(str(document.id), ["group:hr-leads"])
+
+
+@pytest.mark.anyio
 async def test_ingest_document_marks_failure_on_empty_text(collaborators):
     chunker, embeddings, opensearch = collaborators
     service = IngestionService(chunker, embeddings, opensearch)

@@ -1,11 +1,35 @@
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 # Chunks of a Conversation's large Attachments live in the same index, marked by ``conversation_id``. Every search
 # that is not explicitly a partition search excludes them, so no Knowledge Base search -- scoped or not -- can return one.
 NOT_IN_A_PARTITION: Dict[str, Any] = {"exists": {"field": "conversation_id"}}
+
+
+# A Document restriction is stored on every chunk of the Document as the keywords of its Principals
+# (``group:finance``). A chunk with none is unrestricted; this field is absent from chunks indexed before restrictions.
+RESTRICTION_FIELD = "restriction_principals"
+
+
+def restriction_filter(principal_keys: Optional[Iterable[str]]) -> Optional[Dict[str, Any]]:
+    """The filter that hides restricted Documents from a caller: unrestricted chunks, or one of their Principals matches.
+
+    ``None`` means no filter (an unrestricted caller). An empty set is a real filter -- only unrestricted chunks pass --
+    so a caller whose Principals are unknown can never read a restricted Document.
+    """
+    if principal_keys is None:
+        return None
+    return {
+        "bool": {
+            "should": [
+                {"bool": {"must_not": [{"exists": {"field": RESTRICTION_FIELD}}]}},
+                {"terms": {RESTRICTION_FIELD: sorted(principal_keys)}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
 
 
 def partition_filters(owner_subject: str, conversation_id: str) -> List[Dict[str, Any]]:
@@ -34,6 +58,7 @@ class QueryBuilder:
         search_chunks: bool = False,
         knowledge_base_ids: Optional[List[str]] = None,
         partition: Optional[Tuple[str, str]] = None,
+        principal_keys: Optional[Iterable[str]] = None,
     ):
         """Initialize query builder.
 
@@ -48,6 +73,8 @@ class QueryBuilder:
         :param knowledge_base_ids: Restrict results to these knowledge bases
         :param partition: ``(owner_subject, conversation_id)``: search that Conversation's private partition, and
             nothing else. Without it, partition chunks are excluded.
+        :param principal_keys: the caller's Principals; Documents restricted to none of them are excluded
+            (``None``: no Document is hidden)
         """
         self.query = query
         self.size = size
@@ -58,6 +85,7 @@ class QueryBuilder:
         self.search_chunks = search_chunks
         self.knowledge_base_ids = knowledge_base_ids
         self.partition = partition
+        self.principal_keys = None if principal_keys is None else sorted(principal_keys)
 
         if fields is None:
             if search_chunks:
@@ -142,6 +170,10 @@ class QueryBuilder:
 
         if self.knowledge_base_ids:
             filters.append({"terms": {"knowledge_base_id": self.knowledge_base_ids}})
+
+        restriction = restriction_filter(self.principal_keys)
+        if restriction is not None:
+            filters.append(restriction)
 
         if self.partition is not None:
             filters.extend(partition_filters(*self.partition))

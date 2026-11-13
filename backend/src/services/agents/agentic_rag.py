@@ -99,6 +99,7 @@ class AgenticRAGService:
             top_k=self.graph_config.top_k,
             use_hybrid=self.graph_config.use_hybrid,
             knowledge_base_ids=self.graph_config.knowledge_base_ids,
+            principal_keys=self.graph_config.principal_keys,
             reranker=self.reranker,
         )
         tools = [retriever_tool]

@@ -1,4 +1,4 @@
-from .access import GrantPrincipalType, KnowledgeBaseGrant
+from .access import DocumentRestriction, GrantPrincipalType, KnowledgeBaseGrant
 from .api_key import ApplicationApiKey, generate_api_key, hash_api_key
 from .application import RAGApplication, application_knowledge_bases
 from .audit import AuditAction, AuditEvent, AuditOutcome
@@ -19,6 +19,7 @@ from .retrieval import RetrievalConfiguration
 __all__ = [
     "KnowledgeBase",
     "KnowledgeBaseGrant",
+    "DocumentRestriction",
     "GrantPrincipalType",
     "Conversation",
     "AttachmentImage",

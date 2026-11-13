@@ -2,13 +2,13 @@
 
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from opensearchpy import OpenSearch
 from src.config import Settings
 
 from .index_config_hybrid import ADDITIVE_FIELDS, HYBRID_RRF_PIPELINE, KNN_ENGINE, build_chunks_mapping
-from .query_builder import NOT_IN_A_PARTITION, QueryBuilder, partition_filters
+from .query_builder import NOT_IN_A_PARTITION, RESTRICTION_FIELD, QueryBuilder, partition_filters, restriction_filter
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +232,7 @@ class OpenSearchClient:
         size: int = 10,
         categories: Optional[List[str]] = None,
         knowledge_base_ids: Optional[List[str]] = None,
+        principal_keys: Optional[Iterable[str]] = None,
     ) -> Dict[str, Any]:
         """Pure vector search on chunks.
 
@@ -239,6 +240,8 @@ class OpenSearchClient:
         :param size: Number of results
         :param categories: Optional category filter
         :param knowledge_base_ids: Restrict results to these knowledge bases
+        :param principal_keys: the caller's Principals; Documents restricted to none of them are excluded
+            (``None``: no Document is hidden)
         :returns: Search results
         """
         if scope_matches_nothing(knowledge_base_ids):
@@ -250,6 +253,9 @@ class OpenSearchClient:
                 filter_clause.append({"terms": {"categories": categories}})
             if knowledge_base_ids:
                 filter_clause.append({"terms": {"knowledge_base_id": knowledge_base_ids}})
+            restriction = restriction_filter(principal_keys)
+            if restriction is not None:
+                filter_clause.append(restriction)
 
             search_body = {
                 "size": size,
@@ -284,6 +290,7 @@ class OpenSearchClient:
         use_hybrid: bool = True,
         min_score: float = 0.0,
         knowledge_base_ids: Optional[List[str]] = None,
+        principal_keys: Optional[Iterable[str]] = None,
     ) -> Dict[str, Any]:
         """Unified search method supporting BM25, vector, and hybrid modes.
 
@@ -296,6 +303,8 @@ class OpenSearchClient:
         :param use_hybrid: If True and embedding provided, use hybrid search
         :param min_score: Minimum score threshold
         :param knowledge_base_ids: Restrict results to these knowledge bases
+        :param principal_keys: the caller's Principals; Documents restricted to none of them are excluded
+            (``None``: no Document is hidden)
         :returns: Search results
         """
         if scope_matches_nothing(knowledge_base_ids):
@@ -310,6 +319,7 @@ class OpenSearchClient:
                     categories=categories,
                     latest=latest,
                     knowledge_base_ids=knowledge_base_ids,
+                    principal_keys=principal_keys,
                 )
 
             # Use native OpenSearch hybrid search with RRF pipeline
@@ -320,6 +330,7 @@ class OpenSearchClient:
                 categories=categories,
                 min_score=min_score,
                 knowledge_base_ids=knowledge_base_ids,
+                principal_keys=principal_keys,
             )
 
         except Exception as e:
@@ -334,6 +345,7 @@ class OpenSearchClient:
         categories: Optional[List[str]],
         latest: bool,
         knowledge_base_ids: Optional[List[str]] = None,
+        principal_keys: Optional[Iterable[str]] = None,
     ) -> Dict[str, Any]:
         """Pure BM25 search implementation."""
         builder = QueryBuilder(
@@ -344,6 +356,7 @@ class OpenSearchClient:
             latest_papers=latest,
             search_chunks=True,  # Enable chunk search mode
             knowledge_base_ids=knowledge_base_ids,
+            principal_keys=principal_keys,
         )
         search_body = builder.build()
 
@@ -373,6 +386,7 @@ class OpenSearchClient:
         min_score: float,
         knowledge_base_ids: Optional[List[str]] = None,
         partition: Optional[Tuple[str, str]] = None,
+        principal_keys: Optional[Iterable[str]] = None,
     ) -> Dict[str, Any]:
         """Native OpenSearch hybrid search with RRF pipeline.
 
@@ -388,6 +402,7 @@ class OpenSearchClient:
             search_chunks=True,
             knowledge_base_ids=knowledge_base_ids,
             partition=partition,
+            principal_keys=principal_keys,
         )
         bm25_search_body = builder.build()
 
@@ -397,6 +412,9 @@ class OpenSearchClient:
         # builder, but the kNN leg is raw -- without the same filter, chunks from
         # other knowledge bases still surface through the vector side.
         kb_filter = [{"terms": {"knowledge_base_id": knowledge_base_ids}}] if knowledge_base_ids else []
+        restriction = restriction_filter(principal_keys)
+        if restriction is not None:
+            kb_filter.append(restriction)
         if partition is not None:
             knn_query = self._knn_query(query_embedding, size * 2, partition_filters(*partition), [])
         else:
@@ -443,6 +461,7 @@ class OpenSearchClient:
         categories: Optional[List[str]] = None,
         min_score: float = 0.0,
         knowledge_base_ids: Optional[List[str]] = None,
+        principal_keys: Optional[Iterable[str]] = None,
     ) -> Dict[str, Any]:
         """Hybrid search combining BM25 and vector similarity using native RRF."""
         if scope_matches_nothing(knowledge_base_ids):
@@ -454,6 +473,7 @@ class OpenSearchClient:
             categories=categories,
             min_score=min_score,
             knowledge_base_ids=knowledge_base_ids,
+            principal_keys=principal_keys,
         )
 
     def search_attachment_passages(
@@ -478,6 +498,33 @@ class OpenSearchClient:
         except Exception as e:
             logger.error(f"Attachment passage search error: {e}")
             return {"total": 0, "hits": []}
+
+    def set_document_restrictions(self, document_id: str, principal_keys: Iterable[str]) -> int:
+        """Rewrite the restriction Principals on every chunk of a Document, in place (no re-ingestion). No keys clears them.
+
+        Unlike the best-effort Document delete, a failure is raised: the caller must not report a restriction in force
+        that the index does not hold.
+
+        :returns: how many chunks were updated
+        """
+        keys = sorted(set(principal_keys))
+        script = (
+            f"ctx._source.{RESTRICTION_FIELD} = params.keys"
+            if keys
+            else f"ctx._source.remove('{RESTRICTION_FIELD}')"
+        )
+        response = self.client.update_by_query(
+            index=self.index_name,
+            body={
+                "query": {"term": {"document_id": document_id}},
+                "script": {"source": script, "lang": "painless", "params": {"keys": keys}},
+            },
+            refresh=True,
+            conflicts="proceed",
+        )
+        if response.get("failures"):
+            raise RuntimeError(f"restricting the chunks of document {document_id} failed: {response['failures'][:1]}")
+        return response.get("updated", 0)
 
     def delete_attachment_chunks(self, conversation_id: str, attachment_id: Optional[str] = None) -> int:
         """Remove a Conversation's partition chunks (or one Attachment's). Unlike the best-effort Document delete, a
