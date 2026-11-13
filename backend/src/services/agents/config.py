@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 from src.config import Settings, get_settings
@@ -17,6 +17,8 @@ class GraphConfig(BaseModel):
     :param top_k: Number of documents to retrieve from search
     :param use_hybrid: Whether to use hybrid search (BM25 + vector)
     :param enable_tracing: Whether to enable Langfuse tracing
+    :param knowledge_base_ids: Knowledge bases the retriever may search; None is
+        unscoped, [] searches nothing (the caller's retrieval scope)
     :param metadata: Additional runtime metadata for tracking and analytics
     :param settings: Application settings instance for environment and service config
     """
@@ -27,6 +29,7 @@ class GraphConfig(BaseModel):
     temperature: float = 0.0
     top_k: int = 3
     use_hybrid: bool = True
+    knowledge_base_ids: Optional[List[str]] = None
     enable_tracing: bool = True
     metadata: Dict[str, Any] = {}
     settings: Settings = Field(default_factory=get_settings)

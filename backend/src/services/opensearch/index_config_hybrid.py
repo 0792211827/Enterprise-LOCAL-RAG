@@ -4,71 +4,78 @@ This configuration supports both keyword search (BM25) and vector similarity sea
 using HNSW algorithm for approximate nearest neighbor search.
 """
 
-# Index mapping for document chunks with vector embeddings
-DOCUMENT_CHUNKS_MAPPING = {
-    "settings": {
-        "number_of_shards": 1,
-        "number_of_replicas": 0,
-        "index.knn": True,
-        "index.knn.space_type": "cosinesimil",
-        "analysis": {
-            "analyzer": {
-                "standard_analyzer": {"type": "standard", "stopwords": "_english_"},
-                "text_analyzer": {"type": "custom", "tokenizer": "standard", "filter": ["lowercase", "stop", "snowball"]},
-            }
-        },
-    },
-    "mappings": {
-        "dynamic": "strict",
-        "properties": {
-            "chunk_id": {"type": "keyword"},
-            # Document identifiers written by IngestionService. The mapping is
-            # strict, so omitting these rejects every bulk index request with
-            # strict_dynamic_mapping_exception.
-            "document_id": {"type": "keyword"},
-            "knowledge_base_id": {"type": "keyword"},
-            "chunk_index": {"type": "integer"},
-            "chunk_text": {
-                "type": "text",
-                "analyzer": "text_analyzer",
-                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
+
+def build_chunks_mapping(dimension: int) -> dict:
+    """Index mapping for document chunks with vector embeddings of ``dimension``."""
+    return {
+        "settings": {
+            "number_of_shards": 1,
+            "number_of_replicas": 0,
+            "index.knn": True,
+            "index.knn.space_type": "cosinesimil",
+            "analysis": {
+                "analyzer": {
+                    "standard_analyzer": {"type": "standard", "stopwords": "_english_"},
+                    "text_analyzer": {"type": "custom", "tokenizer": "standard", "filter": ["lowercase", "stop", "snowball"]},
+                }
             },
-            "chunk_word_count": {"type": "integer"},
-            "start_char": {"type": "integer"},
-            "end_char": {"type": "integer"},
-            "embedding": {
-                "type": "knn_vector",
-                "dimension": 1024,  # Jina v3 embeddings dimension
-                "method": {
-                    "name": "hnsw",  # Hierarchical Navigable Small World
-                    "space_type": "cosinesimil",  # Cosine similarity
-                    "engine": "nmslib",
-                    "parameters": {
-                        "ef_construction": 512,  # Higher value = better recall, slower indexing
-                        "m": 16,  # Number of bi-directional links
+        },
+        "mappings": {
+            "dynamic": "strict",
+            "properties": {
+                "chunk_id": {"type": "keyword"},
+                # Document identifiers written by IngestionService. The mapping is
+                # strict, so omitting these rejects every bulk index request with
+                # strict_dynamic_mapping_exception.
+                "document_id": {"type": "keyword"},
+                "knowledge_base_id": {"type": "keyword"},
+                "chunk_index": {"type": "integer"},
+                "chunk_text": {
+                    "type": "text",
+                    "analyzer": "text_analyzer",
+                    "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
+                },
+                "chunk_word_count": {"type": "integer"},
+                "start_char": {"type": "integer"},
+                "end_char": {"type": "integer"},
+                "embedding": {
+                    "type": "knn_vector",
+                    "dimension": dimension,
+                    "method": {
+                        "name": "hnsw",  # Hierarchical Navigable Small World
+                        "space_type": "cosinesimil",  # Cosine similarity
+                        "engine": "nmslib",
+                        "parameters": {
+                            "ef_construction": 512,  # Higher value = better recall, slower indexing
+                            "m": 16,  # Number of bi-directional links
+                        },
                     },
                 },
+                "title": {
+                    "type": "text",
+                    "analyzer": "text_analyzer",
+                    "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
+                },
+                "authors": {
+                    "type": "text",
+                    "analyzer": "standard_analyzer",
+                    "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
+                },
+                "abstract": {"type": "text", "analyzer": "text_analyzer"},
+                "categories": {"type": "keyword"},
+                "published_date": {"type": "date"},
+                "section_title": {"type": "keyword"},
+                "embedding_model": {"type": "keyword"},
+                "created_at": {"type": "date"},
+                "updated_at": {"type": "date"},
             },
-            "title": {
-                "type": "text",
-                "analyzer": "text_analyzer",
-                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
-            },
-            "authors": {
-                "type": "text",
-                "analyzer": "standard_analyzer",
-                "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
-            },
-            "abstract": {"type": "text", "analyzer": "text_analyzer"},
-            "categories": {"type": "keyword"},
-            "published_date": {"type": "date"},
-            "section_title": {"type": "keyword"},
-            "embedding_model": {"type": "keyword"},
-            "created_at": {"type": "date"},
-            "updated_at": {"type": "date"},
         },
-    },
-}
+    }
+
+
+# The default (1024) mapping, kept for callers that need a fixed one.
+DOCUMENT_CHUNKS_MAPPING = build_chunks_mapping(1024)
+
 
 HYBRID_RRF_PIPELINE = {
     "id": "hybrid-rrf-pipeline",

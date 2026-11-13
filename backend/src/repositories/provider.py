@@ -52,3 +52,14 @@ class ProviderRepository:
 
     def get_configuration(self, configuration_id: UUID) -> Optional[ModelConfiguration]:
         return self.session.get(ModelConfiguration, configuration_id)
+
+    def update_configuration(self, configuration: ModelConfiguration, data: dict) -> ModelConfiguration:
+        """Apply changes; unlike ``update``, an empty string or null clears an endpoint or key."""
+        for key, value in data.items():
+            if key in ("llm_endpoint", "llm_api_key_ref"):
+                setattr(configuration, key, value or None)
+            elif value is not None:
+                setattr(configuration, key, value)
+        self.session.commit()
+        self.session.refresh(configuration)
+        return configuration

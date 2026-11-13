@@ -6,6 +6,7 @@ from src.services.langfuse.client import LangfuseTracer
 from src.services.ollama.client import OllamaClient
 from src.services.opensearch.client import OpenSearchClient
 from src.services.providers.embeddings.base import EmbeddingProvider
+from src.services.providers.llm.base import LLMProvider
 
 
 @dataclass
@@ -14,7 +15,7 @@ class Context:
 
     This contains immutable dependencies that nodes need but don't modify.
 
-    :param ollama_client: Client for LLM generation
+    :param ollama_client: Ollama client; the LLM for nodes when no ``llm_provider`` is set
     :param opensearch_client: Client for document search
     :param embeddings_client: Client for embeddings
     :param langfuse_tracer: Optional tracer for observability
@@ -25,6 +26,8 @@ class Context:
     :param top_k: Number of documents to retrieve
     :param max_retrieval_attempts: Maximum retrieval attempts
     :param guardrail_threshold: Threshold for guardrail validation (0-100)
+    :param llm_provider: The configured LLM provider (``LLM__PROVIDER``); takes
+        precedence over ``ollama_client`` for every node's chat model
     """
 
     ollama_client: OllamaClient
@@ -38,3 +41,9 @@ class Context:
     top_k: int = 3
     max_retrieval_attempts: int = 2
     guardrail_threshold: int = 60
+    llm_provider: Optional[LLMProvider] = None
+
+    @property
+    def chat_model_source(self):
+        """Where nodes get their LangChain chat model: the configured provider, else Ollama."""
+        return self.llm_provider if self.llm_provider is not None else self.ollama_client

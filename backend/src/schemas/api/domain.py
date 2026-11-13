@@ -6,12 +6,14 @@ returns a typed model rather than an arbitrary dictionary.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from src.config import get_settings
 from src.models.enums import ProviderKind, ProviderType, RAGStrategy, RetrievalMode
+from src.models.provider import LLM_API_KEY_REF
+from src.services.providers.llm.registry import ENV_REFERENCE_PREFIX
 
 
 # Embedding defaults are read from the running configuration rather than
@@ -69,6 +71,58 @@ class KnowledgeBaseResponse(BaseModel):
     updated_at: Optional[datetime]
 
 
+class KnowledgeBaseGrantEntry(BaseModel):
+    """One principal that may retrieve from a knowledge base.
+
+    ``principal_value`` is an IdP claim value: a group name, a raw role value,
+    or a subject. ``everyone`` means any authenticated querier and ignores the
+    value.
+    """
+
+    principal_type: Literal["group", "role", "subject", "everyone"]
+    principal_value: str = Field("", max_length=512)
+
+    @model_validator(mode="after")
+    def _normalise(self) -> "KnowledgeBaseGrantEntry":
+        self.principal_value = self.principal_value.strip()
+        if self.principal_type == "everyone":
+            self.principal_value = "*"
+        elif not self.principal_value:
+            raise ValueError(f"principal_value is required for a {self.principal_type} grant")
+        return self
+
+
+class KnowledgeBaseGrantsUpdate(BaseModel):
+    """The complete set of grants; replaces whatever was there."""
+
+    grants: List[KnowledgeBaseGrantEntry] = Field(default_factory=list, max_length=500)
+
+
+class KnowledgeBaseGrantResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    principal_type: str
+    principal_value: str
+    permission: str
+    created_at: Optional[datetime]
+    created_by: Optional[str]
+
+
+class KnowledgeBaseRef(BaseModel):
+    id: UUID
+    name: str
+    slug: str
+
+
+class KnowledgeBaseAccessCheck(BaseModel):
+    """What a hypothetical caller could retrieve under the current settings."""
+
+    unrestricted: bool = Field(description="True when no permission filter applies at all")
+    reason: str
+    knowledge_bases: List[KnowledgeBaseRef]
+
+
 # --------------------------------------------------------------------------- #
 # Documents & ingestion
 # --------------------------------------------------------------------------- #
@@ -108,6 +162,13 @@ class IngestionJobResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 # Model providers
 # --------------------------------------------------------------------------- #
+def _mask_key_reference(value: Optional[str]) -> Optional[str]:
+    """Show an ``env:NAME`` reference; never return a literal key."""
+    if value and not value.startswith(ENV_REFERENCE_PREFIX):
+        return "(set)"
+    return value
+
+
 class ProviderCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     kind: ProviderKind
@@ -139,11 +200,18 @@ class ProviderResponse(BaseModel):
     provider_type: str
     endpoint: Optional[str]
     model: str
+    # An `env:NAME` reference is shown as is; a literal key is never returned.
+    api_key_ref: Optional[str] = None
     dimension: Optional[str]
     capabilities: Optional[dict]
     enabled: bool
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
+
+    @field_validator("api_key_ref")
+    @classmethod
+    def _mask_literal_key(cls, value):
+        return _mask_key_reference(value)
 
 
 class ProviderTestResult(BaseModel):
@@ -195,7 +263,11 @@ class ApplicationCreate(BaseModel):
 
     # Model configuration (inline; a ModelConfiguration row is created).
     llm_provider: str = "ollama"
+    # Its own chat Inference endpoint; empty means the platform's global provider.
     llm_endpoint: Optional[str] = None
+    # An `env:NAME` reference (resolved from the server's environment at use time)
+    # or, for compatibility, the key itself.
+    llm_api_key_ref: Optional[str] = None
     llm_model: str = "llama3.2:1b"
     embedding_provider: str = Field(default_factory=_default_embedding_provider)
     embedding_model: str = Field(default_factory=_default_embedding_model)
@@ -223,6 +295,11 @@ class ApplicationUpdate(BaseModel):
     knowledge_base_ids: Optional[List[UUID]] = None
     streaming_enabled: Optional[bool] = None
     citations_enabled: Optional[bool] = None
+    # Model configuration. An empty llm_endpoint / llm_api_key_ref clears it.
+    llm_provider: Optional[str] = None
+    llm_endpoint: Optional[str] = None
+    llm_api_key_ref: Optional[str] = None
+    llm_model: Optional[str] = None
 
 
 class ModelConfigurationResponse(BaseModel):
@@ -238,6 +315,18 @@ class ModelConfigurationResponse(BaseModel):
     vlm_provider: Optional[str]
     vlm_model: Optional[str]
     generation_params: Optional[dict]
+    # An `env:NAME` reference is shown as is; a literal key is never returned.
+    llm_api_key_ref: Optional[str] = None
+
+    @field_validator("generation_params")
+    @classmethod
+    def _hide_key_reference(cls, value):
+        return {k: v for k, v in value.items() if k != LLM_API_KEY_REF} if value else value
+
+    @field_validator("llm_api_key_ref")
+    @classmethod
+    def _mask_literal_key(cls, value):
+        return _mask_key_reference(value)
 
 
 class ApplicationResponse(BaseModel):
@@ -314,6 +403,16 @@ class GPUResponse(BaseModel):
     driver_version: Optional[str] = None
     gpus: List[GPUInfo] = Field(default_factory=list)
     message: Optional[str] = None
+
+
+class SecurityStatus(BaseModel):
+    """What the deployment actually enforces, so the UI never overstates it."""
+
+    auth_mode: str = Field(description="disabled | jwt | trusted_header")
+    api_keys_enforced: bool
+    user_token_header: Optional[str] = Field(
+        None, description="Header a host app may use to forward its end user's identity (jwt mode)"
+    )
 
 
 class DashboardStats(BaseModel):

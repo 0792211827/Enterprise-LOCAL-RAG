@@ -49,6 +49,8 @@ const STATUS_STYLES: Record<string, string> = {
   disabled: "bg-slate-100 text-slate-500 ring-slate-200",
   failed: "bg-red-50 text-red-700 ring-red-200",
   unhealthy: "bg-red-50 text-red-700 ring-red-200",
+  denied: "bg-amber-50 text-amber-700 ring-amber-200",
+  error: "bg-red-50 text-red-700 ring-red-200",
 };
 
 export function StatusBadge({ status }: { status: string }) {

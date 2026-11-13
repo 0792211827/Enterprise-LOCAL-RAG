@@ -10,6 +10,8 @@ from src.services.langfuse.client import LangfuseTracer
 from src.services.ollama.client import OllamaClient
 from src.services.opensearch.client import OpenSearchClient
 from src.services.providers.embeddings.base import EmbeddingProvider
+from src.services.providers.llm.base import LLMProvider
+from src.services.rerank.client import Reranker
 
 from .config import GraphConfig
 from .context import Context
@@ -23,7 +25,7 @@ from .nodes import (
     continue_after_guardrail,
 )
 from .state import AgentState
-from .tools import create_retriever_tool
+from .tools import RetrievalLog, create_retriever_tool, retrieval_log
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +47,23 @@ class AgenticRAGService:
         embeddings_client: EmbeddingProvider,
         langfuse_tracer: Optional[LangfuseTracer] = None,
         graph_config: Optional[GraphConfig] = None,
+        llm_provider: Optional[LLMProvider] = None,
+        reranker: Optional[Reranker] = None,
     ):
         """Initialize agentic RAG service.
 
         :param opensearch_client: Client for document search
-        :param ollama_client: Client for LLM generation
+        :param ollama_client: Ollama client; used for the nodes' LLM when no ``llm_provider`` is given
         :param embeddings_client: Client for embeddings
         :param langfuse_tracer: Optional Langfuse tracer
         :param graph_config: Configuration for graph execution
+        :param llm_provider: The configured LLM provider; when set, every node uses it
+        :param reranker: Optional reranker applied to the retriever's candidates
         """
         self.opensearch = opensearch_client
         self.ollama = ollama_client
+        self.llm_provider = llm_provider
+        self.reranker = reranker
         self.embeddings = embeddings_client
         self.langfuse_tracer = langfuse_tracer
         self.graph_config = graph_config or GraphConfig()
@@ -90,6 +98,8 @@ class AgenticRAGService:
             embeddings_client=self.embeddings,
             top_k=self.graph_config.top_k,
             use_hybrid=self.graph_config.use_hybrid,
+            knowledge_base_ids=self.graph_config.knowledge_base_ids,
+            reranker=self.reranker,
         )
         tools = [retriever_tool]
 
@@ -218,12 +228,22 @@ class AgenticRAGService:
             else:
                 return await self._run_workflow(query, model_to_use, user_id, None)
 
+        log = RetrievalLog()
+        token = retrieval_log.set(log)
         try:
-            return await _execute_with_trace()
+            result = await _execute_with_trace()
         except Exception as e:
             logger.error(f"Error in Agentic RAG execution: {str(e)}")
             logger.exception("Full traceback:")
             raise
+        finally:
+            retrieval_log.reset(token)
+
+        # The same chunk can come back on every retrieval attempt.
+        unique = {hit.get("chunk_id") or (hit.get("document_id"), hit.get("chunk_text")): hit for hit in log.hits}
+        result["retrieved_hits"] = list(unique.values())
+        result["rerank"] = log.rerank
+        return result
 
     async def _run_workflow(self, query: str, model_to_use: str, user_id: str, trace) -> dict:
         """Execute the workflow with the given trace context."""
@@ -250,6 +270,7 @@ class AgenticRAGService:
             # Runtime context (dependencies)
             runtime_context = Context(
                 ollama_client=self.ollama,
+                llm_provider=self.llm_provider,
                 opensearch_client=self.opensearch,
                 embeddings_client=self.embeddings,
                 langfuse_tracer=self.langfuse_tracer,

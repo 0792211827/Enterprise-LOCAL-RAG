@@ -5,7 +5,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from src.dependencies import SessionDep
+from src.dependencies import SessionDep, SettingsDep
 from src.models.enums import ProviderKind
 from src.models.provider import ModelProvider
 from src.repositories import ProviderRepository
@@ -17,6 +17,7 @@ from src.schemas.api.domain import (
     ProviderTestResult,
     ProviderUpdate,
 )
+from src.services.providers.llm.registry import ProviderConfigurationError, check_endpoint_allowed
 
 router = APIRouter(prefix="/api/v1/providers", tags=["providers"])
 
@@ -73,17 +74,18 @@ def delete_provider(provider_id: UUID, session: SessionDep):
 
 
 @router.post("/{provider_id}/test", response_model=ProviderTestResult)
-async def test_provider(provider_id: UUID, session: SessionDep):
+async def test_provider(provider_id: UUID, session: SessionDep, settings: SettingsDep):
     """Test connectivity to a configured provider using real backend calls."""
     repo = ProviderRepository(session)
     provider = repo.get_by_id(provider_id)
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
+    _require_allowed_endpoint(provider, settings)
     return await _run_provider_test(provider)
 
 
 @router.get("/{provider_id}/models", response_model=ProviderModelsResponse)
-async def list_provider_models(provider_id: UUID, session: SessionDep):
+async def list_provider_models(provider_id: UUID, session: SessionDep, settings: SettingsDep):
     """List the models a provider currently serves.
 
     Never raises on an unreachable provider: the model picker in the admin UI
@@ -94,6 +96,7 @@ async def list_provider_models(provider_id: UUID, session: SessionDep):
     provider = repo.get_by_id(provider_id)
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found")
+    _require_allowed_endpoint(provider, settings)
 
     if provider.kind == ProviderKind.EMBEDDING.value:
         return ProviderModelsResponse(
@@ -113,6 +116,16 @@ async def list_provider_models(provider_id: UUID, session: SessionDep):
         reachable=True,
         models=[ProviderModel(id=n, name=n) for n in names],
     )
+
+
+def _require_allowed_endpoint(provider: ModelProvider, settings) -> None:
+    """Both actions call the stored URL, so they obey the same host allowlist as Application endpoints."""
+    if not provider.endpoint:
+        return
+    try:
+        check_endpoint_allowed(provider.endpoint, settings.llm.allowed_endpoint_host_list)
+    except ProviderConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 async def _run_provider_test(provider: ModelProvider) -> ProviderTestResult:

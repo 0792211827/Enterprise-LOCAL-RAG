@@ -14,12 +14,19 @@ class RAGTracer:
         self.tracer = tracer
 
     @contextmanager
-    def trace_request(self, user_id: str, query: str):
-        """Main request trace context manager."""
+    def trace_request(self, user_id: str, query: str, request_id: Optional[str] = None):
+        """Main request trace context manager.
+
+        :param request_id: the X-Request-ID, so a trace can be joined to its
+            audit event
+        """
         trace = None
+        metadata: Dict[str, Any] = {"simplified_tracing": True}
+        if request_id:
+            metadata["request_id"] = request_id
         try:
             with self.tracer.trace_rag_request(
-                query=query, user_id=user_id, session_id=f"session_{user_id}", metadata={"simplified_tracing": True}
+                query=query, user_id=user_id, session_id=f"session_{user_id}", metadata=metadata
             ) as trace:
                 yield trace
         finally:

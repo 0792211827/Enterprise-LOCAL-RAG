@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import types
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -191,3 +192,132 @@ class TestIndexPayloadMatchesMapping:
         written = set(payload[0]["chunk_data"]) | {"embedding"}
 
         assert not (written - mapped), f"unmapped fields would be rejected: {sorted(written - mapped)}"
+
+
+class TestTraceCarriesRequestId:
+    """Langfuse traces carry the X-Request-ID so they join to audit events."""
+
+    def _metadata(self, request_id):
+        from unittest.mock import MagicMock
+
+        from src.services.langfuse.tracer import RAGTracer
+
+        tracer = MagicMock()
+        with RAGTracer(tracer).trace_request("alice", "q", request_id):
+            pass
+        return tracer.trace_rag_request.call_args.kwargs["metadata"]
+
+    def test_request_id_is_attached(self):
+        assert self._metadata("rid-1") == {"simplified_tracing": True, "request_id": "rid-1"}
+
+    def test_metadata_unchanged_without_one(self):
+        assert self._metadata(None) == {"simplified_tracing": True}
+
+
+class TestProviderRegistryWiring:
+    """The registry's real builder (the API tests inject fakes) must construct real providers."""
+
+    @pytest.fixture
+    def registry(self):
+        from src.services.providers.llm.factory import make_provider_registry
+
+        return make_provider_registry(Settings())
+
+    def test_openai_compatible_endpoint_gets_its_key(self, registry):
+        from src.services.providers.llm.openai_compatible_provider import OpenAICompatibleLLMProvider
+
+        provider = registry.for_endpoint("openai-compatible", "http://gpu:8000/v1/", "sk-1", "qwen")
+        assert isinstance(provider, OpenAICompatibleLLMProvider)
+        assert provider.endpoint == "http://gpu:8000/v1"
+        assert provider._headers["Authorization"] == "Bearer sk-1"
+
+    def test_ollama_endpoint_is_the_clients_host(self, registry):
+        provider = registry.for_endpoint("ollama", "http://gpu:11434", None, "llama3.2:1b")
+        assert isinstance(provider, OllamaClient)
+        assert provider.base_url == "http://gpu:11434"
+
+    def test_providers_are_cached_per_type_address_and_key(self, registry):
+        first = registry.for_endpoint("openai-compatible", "http://gpu:8000/v1", "k1")
+        assert registry.for_endpoint("OpenAI-Compatible", "http://gpu:8000/v1/", "k1") is first
+        assert registry.for_endpoint("openai-compatible", "http://gpu:8000/v1", "k2") is not first
+        assert registry.for_endpoint("ollama", "http://gpu:8000/v1", "k1") is not first
+
+    def test_an_unknown_provider_type_is_refused_clearly(self, registry):
+        from src.services.providers.llm.registry import ProviderConfigurationError
+
+        with pytest.raises(ProviderConfigurationError, match="huggingface"):
+            registry.for_endpoint("huggingface", "http://gpu", None)
+
+    def test_an_application_without_an_endpoint_uses_the_default(self, registry):
+        default = object()
+        application = SimpleNamespace(model_configuration=SimpleNamespace(llm_endpoint=None))
+        assert registry.for_application(application, default=default) is default
+        assert registry.for_application(SimpleNamespace(model_configuration=None), default=default) is default
+
+
+class TestSingleRetrievalSeam:
+    """Every retrieval path searches through ``services.retrieval.retrieve``.
+
+    That function owns scope intersection and filtering, so rerank and Document
+    restrictions can be added once. A caller that searched directly would skip them.
+    """
+
+    SEARCH_METHODS = ("search_unified", "search_chunks_vector", "search_chunks_hybrid", "search_papers")
+    ALLOWED = {"services/retrieval.py", "services/opensearch/client.py"}
+
+    def test_no_caller_searches_the_index_directly(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2] / "src"
+        offenders = []
+        for path in root.rglob("*.py"):
+            relative = path.relative_to(root).as_posix()
+            if relative in self.ALLOWED:
+                continue
+            text = path.read_text()
+            offenders += [f"{relative}: .{m}(" for m in self.SEARCH_METHODS if f".{m}(" in text]
+        assert offenders == [], f"search through services.retrieval.retrieve instead: {offenders}"
+
+    def test_retrieve_signature_is_pinned(self):
+        import inspect
+
+        from src.services.retrieval import retrieve
+
+        params = inspect.signature(retrieve).parameters
+        assert list(params)[:3] == ["opensearch", "embeddings", "query"]
+        assert all(params[name].kind is inspect.Parameter.KEYWORD_ONLY for name in list(params)[3:])
+        assert {
+            "scope", "requested_kb_ids", "mode", "size", "from_", "categories", "latest", "min_score",
+            "query_embedding", "fall_back_to_bm25",
+        } <= set(params)
+
+
+class TestChatCollaborators:
+    """Chat leans on collaborators whose real signatures a mock would hide."""
+
+    def test_chat_tracing_is_a_no_op_on_a_real_tracer_without_credentials(self):
+        from src.services.chat import trace_chat_exchange
+
+        trace_chat_exchange(LangfuseTracer(Settings()), {"application_id": "a"}, question="q", answer="a")
+
+    def test_chat_tracing_survives_a_langfuse_that_raises(self):
+        from src.services.chat import trace_chat_exchange
+
+        tracer = SimpleNamespace(client=SimpleNamespace(start_span=MagicMock(side_effect=RuntimeError("down"))), flush=MagicMock())
+        trace_chat_exchange(tracer, {})  # tracing must never break an answer
+
+    def test_both_real_providers_accept_conversation_history(self):
+        import inspect
+
+        from src.services.providers.llm.openai_compatible_provider import OpenAICompatibleLLMProvider
+
+        for cls in (OpenAICompatibleLLMProvider, OllamaClient):
+            assert "history" in inspect.signature(cls.generate_rag_answer_stream).parameters, cls
+
+    def test_the_ollama_prompt_carries_the_conversation_so_far(self):
+        from src.services.ollama.prompts import RAGPromptBuilder
+
+        history = [{"role": "user", "content": "Refund window?"}, {"role": "assistant", "content": "14 days."}]
+        prompt = RAGPromptBuilder().create_rag_prompt("and EU?", [], history=history)
+        assert prompt.index("User: Refund window?") < prompt.index("Assistant: 14 days.") < prompt.index("and EU?")
+        assert "Conversation so far" not in RAGPromptBuilder().create_rag_prompt("q", [])

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from opensearchpy import OpenSearch
 from src.config import Settings
 
-from .index_config_hybrid import DOCUMENT_CHUNKS_MAPPING, HYBRID_RRF_PIPELINE
+from .index_config_hybrid import HYBRID_RRF_PIPELINE, build_chunks_mapping
 from .query_builder import QueryBuilder
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,21 @@ logger = logging.getLogger(__name__)
 # The durable fix is "engine": "lucene" in the mapping plus a full reindex.
 KNN_FILTER_OVERSAMPLE = 10
 KNN_MAX_CANDIDATES = 1000
+
+
+def scope_matches_nothing(knowledge_base_ids: Optional[List[str]]) -> bool:
+    """True when a caller asked for an empty knowledge-base scope.
+
+    ``None`` means unscoped (search everything); an empty list means "none of
+    them". The two used to be indistinguishable -- both are falsy, so an empty
+    scope silently became a global search. Returning no results instead makes
+    the unsafe reading impossible: a permission check that resolves to "no
+    knowledge bases" can never widen into "all knowledge bases".
+    """
+    return knowledge_base_ids is not None and len(knowledge_base_ids) == 0
+
+
+NO_RESULTS: Dict[str, Any] = {"total": 0, "hits": []}
 
 
 def knn_k(size: int, filter_clause: Any) -> int:
@@ -57,6 +72,16 @@ class OpenSearchClient:
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return False
+
+    def get_embedding_dimension(self) -> Optional[int]:
+        """The vector dimension the existing chunk index was created with, or None if there is no index."""
+        if not self.client.indices.exists(index=self.index_name):
+            return None
+        mapping = self.client.indices.get_mapping(index=self.index_name)
+        # An alias may resolve to a differently named index; take the first.
+        properties = next(iter(mapping.values()))["mappings"]["properties"]
+        dimension = properties.get("embedding", {}).get("dimension")
+        return int(dimension) if dimension is not None else None
 
     def get_index_stats(self) -> Dict[str, Any]:
         """Get statistics for the hybrid index."""
@@ -98,7 +123,9 @@ class OpenSearchClient:
                 logger.info(f"Deleted existing hybrid index: {self.index_name}")
 
             if not self.client.indices.exists(index=self.index_name):
-                self.client.indices.create(index=self.index_name, body=DOCUMENT_CHUNKS_MAPPING)
+                self.client.indices.create(
+                    index=self.index_name, body=build_chunks_mapping(self.settings.embedding.dimension)
+                )
                 logger.info(f"Created hybrid index: {self.index_name}")
                 return True
 
@@ -167,6 +194,8 @@ class OpenSearchClient:
         :param knowledge_base_ids: Restrict results to these knowledge bases
         :returns: Search results
         """
+        if scope_matches_nothing(knowledge_base_ids):
+            return dict(NO_RESULTS, hits=[])
         try:
             # Build filter
             filter_clause = []
@@ -225,6 +254,8 @@ class OpenSearchClient:
         :param knowledge_base_ids: Restrict results to these knowledge bases
         :returns: Search results
         """
+        if scope_matches_nothing(knowledge_base_ids):
+            return dict(NO_RESULTS, hits=[])
         try:
             # If no embedding provided or hybrid disabled, use BM25 only
             if not query_embedding or not use_hybrid:
@@ -363,6 +394,8 @@ class OpenSearchClient:
         knowledge_base_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Hybrid search combining BM25 and vector similarity using native RRF."""
+        if scope_matches_nothing(knowledge_base_ids):
+            return dict(NO_RESULTS, hits=[])
         return self._search_hybrid_native(
             query=query,
             query_embedding=query_embedding,

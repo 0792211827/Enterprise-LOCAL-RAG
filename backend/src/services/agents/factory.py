@@ -1,9 +1,11 @@
-from typing import Optional
+from typing import List, Optional
 
 from src.services.langfuse.client import LangfuseTracer
 from src.services.ollama.client import OllamaClient
 from src.services.opensearch.client import OpenSearchClient
 from src.services.providers.embeddings.base import EmbeddingProvider
+from src.services.providers.llm.base import LLMProvider
+from src.services.rerank.client import Reranker
 
 from .agentic_rag import AgenticRAGService
 from .config import GraphConfig
@@ -17,18 +19,25 @@ def make_agentic_rag_service(
     model: Optional[str] = None,
     top_k: int = 3,
     use_hybrid: bool = True,
+    knowledge_base_ids: Optional[List[str]] = None,
+    llm_provider: Optional[LLMProvider] = None,
+    reranker: Optional[Reranker] = None,
 ) -> AgenticRAGService:
     """
     Create AgenticRAGService with dependency injection.
 
     Args:
         opensearch_client: Client for document search
-        ollama_client: Client for LLM generation
+        ollama_client: Ollama client (the nodes' LLM when ``llm_provider`` is None)
         embeddings_client: Client for embeddings
         langfuse_tracer: Optional Langfuse tracer for observability
         model: Default LLM model for graph nodes (default: GraphConfig's default)
         top_k: Number of documents to retrieve (default: 3)
         use_hybrid: Use hybrid search (default: True)
+        knowledge_base_ids: Knowledge bases the retriever may search (the
+            caller's scope); None is unscoped
+        llm_provider: The configured LLM provider; every node uses it when set
+        reranker: Optional reranker applied to the retriever's candidates
 
     Returns:
         Configured AgenticRAGService instance
@@ -38,6 +47,7 @@ def make_agentic_rag_service(
         **({"model": model} if model else {}),
         top_k=top_k,
         use_hybrid=use_hybrid,
+        knowledge_base_ids=knowledge_base_ids,
     )
 
     return AgenticRAGService(
@@ -46,4 +56,6 @@ def make_agentic_rag_service(
         embeddings_client=embeddings_client,
         langfuse_tracer=langfuse_tracer,
         graph_config=graph_config,
+        llm_provider=llm_provider,
+        reranker=reranker,
     )

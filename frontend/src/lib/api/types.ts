@@ -68,6 +68,8 @@ export interface Provider {
   provider_type: string;
   endpoint: string | null;
   model: string;
+  /** `env:NAME` references are shown as is; a literal key is masked. */
+  api_key_ref?: string | null;
   dimension: string | null;
   capabilities: Record<string, unknown> | null;
   enabled: boolean;
@@ -112,6 +114,8 @@ export interface ModelConfiguration {
   id: string;
   llm_provider: string;
   llm_endpoint: string | null;
+  /** `env:NAME` references are shown as is; a literal key is masked. */
+  llm_api_key_ref?: string | null;
   llm_model: string;
   embedding_provider: string;
   embedding_model: string;
@@ -147,6 +151,8 @@ export interface ApplicationCreate {
   knowledge_base_ids?: string[];
   llm_provider?: string;
   llm_endpoint?: string;
+  /** `env:NAME` reads the key from the server's environment at request time. */
+  llm_api_key_ref?: string;
   llm_model?: string;
   embedding_provider?: string;
   embedding_model?: string;
@@ -199,6 +205,139 @@ export interface GPUInfo {
   memory_used_mb: number | null;
   utilization_percent: number | null;
   temperature_c: number | null;
+}
+
+export type GrantPrincipalType = "group" | "role" | "subject" | "everyone";
+
+export interface KnowledgeBaseGrantEntry {
+  principal_type: GrantPrincipalType;
+  principal_value: string;
+}
+
+export interface KnowledgeBaseGrant extends KnowledgeBaseGrantEntry {
+  id: string;
+  permission: string;
+  created_at: string | null;
+  created_by: string | null;
+}
+
+export interface KnowledgeBaseAccessCheck {
+  unrestricted: boolean;
+  reason: string;
+  knowledge_bases: { id: string; name: string; slug: string }[];
+}
+
+// Employee chat. An Application as an end user sees it: no prompt or knowledge bases.
+export interface ChatApplication {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  citations_enabled: boolean;
+}
+
+export interface ChatCitation {
+  index: number;
+  document_id: string | null;
+  title: string;
+  section_title: string | null;
+  chunk_id: string | null;
+  passage: string;
+  score: number;
+}
+
+export interface ChatDocument {
+  id: string;
+  title: string;
+  source_uri: string | null;
+  content_type: string | null;
+  text: string;
+}
+
+/** One frame of a streamed answer. */
+export type ChatStreamEvent =
+  | { type: "delta"; content: string }
+  | { type: "citations"; citations: ChatCitation[] }
+  | { type: "error"; message: string }
+  | { type: "done"; message_id: string | null };
+
+export interface ConversationSummary {
+  id: string;
+  application_id: string;
+  title: string;
+  created_at: string;
+  last_activity_at: string;
+  message_count: number;
+}
+
+export type Rating = "up" | "down";
+
+export interface MessageFeedback {
+  rating: Rating;
+  comment: string | null;
+  share_with_admins: boolean;
+}
+
+export interface ConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  citations: ChatCitation[];
+  created_at: string;
+  feedback: MessageFeedback | null;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[];
+}
+
+// What admins see of chat: counts, ratings, and only the exchanges users chose to share.
+export interface ChatCounts {
+  conversations: number;
+  messages: number;
+  by_application: { application_id: string; application_name: string; conversations: number; messages: number }[];
+}
+
+export interface ApplicationRatings {
+  application_id: string;
+  application_name: string;
+  up: number;
+  down: number;
+}
+
+export interface RatingItem {
+  message_id: string;
+  application_id: string;
+  rating: Rating;
+  comment: string | null;
+  shared: boolean;
+  rated_at: string;
+}
+
+export interface SharedExchange {
+  message_id: string;
+  application_id: string;
+  rating: Rating;
+  comment: string | null;
+  question: string;
+  answer: string;
+  sources: string[];
+}
+
+export interface Principal {
+  subject: string;
+  roles: ("admin" | "querier" | "auditor")[];
+  groups: string[];
+  raw_roles: string[];
+  auth_method: "disabled" | "jwt" | "trusted_header" | "api_key";
+  api_key_id: string | null;
+  application_id: string | null;
+}
+
+export interface SecurityStatus {
+  auth_mode: "disabled" | "jwt" | "trusted_header";
+  api_keys_enforced: boolean;
+  user_token_header: string | null;
 }
 
 export interface GPUResponse {
@@ -267,4 +406,82 @@ export interface ChatCompletionResponse {
     completion_tokens: number;
     total_tokens: number;
   };
+}
+
+export type AuditAction =
+  | "query.answer"
+  | "query.search"
+  | "admin.mutation"
+  | "access.denied"
+  | "audit.export"
+  | "audit.purge"
+  | "uploads.cleanup"
+  | "chat.purge";
+
+export type AuditOutcome = "ok" | "denied" | "error";
+
+export interface AuditStatus {
+  level: "off" | "metadata" | "full";
+  fail_mode: "log" | "deny";
+  retention_days: number;
+}
+
+export interface AuditRetrievedChunk {
+  chunk_id?: string | null;
+  document_id?: string | null;
+  knowledge_base_id?: string | null;
+  score?: number | null;
+}
+
+export interface AuditEvent {
+  id: string;
+  occurred_at: string;
+  request_id: string | null;
+  action: AuditAction;
+  outcome: AuditOutcome;
+  status_code: number | null;
+  actor_subject: string | null;
+  actor_roles: string[] | null;
+  actor_groups: string[] | null;
+  auth_method: string | null;
+  api_key_id: string | null;
+  application_id: string | null;
+  source_ip: string | null;
+  user_agent: string | null;
+  http_method: string | null;
+  route: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  /** null: a global search (every knowledge base). */
+  requested_kb_ids: string[] | null;
+  /** null: unrestricted; []: none. */
+  permitted_kb_ids: string[] | null;
+  dropped_kb_ids: string[] | null;
+  /** null: no retrieval ran for this request (e.g. a cache hit). */
+  retrieved: AuditRetrievedChunk[] | null;
+  cache_hit: boolean | null;
+  model: string | null;
+  query_text: string | null;
+  answer_text: string | null;
+  query_sha256: string | null;
+  answer_sha256: string | null;
+  latency_ms: number | null;
+  error_code: string | null;
+  details: Record<string, unknown> | null;
+}
+
+export interface AuditEventPage {
+  items: AuditEvent[];
+  next_cursor: string | null;
+}
+
+export interface AuditFilters {
+  actor?: string;
+  action?: AuditAction | "";
+  outcome?: AuditOutcome | "";
+  application_id?: string;
+  knowledge_base_id?: string;
+  request_id?: string;
+  since?: string;
+  until?: string;
 }

@@ -1,0 +1,64 @@
+# Opt-in overlay: serve the LLM from vLLM (NVIDIA GPU host required).
+#
+#   VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct docker compose -f compose.yml -f compose.vllm.yml up -d
+#
+# UNTESTED TEMPLATE: vLLM needs an NVIDIA GPU and the NVIDIA Container Toolkit,
+# which this repository has not yet been run against (see the support matrix in
+# docs/deployment/inference-backends.md). Validate on your GPU host and report
+# the result before relying on it. compose.yml is untouched.
+#
+# Settings:
+#   VLLM_MODEL           (required) Hugging Face model id or a path under /models
+#   VLLM_SERVED_NAME     model name the API advertises (default: same as VLLM_MODEL).
+#                        Use this name as the RAG application's model.
+#   VLLM_IMAGE           image (default vllm/vllm-openai:latest; pin a version in production)
+#   VLLM_MAX_MODEL_LEN   context window in tokens (default 8192)
+#   VLLM_EXTRA_ARGS      extra `vllm serve` flags, e.g. "--quantization awq" for an AWQ model
+#   HF_TOKEN             only for gated models
+#
+# Air-gapped hosts: put the model on disk and point VLLM_MODEL at /models/<dir>
+# (mount it by extending the volumes below), so nothing is downloaded at start.
+
+services:
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    container_name: rag-vllm
+    entrypoint: ["vllm", "serve"]
+    command: >-
+      ${VLLM_MODEL:?set VLLM_MODEL to a model id}
+      --served-model-name ${VLLM_SERVED_NAME:-${VLLM_MODEL}}
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-8192}
+      --host 0.0.0.0 --port 8000
+      ${VLLM_EXTRA_ARGS:-}
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - vllm_hf_cache:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 20s
+      timeout: 10s
+      retries: 60
+      start_period: 120s
+    networks:
+      - rag-network
+
+  api:
+    environment:
+      LLM__PROVIDER: vllm
+      LLM__ENDPOINT: http://vllm:8000/v1
+      LLM__MODEL: ${VLLM_SERVED_NAME:-${VLLM_MODEL}}
+    depends_on:
+      vllm:
+        condition: service_healthy
+
+volumes:
+  vllm_hf_cache:

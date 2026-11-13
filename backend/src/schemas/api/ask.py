@@ -1,6 +1,12 @@
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
+from src.config import get_settings
+
+
+def _default_llm_model() -> str:
+    """The model a request gets when it names none: the active provider's."""
+    return get_settings().default_llm_model
 
 
 class AskRequest(BaseModel):
@@ -9,7 +15,10 @@ class AskRequest(BaseModel):
     query: str = Field(..., description="User's question", min_length=1, max_length=1000)
     top_k: int = Field(3, description="Number of top chunks to retrieve", ge=1, le=10)
     use_hybrid: bool = Field(True, description="Use hybrid search (BM25 + vector)")
-    model: str = Field("llama3.2:1b", description="Ollama model to use for generation")
+    model: str = Field(
+        default_factory=_default_llm_model,
+        description="Model to use for generation; defaults to the configured LLM provider's model",
+    )
     categories: Optional[List[str]] = Field(None, description="Filter by document categories")
 
     class Config:

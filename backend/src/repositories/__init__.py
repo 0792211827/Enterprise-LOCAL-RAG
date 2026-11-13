@@ -1,6 +1,9 @@
 from .api_key import ApiKeyRepository
 from .application import ApplicationRepository
+from .audit import AuditEventRepository, AuditFilters
+from .chat import ConversationRepository, FeedbackRepository
 from .document import DocumentRepository
+from .grants import GrantRepository
 from .ingestion import IngestionJobRepository
 from .knowledge_base import KnowledgeBaseRepository
 from .provider import ProviderRepository
@@ -14,4 +17,9 @@ __all__ = [
     "ProviderRepository",
     "RetrievalConfigurationRepository",
     "IngestionJobRepository",
+    "GrantRepository",
+    "AuditEventRepository",
+    "AuditFilters",
+    "ConversationRepository",
+    "FeedbackRepository",
 ]

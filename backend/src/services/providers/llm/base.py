@@ -2,6 +2,10 @@ from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 
+class LLMProviderError(RuntimeError):
+    """A provider's endpoint reported an error instead of a completion."""
+
+
 class LLMProvider(ABC):
     """Abstract interface for text-generation (LLM) providers.
 
@@ -53,6 +57,16 @@ class LLMProvider(ABC):
         chunks: List[Dict[str, Any]],
         model: str,
         system_prompt: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Stream a grounded RAG answer from retrieved chunks."""
+        """Stream a grounded RAG answer from retrieved chunks, after any earlier turns of a Conversation."""
         raise NotImplementedError
+
+    def get_langchain_model(self, model: Optional[str] = None, temperature: float = 0.0, **kwargs: Any) -> Any:
+        """Return a LangChain chat model bound to this provider's endpoint.
+
+        The agentic graph calls ``.ainvoke()`` and ``.with_structured_output()``
+        on it. Not abstract, so a provider that cannot back the graph still
+        implements the rest of the interface; it fails here, clearly, instead.
+        """
+        raise NotImplementedError(f"{type(self).__name__} cannot back the agentic graph (no LangChain chat model)")

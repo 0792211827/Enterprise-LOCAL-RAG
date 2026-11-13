@@ -1,8 +1,9 @@
 import os
+import warnings
 from pathlib import Path
 from typing import List, Literal, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).parent.parent  # <repo>/backend, or /app inside the image
@@ -67,6 +68,22 @@ class LLMSettings(BaseConfigSettings):
     model: str = "llama3.2:1b"
     api_key: str = ""  # optional; only for authenticated local endpoints
     timeout: int = 300
+    # Sent as max_tokens on OpenAI-compatible endpoints, whose server-side
+    # default can be tiny (TGI) and silently truncate answers. Not used by Ollama.
+    max_tokens: int = Field(default=1024, ge=1)
+    # How the agent's structured calls (guardrail, grading, query rewrite) ask an
+    # OpenAI-compatible server for JSON. Not used by Ollama's native API.
+    # json_schema has the server enforce the schema and was reliable on Ollama
+    # /v1 and llama.cpp; json_mode does not send the schema (rewrites failed);
+    # function_calling needs tool support the server may lack (llama.cpp needs --jinja).
+    structured_output_method: Literal["json_schema", "json_mode", "function_calling"] = "json_schema"
+    # Comma-separated hosts (or host:port) that Application endpoints and the
+    # provider test / model-listing actions may call. Empty allows any host.
+    allowed_endpoint_hosts: str = ""
+
+    @property
+    def allowed_endpoint_host_list(self) -> List[str]:
+        return [host.lower() for host in split_csv(self.allowed_endpoint_hosts)]
 
 
 class VLMSettings(BaseConfigSettings):
@@ -85,6 +102,52 @@ class VLMSettings(BaseConfigSettings):
     endpoint: str = "http://localhost:11434"
     model: str = "qwen2.5-vl"
     api_key: str = ""
+
+
+class IngestionSettings(BaseConfigSettings):
+    """The shared upload path: size cap and the on-disk upload area."""
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="INGESTION__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    # Uploads above this are refused with 413 before anything is stored.
+    max_upload_mb: int = Field(default=50, ge=1)
+    # Where uploaded binaries are kept for parsing; empty means <system temp>/rag-uploads.
+    upload_dir: str = ""
+    # Age after which `make uploads-cleanup` removes stale files; 0 = off.
+    # Nothing is ever removed automatically.
+    upload_retention_days: int = Field(default=0, ge=0)
+
+
+class RerankSettings(BaseConfigSettings):
+    """Optional reranking Inference endpoint (off by default).
+
+    Speaks the common rerank shape (Cohere, Jina, vLLM ``/v1/rerank``): POST
+    ``{"model", "query", "documents"}``, answered with
+    ``{"results": [{"index", "relevance_score"}]}``.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="RERANK__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    enabled: bool = False
+    endpoint: str = ""  # the full rerank URL, e.g. http://reranker:8000/v1/rerank
+    model: str = ""
+    api_key: str = ""  # optional; only for authenticated local endpoints
+    # How many fused candidates are reranked before the cut to the requested count.
+    candidates: int = Field(default=30, ge=1, le=200)
+    # Seconds to wait before giving up and keeping the original order.
+    timeout: float = Field(default=5.0, gt=0)
 
 
 class PDFParserSettings(BaseConfigSettings):
@@ -132,7 +195,9 @@ class OpenSearchSettings(BaseConfigSettings):
     max_text_size: int = 1000000
 
     # Vector search settings
-    vector_dimension: int = 1024  # Jina embeddings dimension
+    # Deprecated: EMBEDDING__DIMENSION is the single source of truth for the
+    # chunk index mapping. Setting this to a different value only warns.
+    vector_dimension: Optional[int] = None
     vector_space_type: str = "cosinesimil"  # cosinesimil, l2, innerproduct
 
     # Hybrid search settings
@@ -181,6 +246,158 @@ class RedisSettings(BaseConfigSettings):
     ttl_hours: int = 6  # Cache TTL in hours
 
 
+def split_csv(value: str) -> List[str]:
+    """Split a comma-separated setting into trimmed, non-empty items."""
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+class AuthSettings(BaseConfigSettings):
+    """Identity intake from the host application's SSO.
+
+    The platform never issues sessions or stores passwords: it accepts an
+    identity asserted by the buyer's IdP (a signed JWT) or by an authenticating
+    reverse proxy (trusted headers). ``disabled`` -- the default -- keeps the
+    API open exactly as before.
+
+    List-valued settings are comma-separated strings, e.g. ``RS256,ES256``.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="AUTH__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    mode: Literal["disabled", "jwt", "trusted_header"] = "disabled"
+
+    # jwt mode: validate against the IdP's JWKS, or a static PEM when air-gapped.
+    jwks_url: str = ""
+    public_key_path: str = ""
+    issuer: str = ""
+    audience: str = ""
+    algorithms: str = "RS256,ES256"
+    leeway_seconds: int = 30
+    jwks_cache_seconds: int = 600
+
+    # Claim mapping (both modes). Dotted paths reach nested claims, e.g.
+    # realm_access.roles for Keycloak.
+    subject_claim: str = "sub"
+    roles_claim: str = "roles"
+    groups_claim: str = "groups"
+    admin_roles: str = "rag-admin"
+    query_roles: str = "rag-user"
+    auditor_roles: str = "rag-auditor"
+    admin_can_read_audit: bool = True
+
+    # trusted_header mode: only honoured from these proxy addresses.
+    trusted_header_subject: str = "X-Forwarded-User"
+    trusted_header_groups: str = "X-Forwarded-Groups"
+    trusted_header_roles: str = "X-Forwarded-Roles"
+    trusted_header_separator: str = ","
+    # Also governs which peers may set X-Forwarded-For for client IP capture.
+    trusted_proxy_cidrs: str = ""
+
+    # /v1/chat/completions: a host app authenticating with its application API
+    # key may forward its end user's identity here (a JWT in jwt mode), so
+    # retrieval runs with that user's permissions.
+    user_token_header: str = "X-User-Authorization"
+
+    # Knowledge-base permissions (apply only when mode is not disabled).
+    # deny: a knowledge base is retrievable only through a matching grant.
+    # allow: knowledge bases with no grants at all stay readable by any querier
+    #        -- a migration aid while grants are being set up.
+    ungranted_kb_access: Literal["deny", "allow"] = "deny"
+    # Whether admins retrieve from every knowledge base regardless of grants.
+    admin_bypass_retrieval: bool = False
+
+    @property
+    def algorithm_list(self) -> List[str]:
+        return split_csv(self.algorithms)
+
+    @property
+    def admin_role_values(self) -> List[str]:
+        return split_csv(self.admin_roles)
+
+    @property
+    def query_role_values(self) -> List[str]:
+        return split_csv(self.query_roles)
+
+    @property
+    def auditor_role_values(self) -> List[str]:
+        return split_csv(self.auditor_roles)
+
+    @property
+    def trusted_proxy_list(self) -> List[str]:
+        return split_csv(self.trusted_proxy_cidrs)
+
+
+class ApiKeySettings(BaseConfigSettings):
+    """Per-application API keys on the OpenAI-compatible endpoint."""
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="API_KEYS__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    # false (default): keys are issued and usage is recorded, but requests
+    # without a valid key are still served, as before.
+    enforce: bool = False
+
+
+class AuditSettings(BaseConfigSettings):
+    """Structured audit trail of queries and admin changes (off by default).
+
+    Distinct from Langfuse: this is the record a compliance team queries and
+    exports -- who asked what, what was retrieved, what was answered -- kept in
+    the platform's own PostgreSQL.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="AUDIT__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    # off:      nothing is recorded (as before).
+    # metadata: actor, request, knowledge-base decision, retrieved chunk IDs and
+    #           SHA-256 digests of the query and answer -- but no text.
+    # full:     metadata plus the query and answer text.
+    level: Literal["off", "metadata", "full"] = "off"
+    # When an audit row cannot be written. log: log an error and still answer.
+    # deny: refuse the answer with 503 (a stream can only fail its last event).
+    fail_mode: Literal["log", "deny"] = "log"
+    # Age after which `make audit-purge` deletes events; 0 keeps them forever.
+    # Nothing is ever purged automatically.
+    retention_days: int = Field(default=0, ge=0)
+
+
+class ChatSettings(BaseConfigSettings):
+    """Employee chat: how long stored Conversations live, how much history a follow-up sees, and chat privacy."""
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="CHAT__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    # Days after a Conversation's last message that it is purged, with everything attached; 0 keeps forever.
+    retention_days: int = Field(default=90, ge=0)
+    # How many of the latest messages of a Conversation a follow-up question is given as context.
+    history_messages: int = Field(default=10, ge=0)
+    # Chat prompts and answers stay out of Langfuse traces unless this is turned on. Audit records never
+    # carry chat text, whatever AUDIT__LEVEL is.
+    trace_content: bool = False
+
+
 class Settings(BaseConfigSettings):
     app_version: str = "0.1.0"
     debug: bool = True
@@ -204,6 +421,33 @@ class Settings(BaseConfigSettings):
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     vlm: VLMSettings = Field(default_factory=VLMSettings)
+    rerank: RerankSettings = Field(default_factory=RerankSettings)
+    ingestion: IngestionSettings = Field(default_factory=IngestionSettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
+    api_keys: ApiKeySettings = Field(default_factory=ApiKeySettings)
+    audit: AuditSettings = Field(default_factory=AuditSettings)
+    chat: ChatSettings = Field(default_factory=ChatSettings)
+
+    @property
+    def default_llm_model(self) -> str:
+        """The model used when a request names none, for the active ``LLM__PROVIDER``.
+
+        Ollama keeps honouring its legacy ``OLLAMA_MODEL``; any other provider
+        uses ``LLM__MODEL``.
+        """
+        return self.ollama_model if self.llm.provider.lower() == "ollama" else self.llm.model
+
+    @model_validator(mode="after")
+    def warn_on_deprecated_vector_dimension(self) -> "Settings":
+        legacy = self.opensearch.vector_dimension
+        if legacy is not None and legacy != self.embedding.dimension:
+            warnings.warn(
+                f"OPENSEARCH__VECTOR_DIMENSION={legacy} is deprecated and ignored; the chunk index uses "
+                f"EMBEDDING__DIMENSION={self.embedding.dimension}.",
+                UserWarning,  # DeprecationWarning is hidden by default, and the operator must see this
+                stacklevel=2,
+            )
+        return self
 
     @field_validator("postgres_database_url")
     @classmethod

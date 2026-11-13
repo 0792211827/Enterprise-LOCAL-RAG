@@ -13,6 +13,7 @@ import {
   confirmDialog,
 } from "@/components/ui";
 import { documentsApi, knowledgeBasesApi } from "@/lib/api/resources";
+import { AccessPanel } from "./AccessPanel";
 
 export default function KnowledgeBaseDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -168,6 +169,8 @@ export default function KnowledgeBaseDetailPage() {
           </table>
         )}
       </section>
+
+      <AccessPanel kbId={id} />
     </div>
   );
 }

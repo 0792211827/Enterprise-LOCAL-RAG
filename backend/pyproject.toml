@@ -23,6 +23,9 @@ dependencies = [
     "langchain>=0.3.0",
     "langchain-core>=0.3.0",
     "langchain-ollama>=0.2.0",
+    "pyjwt[crypto]>=2.9",
+    "langchain-openai>=1.7.4",
+    "pyyaml>=6.0",
 ]
 readme = "README.md"
 

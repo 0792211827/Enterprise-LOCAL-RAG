@@ -29,6 +29,7 @@ from src.schemas.api.domain import (
     DashboardStats,
     GPUInfo,
     GPUResponse,
+    SecurityStatus,
     SystemHealthResponse,
 )
 
@@ -102,13 +103,14 @@ async def system_health(
     try:
         health = await llm.health_check()
         llm_latency = round((time.perf_counter() - start) * 1000, 2)
-        healthy = bool(health)
+        # Providers report problems as {"status": "unhealthy", ...}, not by raising.
+        healthy = isinstance(health, dict) and health.get("status") == "healthy"
         components.append(
             ComponentHealth(
                 name="Inference",
                 status="healthy" if healthy else "unhealthy",
                 latency_ms=llm_latency,
-                detail=None if healthy else "Endpoint unreachable",
+                detail=None if healthy else (health.get("message") if isinstance(health, dict) else None) or "Endpoint unreachable",
             )
         )
     except Exception as exc:  # noqa: BLE001
@@ -164,6 +166,16 @@ def dashboard_stats(session: SessionDep):
         chunks=doc_repo.count_chunks(),
         ingestion_jobs=job_repo.count(),
         ingestion_jobs_by_status=by_status,
+    )
+
+
+@router.get("/security", response_model=SecurityStatus)
+def security_status(settings: SettingsDep):
+    """Report which access controls are active (read-only)."""
+    return SecurityStatus(
+        auth_mode=settings.auth.mode,
+        api_keys_enforced=settings.api_keys.enforce,
+        user_token_header=settings.auth.user_token_header if settings.auth.mode == "jwt" else None,
     )
 
 

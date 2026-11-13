@@ -1,0 +1,39 @@
+# An example Golden set. Copy it, point `application` at one of your Applications,
+# and keep your own next to the code so quality expectations are reviewed like code.
+#
+#   make eval GOLDEN=evals/example-golden-set.yaml APP=hr-assistant
+#
+# See docs/evaluation.md for the format, the report and the exit codes.
+version: 1
+name: example-hr-handbook
+application: hr-assistant   # overridden by --application
+k: 5                        # overridden by --k
+
+cases:
+  # A recall case: the answer should come from the Leave Policy.
+  - id: annual-leave
+    question: How many days of annual leave do employees get?
+    expected:
+      documents: ["Leave Policy"]      # a Document title or id
+      passages: ["25 days"]            # text that must appear in a retrieved chunk
+
+  # A permissions case: run as a caller who must never see salary information.
+  # Any hit makes `make eval` exit non-zero, so this doubles as a regression test.
+  - id: staff-cannot-see-salary-bands
+    question: What is the salary band for level 4?
+    principal:
+      subject: alice
+      groups: ["staff"]
+      roles: ["rag-user"]
+    must_not_return:
+      documents: ["Salary Bands"]
+      passages: ["salary band"]
+
+  # A caller who should see it: scored for quality like any other case.
+  - id: finance-can-see-salary-bands
+    question: What is the salary band for level 4?
+    principal:
+      subject: bob
+      groups: ["finance"]
+    expected:
+      documents: ["Salary Bands"]

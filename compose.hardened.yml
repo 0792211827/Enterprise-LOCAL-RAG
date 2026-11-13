@@ -1,0 +1,59 @@
+# Hardened overlay: nothing but the API, the admin UI and Langfuse's UI is
+# published, and those only on one host address (loopback by default), so a
+# reverse proxy or ingress in front of them is the only way in.
+#
+#   make start-hardened
+#   # = docker compose -f compose.yml -f compose.hardened.yml up --build -d
+#
+# Every datastore and model server stays reachable by the other containers
+# over rag-network exactly as before (postgres:5432, opensearch:9200, ...); only
+# host port publishing is removed. compose.yml itself is untouched.
+#
+# Pair it with AUTH__MODE=jwt or trusted_header. Network isolation is the
+# control here: OpenSearch and Redis still run without authentication inside
+# rag-network (see "Production hardening" in the README).
+#
+# Host binding (all optional):
+#   RAG_BIND_ADDRESS       address to publish on          (default 127.0.0.1)
+#   RAG_API_PORT           host port for the API          (default 8000)
+#   RAG_FRONTEND_PORT      host port for the admin UI     (default 3001)
+#   RAG_LANGFUSE_PORT      host port for Langfuse's UI    (default 3000)
+# The admin UI calls the API from the browser at NEXT_PUBLIC_API_URL, which is
+# baked in at build time -- set it to the URL your proxy serves the API on.
+
+services:
+  api:
+    ports: !override
+      - "${RAG_BIND_ADDRESS:-127.0.0.1}:${RAG_API_PORT:-8000}:8000"
+
+  frontend:
+    ports: !override
+      - "${RAG_BIND_ADDRESS:-127.0.0.1}:${RAG_FRONTEND_PORT:-3001}:3001"
+
+  langfuse-web:
+    ports: !override
+      - "${RAG_BIND_ADDRESS:-127.0.0.1}:${RAG_LANGFUSE_PORT:-3000}:3000"
+
+  # Internal only: reachable over rag-network, never from the host.
+  postgres:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  opensearch:
+    ports: !reset []
+  opensearch-dashboards:
+    ports: !reset []
+  ollama:
+    ports: !reset []
+  clickhouse:
+    ports: !reset []
+  langfuse-worker:
+    ports: !reset []
+  langfuse-postgres:
+    ports: !reset []
+  langfuse-redis:
+    ports: !reset []
+  # Also closes Langfuse's browser media-upload endpoint (localhost:9090),
+  # used only for multimodal trace attachments, which this platform never sends.
+  langfuse-minio:
+    ports: !reset []

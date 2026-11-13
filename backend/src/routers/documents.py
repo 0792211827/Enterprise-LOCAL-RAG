@@ -1,13 +1,11 @@
 """Document management + ingestion endpoints."""
 import hashlib
-import os
-import tempfile
-from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
-from src.dependencies import DatabaseDep, IngestionServiceDep, SessionDep, SettingsDep
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from src.dependencies import DatabaseDep, IngestionServiceDep, SessionDep, SettingsDep, require_ingestion_ready
 from src.models.document import Document
 from src.models.enums import IngestionStatus
 from src.models.ingestion import IngestionJob
@@ -17,6 +15,7 @@ from src.repositories import (
     KnowledgeBaseRepository,
 )
 from src.schemas.api.domain import DocumentResponse, IngestionJobResponse
+from src.services.ingestion.uploads import display_name, read_capped, stored_path
 
 router = APIRouter(prefix="/api/v1", tags=["documents"])
 
@@ -88,6 +87,7 @@ def get_document(document_id: UUID, session: SessionDep):
     "/knowledge-bases/{kb_id}/documents",
     response_model=DocumentResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_ingestion_ready)],
 )
 async def upload_document(
     kb_id: UUID,
@@ -105,7 +105,7 @@ async def upload_document(
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
 
-    raw = await file.read()
+    raw = await read_capped(file, settings.ingestion.max_upload_mb)
     checksum = hashlib.sha256(raw).hexdigest()
 
     doc_repo = DocumentRepository(session)
@@ -114,23 +114,23 @@ async def upload_document(
         raise HTTPException(status_code=409, detail="Identical document already exists in this knowledge base")
 
     content_type = file.content_type or "application/octet-stream"
+    name = display_name(file.filename)
     raw_text = None
     file_path = None
-    if content_type in _TEXT_CONTENT_TYPES or (file.filename or "").endswith((".txt", ".md")):
+    if content_type in _TEXT_CONTENT_TYPES or name.lower().endswith((".txt", ".md")):
         raw_text = _decode_text(raw)
     else:
-        # Persist binary uploads (e.g. PDFs) to a storage path for parsing.
-        storage_dir = os.path.join(tempfile.gettempdir(), "rag-uploads", str(kb_id))
-        os.makedirs(storage_dir, exist_ok=True)
-        file_path = os.path.join(storage_dir, f"{checksum}-{file.filename or 'document'}")
-        with open(file_path, "wb") as handle:
-            handle.write(raw)
+        # Persist binary uploads (e.g. PDFs) for parsing, under a name nothing in the upload can influence.
+        path = stored_path(settings, kb_id, checksum, file.filename)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        file_path = str(path)
 
     document = doc_repo.create(
         Document(
             knowledge_base_id=kb_id,
-            title=title or file.filename or "Untitled document",
-            source_uri=file.filename,
+            title=title or (name if file.filename else "Untitled document"),
+            source_uri=name if file.filename else None,
             content_type=content_type,
             file_path=file_path,
             file_size_bytes=len(raw),
@@ -153,7 +153,12 @@ async def upload_document(
     return document
 
 
-@router.post("/documents/{document_id}/reprocess", response_model=IngestionJobResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/documents/{document_id}/reprocess",
+    response_model=IngestionJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_ingestion_ready)],
+)
 async def reprocess_document(
     document_id: UUID,
     session: SessionDep,
@@ -166,6 +171,11 @@ async def reprocess_document(
     document = doc_repo.get_by_id(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
+    if not document.raw_text and not (document.file_path and Path(document.file_path).exists()):
+        raise HTTPException(
+            status_code=409,
+            detail="The original file is gone (removed by upload cleanup), so this document cannot be reprocessed. Add it to the knowledge base again.",
+        )
 
     # Clear previous chunks + reset status.
     doc_repo.delete_chunks_for_document(document.id)

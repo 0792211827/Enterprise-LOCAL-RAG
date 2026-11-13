@@ -19,8 +19,16 @@ class CacheClient:
         self.settings = settings
         self.ttl = timedelta(hours=settings.ttl_hours)
 
-    def _generate_cache_key(self, request: AskRequest) -> str:
-        """Generate exact cache key based on request parameters."""
+    def _generate_cache_key(self, request: AskRequest, scope_token: Optional[str] = None) -> str:
+        """Generate exact cache key based on request parameters.
+
+        ``scope_token`` identifies the caller's retrieval permissions. It is
+        only added when set, so unrestricted callers (auth disabled) keep the
+        exact keys they always had, while restricted callers share cached
+        answers only with callers whose scope is identical -- otherwise an
+        answer built from documents one user may read would be served to
+        another who may not.
+        """
         key_data = {
             "query": request.query,
             "model": request.model,
@@ -28,14 +36,16 @@ class CacheClient:
             "use_hybrid": request.use_hybrid,
             "categories": sorted(request.categories) if request.categories else [],
         }
+        if scope_token is not None:
+            key_data["scope"] = scope_token
         key_string = json.dumps(key_data, sort_keys=True)
         key_hash = hashlib.sha256(key_string.encode()).hexdigest()[:16]
         return f"exact_cache:{key_hash}"
 
-    async def find_cached_response(self, request: AskRequest) -> Optional[AskResponse]:
+    async def find_cached_response(self, request: AskRequest, scope_token: Optional[str] = None) -> Optional[AskResponse]:
         """Find cached response for exact query match."""
         try:
-            cache_key = self._generate_cache_key(request)
+            cache_key = self._generate_cache_key(request, scope_token)
 
             # Simple Redis GET operation - O(1)
             cached_response = self.redis.get(cache_key)
@@ -55,10 +65,10 @@ class CacheClient:
             logger.error(f"Error checking cache: {e}")
             return None
 
-    async def store_response(self, request: AskRequest, response: AskResponse) -> bool:
+    async def store_response(self, request: AskRequest, response: AskResponse, scope_token: Optional[str] = None) -> bool:
         """Store response for exact query matching."""
         try:
-            cache_key = self._generate_cache_key(request)
+            cache_key = self._generate_cache_key(request, scope_token)
 
             # Simple Redis SET operation with TTL
             success = self.redis.set(cache_key, response.model_dump_json(), ex=self.ttl)
