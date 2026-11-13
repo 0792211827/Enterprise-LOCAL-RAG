@@ -28,6 +28,7 @@ QUERY_PREFIXES = (
 ADMIN_PREFIXES = (
     "/api/v1/knowledge-bases",
     "/api/v1/documents",
+    "/api/v1/connectors",
     "/api/v1/ingestion-jobs",
     "/api/v1/applications",
     "/api/v1/providers",

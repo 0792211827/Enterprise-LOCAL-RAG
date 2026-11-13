@@ -106,6 +106,7 @@ make frontend-build  # frontend production build + type check
 make audit-purge DAYS=365  # delete audit events older than 365 days (DRY_RUN=1 to count)
 make uploads-cleanup DAYS=14  # remove stale uploaded files (off unless run; DRY_RUN=1 to count)
 make reindex             # rebuild the chunk index on lucene / a new embedding model, then swap the alias (DRY_RUN=1 to preview)
+make connector-sync NAME=hr-share  # mirror a Connector's source folder into its Knowledge Base (ALL=1, DRY_RUN=1)
 make chat-purge DAYS=30  # delete Conversations idle for 30+ days (the API also does this daily; DRY_RUN=1 to count)
 make clean     # tear down + prune
 ```
@@ -540,6 +541,53 @@ with citations that open the source Document and passage.
 
 The role-to-surface split is enforced on the server: `querier` reaches chat only,
 `admin` the control plane, `auditor` the audit log; a user with several roles gets each.
+
+## 🔄 Connectors
+
+A **Connector** mirrors one source folder into one Knowledge Base, so a
+department's file share stays searchable without anyone uploading files by hand.
+It adds new files, updates changed ones and removes deleted ones. It reads
+`.pdf`, `.txt` and `.md` files (other types are counted as skipped).
+
+1. **Mount the share** where the job runs (SMB/NFS mounted by the operating
+   system, or a Docker bind mount) and set `CONNECTOR__MOUNT_ROOT` to the
+   directory your shares live under. Mounted paths outside it are refused, and
+   symbolic links are never followed, so the job cannot be aimed at the rest of
+   the server. Mount shares read-only.
+2. **Define it** (admin): `POST /api/v1/connectors` with
+   `{"name": "hr-share", "knowledge_base_id": "…", "path": "/mnt/sources/hr"}`.
+   `GET /api/v1/connectors` shows each one's last run; `PATCH` pauses it or
+   repoints it; `DELETE` stops mirroring and leaves its Documents in place.
+3. **Run it** as a separate command, not inside the API process:
+   `make connector-sync NAME=hr-share` (or `ALL=1`;
+   `python -m src.cli.connector sync hr-share` inside the container).
+   `DRY_RUN=1` reports what would change and changes nothing.
+
+Each run prints a summary and exits non-zero if something went wrong:
+
+```
+hr-share: added 3, updated 1, removed 0, failed 1 (120 unchanged, 4 skipped as an unsupported type)
+  FAILED policies/scan.pdf: No extractable text found in document
+```
+
+- **Only changes are processed.** A file whose size and modified time are
+  unchanged is not even read; one that was touched but not changed (same
+  content hash) is not re-ingested.
+- **Updates are in place.** A changed file keeps its Document, so
+  [restrictions](#document-restrictions) an admin set on it survive. New
+  Documents are **unrestricted** until an admin restricts them.
+- **Removed files really go.** Their Documents and indexed chunks are deleted, so
+  withdrawn content stops being answerable. If the index is unreachable the
+  Document stays and the removal is retried next run.
+- **An empty source is not trusted.** If a share lists no files but files were
+  synced before (an unmounted share looks exactly like that), the run refuses
+  and removes nothing; `--allow-empty` (`ALLOW_EMPTY=1`) confirms it.
+- **Failures don't stop the run.** A file that fails is reported (exit status 1)
+  and retried on the next run. Exit status 2 means the run could not be made
+  (unknown or disabled Connector, source unreachable, another run in progress,
+  or ingestion refused because the index needs `make reindex`).
+- **Audited.** Every run leaves a `connector.sync` audit event: counts and the
+  names of added, updated, removed and failed files (never file content).
 
 ## 📏 Evaluating answers
 

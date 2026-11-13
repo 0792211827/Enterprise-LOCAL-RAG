@@ -174,20 +174,9 @@ def get_ingestion_service(
     pdf_parser: PDFParserDep,
 ) -> "IngestionService":
     """Construct the generic ingestion service from platform collaborators."""
-    from src.services.indexing.text_chunker import TextChunker
-    from src.services.ingestion.service import IngestionService
+    from src.services.ingestion.factory import make_ingestion_service
 
-    chunker = TextChunker(
-        chunk_size=settings.chunking.chunk_size,
-        overlap_size=settings.chunking.overlap_size,
-        min_chunk_size=settings.chunking.min_chunk_size,
-    )
-    return IngestionService(
-        chunker=chunker,
-        embeddings_provider=embeddings,
-        opensearch_client=opensearch,
-        pdf_parser=pdf_parser,
-    )
+    return make_ingestion_service(opensearch, embeddings, pdf_parser, settings)
 
 
 IngestionServiceDep = Annotated["IngestionService", Depends(get_ingestion_service)]

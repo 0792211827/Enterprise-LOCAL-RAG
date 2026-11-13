@@ -304,6 +304,22 @@ class TestSingleRetrievalSeam:
         assert list(inspect.signature(OpenSearchClient.set_document_restrictions).parameters)[1:] == ["document_id", "principal_keys"]
 
 
+class TestConnectorCollaborators:
+    """The Connector job calls the ingestion service and index client by keyword; a mock would accept any of them."""
+
+    def test_the_calls_the_sync_makes_exist_with_those_signatures(self):
+        import inspect
+
+        from src.services.ingestion.service import IngestionService
+        from src.services.opensearch.client import OpenSearchClient
+
+        assert list(inspect.signature(IngestionService.ingest_document).parameters)[1:] == [
+            "document", "job", "document_repo", "ingestion_repo", "knowledge_base"
+        ]
+        assert list(inspect.signature(OpenSearchClient.purge_document_chunks).parameters)[1:] == ["document_id"]
+        assert hasattr(OpenSearchClient, "setup_indices")
+
+
 class TestChatCollaborators:
     """Chat leans on collaborators whose real signatures a mock would hide."""
 

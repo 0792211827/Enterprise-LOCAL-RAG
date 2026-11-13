@@ -22,6 +22,7 @@ const ACTIONS: { value: AuditAction; label: string }[] = [
   { value: "audit.purge", label: "Audit purge" },
   { value: "uploads.cleanup", label: "Upload cleanup" },
   { value: "chat.purge", label: "Chat purge" },
+  { value: "connector.sync", label: "Connector sync" },
 ];
 const ACTION_LABELS = Object.fromEntries(ACTIONS.map((a) => [a.value, a.label]));
 const OUTCOMES: AuditOutcome[] = ["ok", "denied", "error"];

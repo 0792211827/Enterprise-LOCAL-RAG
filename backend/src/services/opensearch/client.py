@@ -603,6 +603,17 @@ class OpenSearchClient:
             logger.error(f"Error deleting chunks: {e}")
             return False
 
+    def purge_document_chunks(self, document_id: str) -> int:
+        """Remove every chunk of a Document from the index. Unlike the best-effort ``delete_document_chunks``, a
+        failure is raised: a withdrawn Document must not stay answerable because the index was unreachable.
+
+        :returns: how many chunks were removed
+        """
+        response = self.client.delete_by_query(
+            index=self.index_name, body={"query": {"term": {"document_id": document_id}}}, refresh=True
+        )
+        return response.get("deleted", 0)
+
     def get_chunks_by_document(self, document_id: str) -> List[Dict[str, Any]]:
         """Get all chunks for a specific document.
 

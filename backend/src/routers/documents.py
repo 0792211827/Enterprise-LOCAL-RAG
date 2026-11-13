@@ -38,23 +38,11 @@ from src.schemas.api.domain import (
     IngestionJobResponse,
 )
 from src.services.access import resolve_scope
-from src.services.ingestion.uploads import display_name, read_capped, stored_path
+from src.services.ingestion.uploads import TEXT_CONTENT_TYPES, decode_text, display_name, read_capped, stored_path
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["documents"])
-
-_TEXT_CONTENT_TYPES = {"text/plain", "text/markdown", "text/html", "application/json"}
-
-
-def _decode_text(raw: bytes) -> str:
-    for encoding in ("utf-8", "latin-1"):
-        try:
-            return raw.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return raw.decode("utf-8", errors="ignore")
-
 
 async def _run_ingestion(
     database,
@@ -142,8 +130,8 @@ async def upload_document(
     name = display_name(file.filename)
     raw_text = None
     file_path = None
-    if content_type in _TEXT_CONTENT_TYPES or name.lower().endswith((".txt", ".md")):
-        raw_text = _decode_text(raw)
+    if content_type in TEXT_CONTENT_TYPES or name.lower().endswith((".txt", ".md")):
+        raw_text = decode_text(raw)
     else:
         # Persist binary uploads (e.g. PDFs) for parsing, under a name nothing in the upload can influence.
         path = stored_path(settings, kb_id, checksum, file.filename)
@@ -189,6 +177,7 @@ async def reprocess_document(
     session: SessionDep,
     database: DatabaseDep,
     ingestion_service: IngestionServiceDep,
+    opensearch: OpenSearchDep,
     background_tasks: BackgroundTasks,
 ):
     """Re-run the ingestion pipeline for an existing document."""
@@ -202,7 +191,8 @@ async def reprocess_document(
             detail="The original file is gone (removed by upload cleanup), so this document cannot be reprocessed. Add it to the knowledge base again.",
         )
 
-    # Clear previous chunks + reset status.
+    # Clear previous chunks (in the index too, or the document would be answered from twice) + reset status.
+    _purge_index_chunks(opensearch, document.id)
     doc_repo.delete_chunks_for_document(document.id)
     document.status = IngestionStatus.QUEUED.value
     document.chunk_count = 0
@@ -223,13 +213,25 @@ async def reprocess_document(
 
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_document(document_id: UUID, session: SessionDep):
+def delete_document(document_id: UUID, session: SessionDep, opensearch: OpenSearchDep):
     doc_repo = DocumentRepository(session)
     document = doc_repo.get_by_id(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
+    # The index first: a deleted document must stop being answerable, so if its chunks cannot be removed it stays.
+    _purge_index_chunks(opensearch, document.id)
     doc_repo.delete(document)
     return None
+
+
+def _purge_index_chunks(opensearch, document_id: UUID) -> None:
+    try:
+        opensearch.purge_document_chunks(str(document_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Could not remove the chunks of document %s from the index: %s", document_id, exc)
+        raise HTTPException(
+            status_code=502, detail="The search index could not be updated, so nothing was changed. Try again."
+        ) from exc
 
 
 def _restrictions_response(

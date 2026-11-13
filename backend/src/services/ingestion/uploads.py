@@ -34,6 +34,19 @@ def safe_extension(filename: Optional[str]) -> str:
     return suffix if _EXTENSION.match(suffix) else ""
 
 
+TEXT_CONTENT_TYPES = {"text/plain", "text/markdown", "text/html", "application/json"}
+
+
+def decode_text(raw: bytes) -> str:
+    """Text content from bytes: UTF-8 if it is, else Latin-1."""
+    for encoding in ("utf-8", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="ignore")
+
+
 def upload_root(settings: Settings) -> Path:
     return Path(settings.ingestion.upload_dir) if settings.ingestion.upload_dir else Path(tempfile.gettempdir()) / "rag-uploads"
 

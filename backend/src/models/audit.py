@@ -23,6 +23,7 @@ class AuditAction(str, Enum):
     UPLOADS_CLEANUP = "uploads.cleanup"  # an operator removed stale files from the upload area
     CHAT_PURGE = "chat.purge"  # Conversations past retention were deleted (counts only)
     CHAT_ATTACHMENT = "chat.attachment"  # a document was attached to or removed from a Conversation (metadata only)
+    CONNECTOR_SYNC = "connector.sync"  # a Connector run mirrored its source into a Knowledge Base (counts and file names)
 
 
 class AuditOutcome(str, Enum):

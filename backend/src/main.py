@@ -21,6 +21,7 @@ from src.routers import (
     chat,
     chat_admin,
     chat_completions,
+    connectors,
     documents,
     hybrid_search,
     knowledge_bases,
@@ -209,6 +210,7 @@ app.include_router(chat.router, dependencies=QUERIER)
 # make the backend call caller-supplied URLs and so must never be open.
 app.include_router(knowledge_bases.router, dependencies=ADMIN)
 app.include_router(documents.router, dependencies=ADMIN)
+app.include_router(connectors.router, dependencies=ADMIN)
 app.include_router(applications.router, dependencies=ADMIN)
 app.include_router(providers.router, dependencies=ADMIN)
 app.include_router(retrieval.router, dependencies=ADMIN)

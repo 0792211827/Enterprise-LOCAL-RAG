@@ -462,7 +462,8 @@ export type AuditAction =
   | "audit.export"
   | "audit.purge"
   | "uploads.cleanup"
-  | "chat.purge";
+  | "chat.purge"
+  | "connector.sync";
 
 export type AuditOutcome = "ok" | "denied" | "error";
 

@@ -124,6 +124,24 @@ class IngestionSettings(BaseConfigSettings):
     upload_retention_days: int = Field(default=0, ge=0)
 
 
+class ConnectorSettings(BaseConfigSettings):
+    """The Connector job, which mirrors a source folder into one Knowledge Base (off until a mount root is set)."""
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="CONNECTOR__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    # Where mounted folders live. A mounted-path Connector must point at or below this directory, whatever an admin
+    # types, so the job can never be aimed at the rest of the server's file system. Empty = mounted paths are refused.
+    mount_root: str = ""
+    # A run that began less than this long ago blocks another run of the same Connector (a crashed run's lock expires).
+    lock_minutes: int = Field(default=360, ge=1)
+
+
 class RerankSettings(BaseConfigSettings):
     """Optional reranking Inference endpoint (off by default).
 
@@ -448,6 +466,7 @@ class Settings(BaseConfigSettings):
     vlm: VLMSettings = Field(default_factory=VLMSettings)
     rerank: RerankSettings = Field(default_factory=RerankSettings)
     ingestion: IngestionSettings = Field(default_factory=IngestionSettings)
+    connector: ConnectorSettings = Field(default_factory=ConnectorSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     api_keys: ApiKeySettings = Field(default_factory=ApiKeySettings)
     audit: AuditSettings = Field(default_factory=AuditSettings)

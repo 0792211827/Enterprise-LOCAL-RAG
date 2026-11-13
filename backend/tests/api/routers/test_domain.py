@@ -745,8 +745,10 @@ def uploads(client, app, session_factory, tmp_path):
     database = MagicMock()
     database.get_session.return_value.__enter__ = lambda *a: session_factory()
     database.get_session.return_value.__exit__ = lambda *a: None
+    opensearch = MagicMock()
     app.dependency_overrides[get_ingestion_service] = lambda: ingestion
     app.dependency_overrides[get_database] = lambda: database
+    app.dependency_overrides[get_opensearch_client] = lambda: opensearch
     kb_id = client.post("/api/v1/knowledge-bases", json={"name": "Uploads KB"}).json()["id"]
 
     def configure(max_upload_mb=50):
@@ -754,7 +756,7 @@ def uploads(client, app, session_factory, tmp_path):
         app.dependency_overrides[get_settings] = lambda: settings
 
     configure()
-    return SimpleNamespace(kb_id=kb_id, configure=configure, root=tmp_path / "uploads")
+    return SimpleNamespace(kb_id=kb_id, configure=configure, root=tmp_path / "uploads", opensearch=opensearch)
 
 
 def _stored_documents(session_factory):
@@ -831,3 +833,39 @@ def test_a_reprocess_after_cleanup_says_the_file_is_gone(client, uploads, sessio
     resp = client.post(f"/api/v1/documents/{document.id}/reprocess")
     assert resp.status_code == 409
     assert "cleanup" in resp.json()["detail"].lower()
+
+
+def _upload_text(client, uploads):
+    client.post(
+        f"/api/v1/knowledge-bases/{uploads.kb_id}/documents",
+        files={"file": ("a.txt", b"hello", "text/plain")},
+    )
+
+
+def test_deleting_a_document_removes_its_chunks_from_the_index_too(client, uploads, session_factory):
+    _upload_text(client, uploads)
+    [document] = _stored_documents(session_factory)
+
+    assert client.delete(f"/api/v1/documents/{document.id}").status_code == 204
+
+    uploads.opensearch.purge_document_chunks.assert_called_once_with(str(document.id))
+    assert _stored_documents(session_factory) == []
+
+
+def test_a_document_whose_chunks_cannot_be_removed_is_not_deleted(client, uploads, session_factory):
+    _upload_text(client, uploads)
+    [document] = _stored_documents(session_factory)
+    uploads.opensearch.purge_document_chunks.side_effect = ConnectionError("down")
+
+    assert client.delete(f"/api/v1/documents/{document.id}").status_code == 502
+
+    assert len(_stored_documents(session_factory)) == 1  # still answerable, so still listed and deletable
+
+
+def test_reprocessing_clears_the_old_chunks_from_the_index_first(client, uploads, session_factory):
+    _upload_text(client, uploads)
+    [document] = _stored_documents(session_factory)
+
+    assert client.post(f"/api/v1/documents/{document.id}/reprocess").status_code == 202
+
+    uploads.opensearch.purge_document_chunks.assert_called_once_with(str(document.id))

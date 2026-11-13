@@ -1,5 +1,5 @@
 .PHONY: help start stop restart status logs health setup format lint test test-cov \
-        frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup reindex eval eval-compare start-hardened health-hardened
+        frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup reindex eval eval-compare start-hardened health-hardened connectors connector-sync
 
 # The virtualenv lives at the repo root, not in backend/. uv resolves this
 # relative to the project root (backend/, where pyproject.toml is).
@@ -92,6 +92,17 @@ reindex: ## Rebuild the chunk index (lucene engine / new embedding model) and sw
 #   make uploads-cleanup DAYS=14 DRY_RUN=1
 uploads-cleanup: ## Remove stale files from the upload area older than DAYS
 	docker exec rag-api python -m src.cli.upload_cleanup $(if $(DAYS),--days $(DAYS)) $(if $(DRY_RUN),--dry-run)
+
+# Connectors mirror a source folder into a Knowledge Base (see README, "Connectors"). The job runs as its own
+# command, in the rag-api container unless you use the `connectors` compose profile.
+#   make connectors                       list them and how their last run went
+#   make connector-sync NAME=hr-share     (or ALL=1; DRY_RUN=1 reports without changing anything)
+connectors: ## List Connectors and their last run
+	docker exec rag-api python -m src.cli.connector list
+
+connector-sync: ## Mirror a Connector's source into its Knowledge Base: NAME=... or ALL=1
+	@test -n "$(NAME)$(ALL)" || { echo "usage: make connector-sync NAME=hr-share   (or ALL=1)"; exit 2; }
+	docker exec rag-api python -m src.cli.connector sync $(if $(ALL),--all,$(NAME)) $(if $(DRY_RUN),--dry-run) $(if $(ALLOW_EMPTY),--allow-empty)
 
 # Eval harness. Runs in the rag-api container: the Golden set is copied in and the
 # report copied back to REPORT (default eval-report.json). The exit status is the
