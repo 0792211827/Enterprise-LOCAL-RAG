@@ -27,7 +27,16 @@ from typing import Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from src.auth.completions import CompletionAuthError, authorize_completion
-from src.dependencies import AuditDep, EmbeddingsDep, LLMProviderDep, OpenSearchDep, SessionDep, SettingsDep
+from src.dependencies import (
+    AuditDep,
+    EmbeddingsDep,
+    LLMProviderDep,
+    OpenSearchDep,
+    ProviderRegistryDep,
+    RerankerDep,
+    SessionDep,
+    SettingsDep,
+)
 from src.models import AuditAction
 from src.repositories import ApplicationRepository
 from src.schemas.api.domain import (
@@ -38,14 +47,9 @@ from src.schemas.api.domain import (
     ChatMessage,
 )
 from src.services.access import resolve_scope
-from src.services.applications import (
-    answer_for_application,
-    blocked_message,
-    effective_system_prompt,
-    retrieve_for_application,
-    scope_application,
-)
+from src.services.applications import answer_for_application, prepare_stream, scope_application
 from src.services.audit import AuditContext, QueryAudit, audited_query, audited_stream
+from src.services.providers.llm.registry import ProviderConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +82,8 @@ async def create_chat_completion(
     opensearch: OpenSearchDep,
     embeddings: EmbeddingsDep,
     llm: LLMProviderDep,
+    providers: ProviderRegistryDep,
+    reranker: RerankerDep,
     settings: SettingsDep,
     audit_recorder: AuditDep,
 ):
@@ -92,6 +98,11 @@ async def create_chat_completion(
         )
     except CompletionAuthError as exc:
         return _openai_error(exc.status_code, exc.message, code=exc.code, err_type=exc.err_type)
+
+    try:
+        llm = providers.for_application(application, default=llm)
+    except ProviderConfigurationError as exc:
+        return _openai_error(500, str(exc), code="provider_misconfigured", err_type="server_error")
 
     # Resolved from the principal authorize_completion established -- the end
     # user when a host app forwarded one, so retrieval honours their grants.
@@ -131,25 +142,24 @@ async def create_chat_completion(
         # resolved to plain values first.
         audit = QueryAudit(audit_recorder, audit_context, **audit_fields)
         try:
-            chunks, hits, _mode, model = await retrieve_for_application(
-                application, query, opensearch, embeddings, scope=scope
+            prepared = await prepare_stream(
+                application,
+                query,
+                opensearch,
+                embeddings,
+                llm,
+                system_prompt_override=system_override,
+                scope=scope,
+                reranker=reranker,
             )
         except BaseException as exc:
             audit.record_after_abort(exc)
             raise
-        audit.hits, audit.model = hits, model
+        audit.hits, audit.model, audit.details = prepared.hits, prepared.model, prepared.details
+        audit.note_rerank(prepared.rerank)
         return StreamingResponse(
             audited_stream(
-                _stream_completion(
-                    slug=application.slug,
-                    model=model,
-                    system_prompt=effective_system_prompt(application, system_override),
-                    chunks=chunks,
-                    query=query,
-                    llm=llm,
-                    blocked=blocked_message(application) if chunks is None else None,
-                    audit=audit,
-                ),
+                _stream_completion(slug=application.slug, prepared=prepared, audit=audit),
                 audit,
                 error_frame=_openai_error_frame,
                 trailer="data: [DONE]\n\n",
@@ -166,8 +176,10 @@ async def create_chat_completion(
             llm=llm,
             system_prompt_override=system_override,
             scope=scope,
+            reranker=reranker,
         )
-        audit.answer, audit.hits, audit.model = result.answer, result.hits, result.model
+        audit.answer, audit.hits, audit.model, audit.details = result.answer, result.hits, result.model, result.details
+        audit.note_rerank(result.rerank)
 
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",
@@ -184,7 +196,7 @@ async def create_chat_completion(
     )
 
 
-async def _stream_completion(slug, model, system_prompt, chunks, query, llm, blocked=None, audit=None):
+async def _stream_completion(slug, prepared, audit=None):
     """Emit an SSE stream in the OpenAI chat.completion.chunk format.
 
     Takes only plain values -- no ORM objects -- because this runs after the
@@ -208,18 +220,9 @@ async def _stream_completion(slug, model, system_prompt, chunks, query, llm, blo
     try:
         # The opening chunk carries the role, matching OpenAI's wire format.
         yield envelope({"role": "assistant"})
-
-        if chunks is None:
-            answer_parts.append(blocked)
-            yield envelope({"content": blocked})
-        else:
-            async for chunk in llm.generate_rag_answer_stream(
-                query=query, chunks=chunks, model=model, system_prompt=system_prompt
-            ):
-                delta = chunk.get("response", "") if isinstance(chunk, dict) else str(chunk)
-                if delta:
-                    answer_parts.append(delta)
-                    yield envelope({"content": delta})
+        async for delta in prepared.deltas():
+            answer_parts.append(delta)
+            yield envelope({"content": delta})
         yield envelope({}, finish_reason="stop")
     except Exception as exc:  # noqa: BLE001 - stream must terminate cleanly
         logger.error("Streaming completion failed: %s", exc)

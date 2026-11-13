@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from sqlalchemy import text
 
-from ..dependencies import DatabaseDep, OpenSearchDep, SettingsDep
+from ..dependencies import DatabaseDep, LLMProviderDep, OpenSearchDep, SettingsDep
 from ..schemas.api.health import HealthResponse, ServiceStatus
 from ..services.ollama import OllamaClient
 
@@ -9,7 +9,9 @@ router = APIRouter()
 
 
 @router.get("/health", response_model=HealthResponse, tags=["Health"])
-async def health_check(settings: SettingsDep, database: DatabaseDep, opensearch_client: OpenSearchDep) -> HealthResponse:
+async def health_check(
+    settings: SettingsDep, database: DatabaseDep, opensearch_client: OpenSearchDep, llm: LLMProviderDep
+) -> HealthResponse:
     """Comprehensive health check endpoint for monitoring and load balancer probes.
 
     :returns: Service health status with version and connectivity checks
@@ -54,14 +56,28 @@ async def health_check(settings: SettingsDep, database: DatabaseDep, opensearch_
     _check_service("opensearch", _check_opensearch)
 
     # Handle Ollama async check separately
+    # Ollama is only a hard dependency when the LLM or the embeddings run on it.
+    # Otherwise it is still reported, but its absence does not degrade the service.
+    ollama_required = "ollama" in (settings.llm.provider.lower(), settings.embedding.provider.lower())
     try:
         ollama_client = OllamaClient(settings)
         ollama_health = await ollama_client.health_check()
         services["ollama"] = ServiceStatus(status=ollama_health["status"], message=ollama_health["message"])
-        if ollama_health["status"] != "healthy":
+        if ollama_health["status"] != "healthy" and ollama_required:
             overall_status = "degraded"
     except Exception as e:
         services["ollama"] = ServiceStatus(status="unhealthy", message=str(e))
+        if ollama_required:
+            overall_status = "degraded"
+
+    # The configured LLM backend (LLM__PROVIDER), whatever it is.
+    try:
+        llm_health = await llm.health_check()
+        services["llm"] = ServiceStatus(status=llm_health["status"], message=llm_health["message"])
+        if llm_health["status"] != "healthy":
+            overall_status = "degraded"
+    except Exception as e:
+        services["llm"] = ServiceStatus(status="unhealthy", message=str(e))
         overall_status = "degraded"
 
     return HealthResponse(

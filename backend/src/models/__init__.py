@@ -2,6 +2,7 @@ from .access import GrantPrincipalType, KnowledgeBaseGrant
 from .api_key import ApplicationApiKey, generate_api_key, hash_api_key
 from .application import RAGApplication, application_knowledge_bases
 from .audit import AuditAction, AuditEvent, AuditOutcome
+from .chat import Conversation, ConversationMessage, MessageFeedback
 from .document import Document, DocumentChunk
 from .enums import (
     IngestionStatus,
@@ -19,6 +20,9 @@ __all__ = [
     "KnowledgeBase",
     "KnowledgeBaseGrant",
     "GrantPrincipalType",
+    "Conversation",
+    "ConversationMessage",
+    "MessageFeedback",
     "Document",
     "DocumentChunk",
     "RAGApplication",

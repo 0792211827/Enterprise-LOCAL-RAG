@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
+from src.services.providers.llm.registry import ProviderRegistry
 
 
 @pytest.fixture(scope="session")
@@ -11,8 +12,16 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def _make_opensearch_mock() -> MagicMock:
+@pytest.fixture
+def index_dimension():
+    """The vector dimension the fake chunk index already holds (matches the default config)."""
+    return 1024
+
+
+def _make_opensearch_mock(index_dimension: int = 1024) -> MagicMock:
     client = MagicMock()
+    client.index_name = "rag-documents-chunks"
+    client.get_embedding_dimension = MagicMock(return_value=index_dimension)
     client.health_check = MagicMock(return_value=True)
     client.get_index_stats = MagicMock(
         return_value={"index_name": "rag-documents-chunks", "document_count": 0}
@@ -49,8 +58,15 @@ def _make_llm_mock() -> AsyncMock:
     return client
 
 
+def _make_llm_for_endpoint(provider_type, endpoint, api_key, model) -> AsyncMock:
+    """Per-application providers are fakes too: no test ever opens a socket to an endpoint."""
+    client = _make_llm_mock()
+    client.endpoint = endpoint
+    return client
+
+
 @pytest.fixture
-async def client(monkeypatch):
+async def client(monkeypatch, index_dimension):
     """HTTP client for API testing with the whole platform mocked (offline)."""
     import src.main as main
 
@@ -64,11 +80,17 @@ async def client(monkeypatch):
     embeddings.embed_passages = AsyncMock(return_value=[[0.1] * 1024])
 
     monkeypatch.setattr(main, "make_database", lambda: mock_database)
-    monkeypatch.setattr(main, "make_opensearch_client", _make_opensearch_mock)
+    monkeypatch.setattr(main, "make_opensearch_client", lambda: _make_opensearch_mock(index_dimension))
     monkeypatch.setattr(main, "make_pdf_parser_service", lambda: MagicMock())
     monkeypatch.setattr(main, "make_embeddings_service", lambda: embeddings)
-    monkeypatch.setattr(main, "make_ollama_client", _make_llm_mock)
-    monkeypatch.setattr(main, "make_llm_provider", lambda settings: _make_llm_mock())
+    # One mock backs both: with LLM__PROVIDER=ollama (the default) the provider
+    # *is* an OllamaClient, so tests that drive app.state.ollama_client also
+    # drive the provider the answer paths now use.
+    llm_mock = _make_llm_mock()
+    monkeypatch.setattr(main, "make_ollama_client", lambda: llm_mock)
+    monkeypatch.setattr(main, "make_llm_provider", lambda settings: llm_mock)
+    monkeypatch.setattr(main, "make_provider_registry", lambda settings: ProviderRegistry(builder=_make_llm_for_endpoint))
+    monkeypatch.setattr(main, "make_reranker", lambda settings: None)
     monkeypatch.setattr(main, "make_vlm_provider", lambda settings: None)
     monkeypatch.setattr(main, "make_langfuse_tracer", lambda: MagicMock())
     monkeypatch.setattr(main, "make_cache_client", lambda settings: None)

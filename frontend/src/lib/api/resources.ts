@@ -1,5 +1,5 @@
 import { FETCH_CREDENTIALS, authHeaders } from "@/lib/auth";
-import { API_BASE, apiDownload, apiGet, apiSend, apiUpload } from "./client";
+import { API_BASE, apiDownload, apiGet, apiSend, apiStreamEvents, apiUpload } from "./client";
 import type {
   ApiKey,
   ApiKeyWithSecret,
@@ -10,19 +10,29 @@ import type {
   Application,
   ApplicationAskResponse,
   ApplicationCreate,
+  ApplicationRatings,
+  ChatApplication,
   ChatCompletionResponse,
+  ChatCounts,
+  ChatDocument,
   ChatMessage,
+  ChatStreamEvent,
+  ConversationDetail,
+  ConversationSummary,
   DashboardStats,
   DocumentItem,
   GPUResponse,
   IngestionJob,
   KnowledgeBase,
   KnowledgeBaseCreate,
+  MessageFeedback,
   Provider,
   ProviderCreate,
   ProviderModelsResponse,
   ProviderTestResult,
+  RatingItem,
   RetrievalConfig,
+  SharedExchange,
   SystemHealth,
   SecurityStatus,
   Principal,
@@ -162,6 +172,59 @@ export const auditApi = {
   event: (id: string) => apiGet<AuditEvent>(`/api/v1/audit/events/${id}`),
   export: (filters: AuditFilters, format: "ndjson" | "csv") =>
     apiDownload(`/api/v1/audit/export${auditQuery({ ...filters, format })}`),
+};
+
+export const chatApi = {
+  /** Only Applications whose every Knowledge Base the caller holds a Grant on. */
+  applications: () => apiGet<ChatApplication[]>("/api/v1/chat/applications"),
+  document: (id: string) => apiGet<ChatDocument>(`/api/v1/chat/documents/${id}`),
+  conversations: () => apiGet<ConversationSummary[]>("/api/v1/chat/conversations"),
+  conversation: (id: string) => apiGet<ConversationDetail>(`/api/v1/chat/conversations/${id}`),
+  startConversation: (applicationId: string) =>
+    apiSend<ConversationSummary>("/api/v1/chat/conversations", "POST", { application_id: applicationId }),
+  renameConversation: (id: string, title: string) =>
+    apiSend<ConversationSummary>(`/api/v1/chat/conversations/${id}`, "PATCH", { title }),
+  deleteConversation: (id: string) => apiSend<void>(`/api/v1/chat/conversations/${id}`, "DELETE"),
+  ask: (
+    conversationId: string,
+    query: string,
+    onEvent: (event: ChatStreamEvent) => void,
+    signal?: AbortSignal,
+  ) =>
+    apiStreamEvents<ChatStreamEvent>(
+      `/api/v1/chat/conversations/${conversationId}/messages`,
+      { query },
+      onEvent,
+      signal,
+    ),
+  rate: (
+    conversationId: string,
+    messageId: string,
+    feedback: { rating: "up" | "down"; comment: string | null; share_with_admins: boolean },
+  ) =>
+    apiSend<MessageFeedback>(
+      `/api/v1/chat/conversations/${conversationId}/messages/${messageId}/feedback`,
+      "PUT",
+      feedback,
+    ),
+  withdrawRating: (conversationId: string, messageId: string) =>
+    apiSend<void>(`/api/v1/chat/conversations/${conversationId}/messages/${messageId}/feedback`, "DELETE"),
+};
+
+/** The admin view of chat: counts, ratings and the exchanges users chose to share. Never Conversation text. */
+export const chatAdminApi = {
+  counts: () => apiGet<ChatCounts>("/api/v1/chat-admin/conversation-counts"),
+  summary: () => apiGet<ApplicationRatings[]>("/api/v1/chat-admin/ratings/summary"),
+  ratings: (applicationId?: string) =>
+    apiGet<RatingItem[]>(
+      `/api/v1/chat-admin/ratings${applicationId ? `?application_id=${applicationId}` : ""}`,
+    ),
+  shared: (applicationId?: string) =>
+    apiGet<SharedExchange[]>(
+      `/api/v1/chat-admin/shared-exchanges${applicationId ? `?application_id=${applicationId}` : ""}`,
+    ),
+  exportGolden: (applicationId: string) =>
+    apiDownload(`/api/v1/chat-admin/shared-exchanges/export?application_id=${applicationId}`),
 };
 
 export const authApi = {

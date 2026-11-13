@@ -58,6 +58,8 @@ class AuditRecord:
     model: Optional[str] = None
     query_text: Optional[str] = None
     answer_text: Optional[str] = None
+    # Chat: digests are kept but the text is never stored, whatever the audit level.
+    redact_text: bool = False
     latency_ms: Optional[int] = None
     error_code: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
@@ -106,12 +108,13 @@ class DatabaseAuditRecorder(AuditRecorder):
         values = asdict(event)
         query_text = values.pop("query_text")
         answer_text = values.pop("answer_text")
+        redact_text = values.pop("redact_text")
         row = AuditEvent(**values)
         # Digests at every level: an auditor can prove which question was asked
         # (by hashing a candidate) without the platform storing the text.
         row.query_sha256 = sha256_text(query_text)
         row.answer_sha256 = sha256_text(answer_text)
-        if self.level == "full":
+        if self.level == "full" and not redact_text:
             row.query_text = query_text
             row.answer_text = answer_text
         return row

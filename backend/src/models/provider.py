@@ -12,6 +12,9 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+LLM_API_KEY_REF = "llm_api_key_ref"
+
+
 class ModelProvider(Base):
     """A configured, self-hosted model provider (LLM, embedding, or VLM).
 
@@ -63,3 +66,21 @@ class ModelConfiguration(Base):
 
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    @property
+    def llm_api_key_ref(self):
+        """The key (or ``env:NAME`` reference) for ``llm_endpoint``.
+
+        Kept inside ``generation_params`` because new columns cannot be added to
+        existing tables (``create_all`` does not alter them).
+        """
+        return (self.generation_params or {}).get(LLM_API_KEY_REF)
+
+    @llm_api_key_ref.setter
+    def llm_api_key_ref(self, value):
+        params = dict(self.generation_params or {})
+        if value:
+            params[LLM_API_KEY_REF] = value
+        else:
+            params.pop(LLM_API_KEY_REF, None)
+        self.generation_params = params  # a fresh dict, so SQLAlchemy sees the change

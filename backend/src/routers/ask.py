@@ -10,9 +10,10 @@ from src.dependencies import (
     CacheDep,
     EmbeddingsDep,
     LangfuseDep,
-    OllamaDep,
+    LLMProviderDep,
     OpenSearchDep,
     PrincipalDep,
+    RerankerDep,
     ScopeDep,
 )
 from src.models import AuditAction
@@ -20,6 +21,7 @@ from src.schemas.api.ask import AskRequest, AskResponse
 from src.services.access import RetrievalScope
 from src.services.audit import AuditContext, QueryAudit, audited_query, audited_stream
 from src.services.langfuse.tracer import RAGTracer
+from src.services.retrieval import embed_or_none, retrieve
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,8 @@ async def _prepare_chunks_and_sources(
     rag_tracer: RAGTracer,
     trace=None,
     scope: Optional[RetrievalScope] = None,
+    reranker=None,
+    audit: Optional[QueryAudit] = None,
 ) -> tuple[List[Dict], List[str], List[str]]:
     """Retrieve and prepare chunks for RAG with clean tracing.
 
@@ -42,34 +46,33 @@ async def _prepare_chunks_and_sources(
     search is limited to the knowledge bases the caller may read, and an
     empty scope searches nothing.
     """
-    kb_ids = scope.restrict(None).permitted if scope is not None else None
-    if kb_ids == []:
+    if scope is not None and scope.restrict(None).permitted == []:
         return [], [], []
 
     # Handle embeddings for hybrid search
     query_embedding = None
     if request.use_hybrid:
         with rag_tracer.trace_embedding(trace, request.query) as embedding_span:
-            try:
-                query_embedding = await embeddings_service.embed_query(request.query)
-                logger.info("Generated query embedding for hybrid search")
-            except Exception as e:
-                logger.warning(f"Failed to generate embeddings, falling back to BM25: {e}")
-                if embedding_span:
-                    rag_tracer.tracer.update_span(embedding_span, output={"success": False, "error": str(e)})
+            query_embedding = await embed_or_none(embeddings_service, request.query)
+            if query_embedding is None and embedding_span:
+                rag_tracer.tracer.update_span(embedding_span, output={"success": False})
 
     # Search with tracing
     with rag_tracer.trace_search(trace, request.query, request.top_k) as search_span:
-        search_results = opensearch_client.search_unified(
-            query=request.query,
-            query_embedding=query_embedding,
+        retrieval = await retrieve(
+            opensearch_client,
+            embeddings_service,
+            request.query,
+            scope=scope,
+            mode="hybrid" if query_embedding is not None else "bm25",
             size=request.top_k,
-            from_=0,
             categories=request.categories,
-            use_hybrid=request.use_hybrid and query_embedding is not None,
-            min_score=0.0,
-            knowledge_base_ids=kb_ids,
+            query_embedding=query_embedding,
+            reranker=reranker,
         )
+        search_results = {"total": retrieval.total, "hits": retrieval.hits}
+        if audit is not None:
+            audit.note_rerank(retrieval.rerank)
 
         # Extract essential data for LLM
         chunks = []
@@ -113,11 +116,12 @@ async def ask_question(
     request: AskRequest,
     opensearch_client: OpenSearchDep,
     embeddings_service: EmbeddingsDep,
-    ollama_client: OllamaDep,
+    llm: LLMProviderDep,
     langfuse_tracer: LangfuseDep,
     cache_client: CacheDep,
     principal: PrincipalDep,
     scope: ScopeDep,
+    reranker: RerankerDep,
     audit_recorder: AuditDep,
     http_request: Request,
 ) -> AskResponse:
@@ -153,7 +157,7 @@ async def ask_question(
 
             # Retrieve chunks
             chunks, sources, _ = await _prepare_chunks_and_sources(
-                request, opensearch_client, embeddings_service, rag_tracer, trace, scope=scope
+                request, opensearch_client, embeddings_service, rag_tracer, trace, scope=scope, reranker=reranker, audit=audit
             )
 
             audit.hits = chunks
@@ -185,7 +189,7 @@ async def ask_question(
 
             # Generate answer
             with rag_tracer.trace_generation(trace, request.model, final_prompt) as gen_span:
-                rag_response = await ollama_client.generate_rag_answer(query=request.query, chunks=chunks, model=request.model)
+                rag_response = await llm.generate_rag_answer(query=request.query, chunks=chunks, model=request.model)
                 answer = rag_response.get("answer", "Unable to generate answer")
                 audit.answer = answer
                 rag_tracer.end_generation(gen_span, answer, request.model)
@@ -220,11 +224,12 @@ async def ask_question_stream(
     request: AskRequest,
     opensearch_client: OpenSearchDep,
     embeddings_service: EmbeddingsDep,
-    ollama_client: OllamaDep,
+    llm: LLMProviderDep,
     langfuse_tracer: LangfuseDep,
     cache_client: CacheDep,
     principal: PrincipalDep,
     scope: ScopeDep,
+    reranker: RerankerDep,
     audit_recorder: AuditDep,
     http_request: Request,
 ) -> StreamingResponse:
@@ -276,7 +281,7 @@ async def ask_question_stream(
 
                 # Retrieve chunks
                 chunks, sources, _ = await _prepare_chunks_and_sources(
-                    request, opensearch_client, embeddings_service, rag_tracer, trace, scope=scope
+                    request, opensearch_client, embeddings_service, rag_tracer, trace, scope=scope, reranker=reranker, audit=audit
                 )
 
                 audit.hits = chunks
@@ -301,7 +306,7 @@ async def ask_question_stream(
                 # Stream generation
                 with rag_tracer.trace_generation(trace, request.model, final_prompt) as gen_span:
                     full_response = ""
-                    async for chunk in ollama_client.generate_rag_answer_stream(
+                    async for chunk in llm.generate_rag_answer_stream(
                         query=request.query, chunks=chunks, model=request.model
                     ):
                         if chunk.get("response"):

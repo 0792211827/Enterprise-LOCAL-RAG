@@ -103,13 +103,14 @@ async def system_health(
     try:
         health = await llm.health_check()
         llm_latency = round((time.perf_counter() - start) * 1000, 2)
-        healthy = bool(health)
+        # Providers report problems as {"status": "unhealthy", ...}, not by raising.
+        healthy = isinstance(health, dict) and health.get("status") == "healthy"
         components.append(
             ComponentHealth(
                 name="Inference",
                 status="healthy" if healthy else "unhealthy",
                 latency_ms=llm_latency,
-                detail=None if healthy else "Endpoint unreachable",
+                detail=None if healthy else (health.get("message") if isinstance(health, dict) else None) or "Endpoint unreachable",
             )
         )
     except Exception as exc:  # noqa: BLE001

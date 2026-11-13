@@ -1,5 +1,6 @@
 # Enterprise Local RAG
 
+
 A self-hosted, **local-first** Enterprise RAG-as-a-Service platform. It ingests
 documents, indexes them for hybrid (BM25 + vector) retrieval, and answers
 questions with a local LLM — including an **agentic RAG** workflow built on
@@ -103,6 +104,8 @@ make lint      # ruff + mypy
 make frontend-dev    # frontend dev server on :3001
 make frontend-build  # frontend production build + type check
 make audit-purge DAYS=365  # delete audit events older than 365 days (DRY_RUN=1 to count)
+make uploads-cleanup DAYS=14  # remove stale uploaded files (off unless run; DRY_RUN=1 to count)
+make chat-purge DAYS=30  # delete Conversations idle for 30+ days (the API also does this daily; DRY_RUN=1 to count)
 make clean     # tear down + prune
 ```
 
@@ -128,6 +131,8 @@ clients work unmodified.
 | Caller identity | `GET /api/v1/auth/me` |
 | Active access controls | `GET /api/v1/system/security` |
 | Audit log (auditor role) | `/api/v1/audit` |
+| Employee chat (querier role) | `/api/v1/chat` (applications, conversations, messages, feedback, documents) |
+| Chat counts, ratings, shared exchanges (admin) | `/api/v1/chat-admin` |
 | OpenAI-compatible chat | `POST /v1/chat/completions` |
 
 Full, interactive documentation is available at `/docs`.
@@ -137,6 +142,13 @@ Full, interactive documentation is available at `/docs`.
 A Next.js 14 admin UI (`frontend/`) for managing knowledge bases, document
 ingestion, RAG applications (with a retrieval playground), model providers,
 retrieval profiles, and system health, plus an audit log viewer for auditors.
+
+It is also the employees' chat app. Each role reaches its own surface, enforced
+on the server and mirrored in the UI: `querier` gets **Chat** only, `admin` the
+control plane, `auditor` the audit log (a user with several roles gets each).
+In Chat an employee sees only the Applications whose *every* Knowledge Base they
+hold a Grant on, gets the answer streamed, and can open each citation to see the
+source Document with the cited passage marked. Conversations are not stored yet.
 
 Run with Docker (part of `make start`):
 
@@ -163,10 +175,30 @@ All configuration is environment-driven; see `.env.example` for the full,
 documented list. Key groups:
 
 - **Embeddings** (`EMBEDDING__*`) — provider, model, dimension, device.
-- **LLM** (`LLM__*`) — provider, endpoint, model, timeout.
+  `EMBEDDING__DIMENSION` is the single source of truth for the chunk index
+  mapping (`OPENSEARCH__VECTOR_DIMENSION` is deprecated and only warns). If an
+  existing index was built with a different dimension, startup logs an error and
+  ingestion returns `409` until the index is rebuilt; search and the rest of the
+  API keep working.
+- **LLM** (`LLM__*`) — provider, endpoint, model, timeout, max tokens. Ollama is
+  the default; llama.cpp and Ollama's `/v1` are verified OpenAI-compatible
+  backends, vLLM and TGI are not yet. See
+  [`docs/deployment/inference-backends.md`](docs/deployment/inference-backends.md)
+  for the support matrix, opt-in overlays and what each endpoint routes through.
+  Per-Application endpoints (`llm_endpoint`, with an `env:NAME` key reference) need
+  no setting; `LLM__ALLOWED_ENDPOINT_HOSTS` restricts which hosts they and the
+  provider test / model-listing actions may call (empty = any host). See the same doc.
 - **VLM** (`VLM__*`) — optional vision-language model (off by default).
+- **Reranker** (`RERANK__*`) — optional reranking endpoint that reorders retrieved
+  passages before answering; a failing endpoint falls back to the original order
+  and is flagged in the audit log (off by default). See
+  [`docs/deployment/inference-backends.md`](docs/deployment/inference-backends.md#reranking).
 - **OpenSearch** (`OPENSEARCH__*`) — index and hybrid-search settings.
 - **Chunking** (`CHUNKING__*`) — chunk size, overlap, section-based mode.
+- **Uploads** (`INGESTION__*`) — document upload size cap (`MAX_UPLOAD_MB`, default
+  50; larger uploads get `413`), the upload directory, and an opt-in retention for
+  stale files (`make uploads-cleanup`). Stored files are named by content hash;
+  nothing from the uploaded filename reaches the file system.
 - **Redis** (`REDIS__*`) and **Langfuse** client (`LANGFUSE__*` — note the
   double underscore; single-underscore `LANGFUSE_*` names configure the
   self-hosted Langfuse server in compose, not the backend).
@@ -193,7 +225,7 @@ the same IdP gets nothing.
 | Role | Can use |
 |------|---------|
 | `admin` | The control plane: knowledge bases, documents and ingestion jobs, applications (including the playground), providers, retrieval configs, API keys, `/api/v1/system/*`. Also holds `querier`, and holds `auditor` unless `AUTH__ADMIN_CAN_READ_AUDIT=false`. |
-| `querier` | `/api/v1/ask`, `/stream`, `/ask-agentic`, `/feedback`, `/hybrid-search`, and `/v1/chat/completions` |
+| `querier` | The employee chat (`/api/v1/chat`: the Applications they may use, streamed answers with citations, source Documents), `/api/v1/ask`, `/stream`, `/ask-agentic`, `/feedback`, `/hybrid-search`, and `/v1/chat/completions` |
 | `auditor` | The audit log |
 
 Only `GET /api/v1/health` is public. The policy is applied once per router in
@@ -221,7 +253,7 @@ valid one. Quote it when reporting a problem.
 
 > **Status:** identity intake, role enforcement, API-key enforcement,
 > knowledge-base permissions and the audit log are all live (see
-> `docs/audit/integration-plan.md`).
+> `docs/FEATURE_REGISTER.md` and `docs/IMPLEMENTATION_ROADMAP.md`).
 
 ### Knowledge-base permissions
 
@@ -341,6 +373,8 @@ the optional debugging and observability layer.
 | `access.denied` | any other `401`/`403` | route, caller if known |
 | `audit.export` | an export of the audit log | format and filters |
 | `audit.purge` | `make audit-purge` | cutoff, rows deleted, OS user |
+| `uploads.cleanup` | `make uploads-cleanup` | days, files removed, bytes freed, OS user |
+| `chat.purge` | the daily chat retention purge, `make chat-purge` | cutoff, days, Conversations deleted (counts only) |
 
 Every event also has the `X-Request-ID`, the client IP (taken from
 `X-Forwarded-For` only when the peer is in `AUTH__TRUSTED_PROXY_CIDRS`) and the
@@ -388,6 +422,45 @@ GRANT SELECT, INSERT, DELETE ON audit_events TO rag_retention;  -- purge job onl
 `admin.mutation` events on create endpoints, `resource_id` is empty because the
 new ID is only in the response body. A tamper-evidence hash chain is a planned
 follow-up.
+
+## 💬 Employee chat
+
+Employees sign in with the company identity and chat with the Applications they
+may use (those whose every Knowledge Base they hold a Grant on). Answers stream,
+with citations that open the source Document and passage.
+
+- **Conversations** are stored per employee (new tables `chat_conversations`,
+  `chat_messages`, `chat_message_feedback`), keyed by the IdP subject. They can be
+  listed, resumed, renamed and deleted by their owner. Nobody else can read one,
+  admins included: another user's Conversation is a `404`. Follow-up questions are
+  given the latest `CHAT__HISTORY_MESSAGES` messages as context, and retrieval also
+  searches with the question they follow (an agentic Application receives that combined
+  question but not the earlier answers).
+- **Admins see counts and ratings, never text.** `GET /api/v1/chat-admin/conversation-counts`,
+  `/ratings`, and `/ratings/summary` carry identifiers and the user's own comment.
+  The one exception is an exchange an employee explicitly **shares with admins**
+  when rating an answer: only then does `/shared-exchanges` show that one question
+  and answer, and `/shared-exchanges/export?application_id=` writes them as Golden
+  set candidates for the [eval harness](docs/evaluation.md). Withdrawing the share
+  or deleting the Conversation takes the exchange back.
+- **Retention.** Conversations are purged `CHAT__RETENTION_DAYS` (default 90; 0 keeps
+  forever) after their last message, together with their messages and ratings. The
+  API runs the purge daily; `make chat-purge` runs it on demand. A purge that deletes
+  something leaves a `chat.purge` audit event with counts only.
+- **Privacy defaults.** Chat audit records hold metadata and SHA-256 digests, never
+  the question or answer, even at `AUDIT__LEVEL=full`. Chat questions and answers stay
+  out of Langfuse traces (which carry metadata only) unless `CHAT__TRACE_CONTENT=true`.
+
+The role-to-surface split is enforced on the server: `querier` reaches chat only,
+`admin` the control plane, `auditor` the audit log; a user with several roles gets each.
+
+## 📏 Evaluating answers
+
+`make eval GOLDEN=evals/example-golden-set.yaml APP=<slug>` scores an Application against a
+versioned Golden set: recall@k and MRR, an optional groundedness score, and permission checks
+that run as a named caller and fail the command if restricted content comes back. Two reports can
+be compared (`make eval-compare`), for example before and after enabling the reranker. See
+[`docs/evaluation.md`](docs/evaluation.md).
 
 ## 🛡️ Production hardening
 

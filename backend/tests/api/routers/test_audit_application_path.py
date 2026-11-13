@@ -189,6 +189,129 @@ class TestChatCompletions:
         assert _queries(factory) == []
 
 
+class TestAgenticApplications:
+    """rag_strategy=agentic runs the graph on both front doors, with the same scope and audit."""
+
+    @pytest.fixture(autouse=True)
+    def agent_backend(self, app):
+        import httpx
+        from src.services.providers.llm.openai_compatible_provider import OpenAICompatibleLLMProvider
+        from tests.unit.services.test_application_agentic import Backend
+
+        self.backend = Backend()
+        provider = OpenAICompatibleLLMProvider("http://backend/v1", "m", transport=httpx.MockTransport(self.backend))
+        app.dependency_overrides[get_llm_provider] = lambda: provider
+
+    def _agentic(self, client, kb_count=1):
+        kb_ids = [client.post("/api/v1/knowledge-bases", json={"name": f"Agentic KB{i}"}).json()["id"] for i in range(kb_count)]
+        body = {"name": "Agent Bot", "knowledge_base_ids": kb_ids, "rag_strategy": "agentic"}
+        return client.post("/api/v1/applications", json=body).json(), kb_ids
+
+    def test_playground_runs_the_graph_and_audits_it_like_a_traditional_answer(self, client, factory, opensearch):
+        assistant, kb_ids = self._agentic(client)
+        response = client.post(f"/api/v1/applications/{assistant['id']}/ask", json={"query": "How much leave?"})
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["answer"] == "Fourteen days, from the agent."
+        assert body["chunks_used"] == 1 and body["sources"][0]["document_title"] == "Handbook"
+        assert opensearch.search_unified.call_args.kwargs["knowledge_base_ids"] == kb_ids
+
+        [event] = _queries(factory)
+        assert event.action == "query.answer" and event.outcome == "ok"
+        assert str(event.application_id) == assistant["id"]
+        assert event.permitted_kb_ids == kb_ids and event.dropped_kb_ids == []
+        assert event.retrieved == [
+            {"chunk_id": "chunk-1", "document_id": "d1", "knowledge_base_id": "kb-from-hit", "score": 0.9}
+        ]
+        assert event.answer_text == "Fourteen days, from the agent." and event.details["agentic"] is True
+
+    def test_completions_run_the_graph_streaming_or_not(self, client, factory):
+        assistant, _ = self._agentic(client)
+        body = {"model": assistant["slug"], "messages": [{"role": "user", "content": "How much leave?"}]}
+
+        plain = client.post("/v1/chat/completions", json=body)
+        assert plain.json()["choices"][0]["message"]["content"] == "Fourteen days, from the agent."
+
+        streamed = client.post("/v1/chat/completions", json={**body, "stream": True})
+        frames = [json.loads(f[len("data: ") :]) for f in streamed.text.splitlines() if f.startswith("data: ") and "[DONE]" not in f]
+        assert "".join(f["choices"][0]["delta"].get("content", "") for f in frames) == "Fourteen days, from the agent."
+
+        plain_event, streamed_event = _queries(factory)
+        for event in (plain_event, streamed_event):
+            assert event.answer_text == "Fourteen days, from the agent."
+            assert event.retrieved[0]["chunk_id"] == "chunk-1" and event.details["agentic"] is True
+
+    def test_a_caller_with_no_grants_is_refused_and_denied_on_both_paths(
+        self, app, client, factory, opensearch, monkeypatch
+    ):
+        import src.routers.chat_completions as completions
+
+        assistant, _ = self._agentic(client)
+        no_grants = RetrievalScope(kb_ids=frozenset(), reason="grants")
+        app.dependency_overrides[get_retrieval_scope] = lambda: no_grants
+        monkeypatch.setattr(completions, "resolve_scope", lambda *args: no_grants)  # /v1 resolves its own scope
+
+        playground = client.post(f"/api/v1/applications/{assistant['id']}/ask", json={"query": "q"}).json()
+        assert playground["chunks_used"] == 0 and playground["sources"] == []
+        assert "don't have access" in playground["answer"]
+
+        completion = client.post(
+            "/v1/chat/completions", json={"model": assistant["slug"], "messages": [{"role": "user", "content": "q"}]}
+        )
+        assert "don't have access" in completion.json()["choices"][0]["message"]["content"]
+
+        assert {e.outcome for e in _queries(factory)} == {"denied"}
+        assert self.backend.requests == []
+        opensearch.search_unified.assert_not_called()
+
+
+class TestRerank:
+    """The application path reranks through the shared seam, on both front doors."""
+
+    @pytest.fixture
+    def with_reranker(self, app, opensearch):
+        from src.dependencies import get_reranker
+        from tests.unit.services.test_reranker import reranker_for
+
+        opensearch.search_unified = MagicMock(
+            side_effect=lambda **kw: {
+                "hits": [dict(HIT, chunk_id=f"c-{t}", chunk_text=t, title=t) for t in ["alpha", "bravo", "charlie", "delta", "echo"]][: kw["size"]]
+            }
+        )
+
+        def _use(endpoint):
+            reranker = reranker_for(endpoint)
+            app.dependency_overrides[get_reranker] = lambda: reranker
+
+        return _use
+
+    def test_the_playground_answers_from_the_reranked_passages(self, client, factory, llm, with_reranker):
+        from tests.unit.services.test_reranker import FakeEndpoint
+
+        with_reranker(FakeEndpoint())
+        assistant, _ = _assistant(client)
+        response = client.post(f"/api/v1/applications/{assistant['id']}/ask", json={"query": "q", "top_k": 2})
+
+        assert [s["document_title"] for s in response.json()["sources"]] == ["echo", "charlie"]
+        assert [c["chunk_text"] for c in llm.generate_rag_answer.call_args.kwargs["chunks"]] == ["echo", "charlie"]
+        assert _queries(factory)[0].details == {"reranked": True}
+
+    def test_completions_flag_a_degraded_rerank_and_still_answer(self, client, factory, llm, with_reranker):
+        import httpx
+        from tests.unit.services.test_reranker import FakeEndpoint
+
+        with_reranker(FakeEndpoint(raises=httpx.ReadTimeout("slow")))
+        assistant, _ = _assistant(client)
+        body = {"model": assistant["slug"], "messages": [{"role": "user", "content": "q"}]}
+
+        for stream in (False, True):
+            response = client.post("/v1/chat/completions", json={**body, "stream": stream})
+            assert response.status_code == 200
+        assert [e.details for e in _queries(factory)] == [{"rerank_skipped": True}] * 2
+        assert all(e.outcome == "ok" for e in _queries(factory))
+
+
 class TestDenyMode:
     @pytest.fixture
     def failing(self, app):

@@ -1,6 +1,6 @@
 """RAG Application management endpoints + test/ask playground."""
 
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -9,12 +9,15 @@ from src.dependencies import (
     EmbeddingsDep,
     LLMProviderDep,
     OpenSearchDep,
+    ProviderRegistryDep,
+    RerankerDep,
     ScopeDep,
     SessionDep,
+    SettingsDep,
 )
 from src.models import AuditAction
 from src.models.application import RAGApplication
-from src.models.provider import ModelConfiguration
+from src.models.provider import LLM_API_KEY_REF, ModelConfiguration
 from src.models.retrieval import RetrievalConfiguration
 from src.repositories import (
     ApiKeyRepository,
@@ -34,9 +37,23 @@ from src.schemas.api.domain import (
 )
 from src.services.applications import answer_for_application, scope_application
 from src.services.audit import AuditContext, audited_query
+from src.services.providers.llm.registry import ProviderConfigurationError, check_endpoint_allowed
 from src.services.slug import slugify
 
 router = APIRouter(prefix="/api/v1/applications", tags=["applications"])
+
+# Updatable fields that live on the application's ModelConfiguration.
+MODEL_CONFIGURATION_FIELDS = ("llm_provider", "llm_endpoint", "llm_api_key_ref", "llm_model")
+
+
+def _require_allowed_endpoint(endpoint: Optional[str], settings) -> None:
+    """Reject saving an endpoint on a host the operator has not allowed (400)."""
+    if not endpoint:
+        return
+    try:
+        check_endpoint_allowed(endpoint, settings.llm.allowed_endpoint_host_list)
+    except ProviderConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _with_fresh_kb_counts(application, session):
@@ -58,7 +75,8 @@ def list_applications(session: SessionDep, limit: int = 100, offset: int = 0):
 
 
 @router.post("", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED)
-def create_application(payload: ApplicationCreate, session: SessionDep):
+def create_application(payload: ApplicationCreate, session: SessionDep, settings: SettingsDep):
+    _require_allowed_endpoint(payload.llm_endpoint, settings)
     repo = ApplicationRepository(session)
     slug = slugify(payload.name)
     if repo.get_by_slug(slug):
@@ -79,6 +97,7 @@ def create_application(payload: ApplicationCreate, session: SessionDep):
             generation_params={
                 "temperature": payload.temperature,
                 "max_tokens": payload.max_tokens,
+                **({LLM_API_KEY_REF: payload.llm_api_key_ref} if payload.llm_api_key_ref else {}),
             },
         )
     )
@@ -125,7 +144,8 @@ def get_application(application_id: UUID, session: SessionDep):
 
 
 @router.patch("/{application_id}", response_model=ApplicationResponse)
-def update_application(application_id: UUID, payload: ApplicationUpdate, session: SessionDep):
+def update_application(application_id: UUID, payload: ApplicationUpdate, session: SessionDep, settings: SettingsDep):
+    _require_allowed_endpoint(payload.llm_endpoint, settings)
     repo = ApplicationRepository(session)
     application = repo.get_by_id(application_id)
     if not application:
@@ -135,7 +155,10 @@ def update_application(application_id: UUID, payload: ApplicationUpdate, session
     kb_ids = data.pop("knowledge_base_ids", None)
     if "rag_strategy" in data and data["rag_strategy"] is not None:
         data["rag_strategy"] = data["rag_strategy"].value
+    model_fields = {key: data.pop(key) for key in MODEL_CONFIGURATION_FIELDS if key in data}
     application = repo.update(application, data)
+    if model_fields and application.model_configuration is not None:
+        ProviderRepository(session).update_configuration(application.model_configuration, model_fields)
     if kb_ids is not None:
         repo.set_knowledge_bases(application, kb_ids)
     return _with_fresh_kb_counts(application, session)
@@ -159,6 +182,8 @@ async def ask_application(
     opensearch: OpenSearchDep,
     embeddings: EmbeddingsDep,
     llm: LLMProviderDep,
+    providers: ProviderRegistryDep,
+    reranker: RerankerDep,
     scope: ScopeDep,
     audit_recorder: AuditDep,
     request: Request,
@@ -173,6 +198,11 @@ async def ask_application(
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    try:
+        provider = providers.for_application(application, default=llm)
+    except ProviderConfigurationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
     with audited_query(
         audit_recorder,
         AuditContext.capture(request),
@@ -186,11 +216,13 @@ async def ask_application(
             query=payload.query,
             opensearch=opensearch,
             embeddings=embeddings,
-            llm=llm,
+            llm=provider,
             top_k_override=payload.top_k,
             scope=scope,
+            reranker=reranker,
         )
-        audit.answer, audit.hits, audit.model = result.answer, result.hits, result.model
+        audit.answer, audit.hits, audit.model, audit.details = result.answer, result.hits, result.model, result.details
+        audit.note_rerank(result.rerank)
 
     sources = [
         RetrievedSource(

@@ -75,6 +75,43 @@ export async function apiDownload(path: string): Promise<{ blob: Blob; filename:
   return { blob: await res.blob(), filename };
 }
 
+/**
+ * POST and read a server-sent-events response, calling ``onEvent`` with each JSON ``data:`` frame as it
+ * arrives. Resolves when the stream ends; rejects with ``ApiError`` if the request itself is refused.
+ */
+export async function apiStreamEvents<T>(
+  path: string,
+  body: unknown,
+  onEvent: (event: T) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    credentials: FETCH_CREDENTIALS,
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) return parseError(res);
+  if (!res.body) throw new ApiError(res.status, "The server sent no response stream.");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let end: number;
+    while ((end = buffer.indexOf("\n\n")) >= 0) {
+      const frame = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      const data = frame.split("\n").find((line) => line.startsWith("data: "));
+      if (data) onEvent(JSON.parse(data.slice(6)) as T);
+    }
+  }
+}
+
 export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",

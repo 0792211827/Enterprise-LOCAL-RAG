@@ -3,12 +3,12 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated, Callable, ContextManager, Generator, Optional
 
 if TYPE_CHECKING:
-    from fastapi import Depends, Request
+    from fastapi import Depends, HTTPException, Request
     from sqlalchemy.orm import Session
     from src.services.ingestion.service import IngestionService
 else:
     try:
-        from fastapi import Depends, Request
+        from fastapi import Depends, HTTPException, Request
         from sqlalchemy.orm import Session
     except ImportError:
         pass
@@ -27,7 +27,10 @@ from src.services.opensearch.client import OpenSearchClient
 from src.services.pdf_parser.parser import PDFParserService
 from src.services.providers.embeddings.base import EmbeddingProvider
 from src.services.providers.llm.base import LLMProvider
+from src.services.providers.llm.factory import make_provider_registry
+from src.services.providers.llm.registry import ProviderRegistry
 from src.services.providers.vlm.base import VLMProvider
+from src.services.rerank.client import Reranker
 
 
 @lru_cache
@@ -106,9 +109,31 @@ def get_llm_provider(request: Request) -> LLMProvider:
     return request.app.state.llm_provider
 
 
+def get_provider_registry(request: Request) -> ProviderRegistry:
+    """The registry routing Applications to their own inference endpoints.
+
+    Apps assembled without the lifespan get a throwaway registry, which only
+    loses caching; Applications without an endpoint never consult it.
+    """
+    registry = getattr(request.app.state, "provider_registry", None)
+    return registry if registry is not None else make_provider_registry(get_settings())
+
+
+def get_reranker(request: Request) -> Optional[Reranker]:
+    """The optional reranker (None when ``RERANK__ENABLED`` is off or the app has none)."""
+    return getattr(request.app.state, "reranker", None)
+
+
 def get_cache_client(request: Request) -> CacheClient | None:
     """Get cache client from the request state."""
     return getattr(request.app.state, "cache_client", None)
+
+
+def require_ingestion_ready(request: Request) -> None:
+    """Refuse ingestion (409) while the chunk index disagrees with configuration."""
+    guard = getattr(request.app.state, "ingestion_guard", None)
+    if guard:
+        raise HTTPException(status_code=409, detail=guard)
 
 
 def get_audit_recorder(request: Request) -> AuditRecorder:
@@ -128,6 +153,8 @@ OllamaDep = Annotated[OllamaClient, Depends(get_ollama_client)]
 LangfuseDep = Annotated[LangfuseTracer, Depends(get_langfuse_tracer)]
 CacheDep = Annotated[CacheClient | None, Depends(get_cache_client)]
 LLMProviderDep = Annotated[LLMProvider, Depends(get_llm_provider)]
+RerankerDep = Annotated[Optional[Reranker], Depends(get_reranker)]
+ProviderRegistryDep = Annotated[ProviderRegistry, Depends(get_provider_registry)]
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 AuditDep = Annotated[AuditRecorder, Depends(get_audit_recorder)]
 SessionOpenerDep = Annotated[Callable[[], ContextManager[Session]], Depends(get_session_opener)]
@@ -192,19 +219,24 @@ def get_agentic_rag_service(
     langfuse: LangfuseDep,
     settings: Annotated[Settings, Depends(get_settings)],
     scope: Annotated[Optional[RetrievalScope], Depends(get_retrieval_scope)] = None,
+    llm: Annotated[Optional[LLMProvider], Depends(get_llm_provider)] = None,
+    reranker: Annotated[Optional[Reranker], Depends(get_reranker)] = None,
 ) -> AgenticRAGService:
     """Get agentic RAG service, with its retriever limited to the caller's scope.
 
-    ``scope`` defaults to None (unscoped) only for direct calls; under FastAPI
-    it is always resolved.
+    Every node's chat model comes from ``llm`` (the configured ``LLM__PROVIDER``).
+    ``scope`` and ``llm`` default to None only for direct calls; under FastAPI
+    they are always resolved. Without ``llm`` the nodes use Ollama.
     """
     return make_agentic_rag_service(
         opensearch_client=opensearch,
         ollama_client=ollama,
         embeddings_client=embeddings,
         langfuse_tracer=langfuse,
-        model=settings.ollama_model,
+        model=settings.default_llm_model,
         knowledge_base_ids=scope.restrict(None).permitted if scope is not None else None,
+        llm_provider=llm,
+        reranker=reranker,
     )
 
 

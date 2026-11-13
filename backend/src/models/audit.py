@@ -20,6 +20,8 @@ class AuditAction(str, Enum):
     ACCESS_DENIED = "access.denied"  # a 401/403 on any other route
     AUDIT_EXPORT = "audit.export"  # someone exported the audit trail
     AUDIT_PURGE = "audit.purge"  # an operator deleted events past retention
+    UPLOADS_CLEANUP = "uploads.cleanup"  # an operator removed stale files from the upload area
+    CHAT_PURGE = "chat.purge"  # Conversations past retention were deleted (counts only)
 
 
 class AuditOutcome(str, Enum):

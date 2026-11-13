@@ -156,9 +156,11 @@ def record_query_event(
     error_code: Optional[str] = None,
     application_id: Optional[UUID] = None,
     details: Optional[Dict[str, Any]] = None,
+    redact_text: bool = False,
 ) -> None:
     """Record one query or search.
 
+    :param redact_text: keep only digests of the query and answer, whatever the audit level (chat).
     :param decision: the knowledge-base scope applied; its ``permitted=None``
         is recorded as NULL, meaning unrestricted.
     :param hits: what retrieval returned; ``None`` (recorded as NULL) means
@@ -192,6 +194,7 @@ def record_query_event(
             model=model,
             query_text=query,
             answer_text=answer,
+            redact_text=redact_text,
             latency_ms=latency_ms,
             error_code=error_code,
             details=details,
@@ -224,7 +227,9 @@ class QueryAudit:
         query: Optional[str],
         decision: Optional[ScopeDecision] = None,
         application_id: Optional[UUID] = None,
+        redact_text: bool = False,
     ):
+        self.redact_text = redact_text
         self.recorder = recorder
         self.context = context
         self.action = action
@@ -240,6 +245,16 @@ class QueryAudit:
         self.details: Optional[Dict[str, Any]] = None
         self._started = time.perf_counter()
         self._recorded = False
+
+    def note_rerank(self, outcome: Optional[str]) -> None:
+        """Flag that reranking ran, or was skipped because its endpoint failed.
+
+        A skipped rerank still answers, in the index's own order; the flag is how
+        an auditor sees which answers were degraded.
+        """
+        flag = {"applied": "reranked", "skipped": "rerank_skipped"}.get(outcome or "")
+        if flag:
+            self.details = {**(self.details or {}), flag: True}
 
     def fail(self, exc: BaseException) -> None:
         """Mark the query as failed (for paths that handle their own errors)."""
@@ -266,6 +281,7 @@ class QueryAudit:
             error_code=self.error_code,
             application_id=self.application_id,
             details=self.details,
+            redact_text=self.redact_text,
         )
 
     def record_after_abort(self, exc: BaseException) -> None:

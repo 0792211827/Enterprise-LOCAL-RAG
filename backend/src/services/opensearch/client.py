@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from opensearchpy import OpenSearch
 from src.config import Settings
 
-from .index_config_hybrid import DOCUMENT_CHUNKS_MAPPING, HYBRID_RRF_PIPELINE
+from .index_config_hybrid import HYBRID_RRF_PIPELINE, build_chunks_mapping
 from .query_builder import QueryBuilder
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,16 @@ class OpenSearchClient:
             logger.error(f"Health check failed: {e}")
             return False
 
+    def get_embedding_dimension(self) -> Optional[int]:
+        """The vector dimension the existing chunk index was created with, or None if there is no index."""
+        if not self.client.indices.exists(index=self.index_name):
+            return None
+        mapping = self.client.indices.get_mapping(index=self.index_name)
+        # An alias may resolve to a differently named index; take the first.
+        properties = next(iter(mapping.values()))["mappings"]["properties"]
+        dimension = properties.get("embedding", {}).get("dimension")
+        return int(dimension) if dimension is not None else None
+
     def get_index_stats(self) -> Dict[str, Any]:
         """Get statistics for the hybrid index."""
         try:
@@ -113,7 +123,9 @@ class OpenSearchClient:
                 logger.info(f"Deleted existing hybrid index: {self.index_name}")
 
             if not self.client.indices.exists(index=self.index_name):
-                self.client.indices.create(index=self.index_name, body=DOCUMENT_CHUNKS_MAPPING)
+                self.client.indices.create(
+                    index=self.index_name, body=build_chunks_mapping(self.settings.embedding.dimension)
+                )
                 logger.info(f"Created hybrid index: {self.index_name}")
                 return True
 

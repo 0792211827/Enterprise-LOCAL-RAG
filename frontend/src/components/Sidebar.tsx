@@ -3,20 +3,23 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { authApi } from "@/lib/api/resources";
+import type { Role } from "@/lib/surfaces";
 import { CallerBadge } from "./AuthStatus";
 
 // Assistants first: it is the object admins actually come here for. The
 // infrastructure pages are grouped under a Settings heading below.
-type NavItem = { href: string; label: string; icon: string; section?: string; role?: "auditor" };
+type NavItem = { href: string; label: string; icon: string; section?: string; role: Role };
 
 const NAV: NavItem[] = [
-  { href: "/applications", label: "Assistants", icon: "◈" },
-  { href: "/", label: "Dashboard", icon: "▦" },
-  { href: "/knowledge-bases", label: "Knowledge Bases", icon: "▤" },
-  { href: "/documents", label: "Documents", icon: "▧" },
-  { href: "/providers", label: "Models & Providers", icon: "◍", section: "Settings" },
-  { href: "/retrieval", label: "Retrieval", icon: "⇄" },
-  { href: "/system", label: "System", icon: "❤" },
+  { href: "/chat", label: "Chat", icon: "✎", role: "querier" },
+  { href: "/applications", label: "Assistants", icon: "◈", role: "admin", section: "Admin" },
+  { href: "/", label: "Dashboard", icon: "▦", role: "admin" },
+  { href: "/knowledge-bases", label: "Knowledge Bases", icon: "▤", role: "admin" },
+  { href: "/documents", label: "Documents", icon: "▧", role: "admin" },
+  { href: "/feedback", label: "Chat feedback", icon: "☺", role: "admin" },
+  { href: "/providers", label: "Models & Providers", icon: "◍", section: "Settings", role: "admin" },
+  { href: "/retrieval", label: "Retrieval", icon: "⇄", role: "admin" },
+  { href: "/system", label: "System", icon: "❤", role: "admin" },
   { href: "/audit", label: "Audit Log", icon: "☰", section: "Compliance", role: "auditor" },
 ];
 
@@ -25,7 +28,12 @@ export function Sidebar({ onSignOut }: { onSignOut?: () => void }) {
   // Same query (and cache entry) as the caller badge. With auth disabled the
   // anonymous caller holds every role, so everything shows as before.
   const me = useQuery({ queryKey: ["auth", "me"], queryFn: authApi.me, retry: false });
-  const nav = NAV.filter((item) => !item.role || me.data?.roles.includes(item.role));
+  const roles = me.data?.roles;
+  // While the caller is unknown nothing is shown (so an employee never glimpses admin pages). If /auth/me
+  // fails -- not signed in -- the admin pages stay listed, as before, beside the sign-in banner.
+  const nav = NAV.filter((item) => (roles ? roles.includes(item.role) : me.isError && item.role === "admin"));
+  // Employees get a chat app, not a control plane.
+  const subtitle = !roles || roles.includes("admin") ? "Admin Control Plane" : "Company assistants";
   return (
     <aside className="fixed inset-y-0 left-0 w-64 border-r border-slate-200 bg-white">
       <div className="flex h-16 items-center gap-2 border-b border-slate-200 px-5">
@@ -34,7 +42,7 @@ export function Sidebar({ onSignOut }: { onSignOut?: () => void }) {
         </div>
         <div>
           <div className="text-sm font-semibold leading-tight">Enterprise Local RAG</div>
-          <div className="text-xs text-slate-400">Admin Control Plane</div>
+          <div className="text-xs text-slate-400">{subtitle}</div>
         </div>
       </div>
       <nav className="p-3">

@@ -9,9 +9,11 @@ from datetime import datetime
 from typing import List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from src.config import get_settings
 from src.models.enums import ProviderKind, ProviderType, RAGStrategy, RetrievalMode
+from src.models.provider import LLM_API_KEY_REF
+from src.services.providers.llm.registry import ENV_REFERENCE_PREFIX
 
 
 # Embedding defaults are read from the running configuration rather than
@@ -160,6 +162,13 @@ class IngestionJobResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 # Model providers
 # --------------------------------------------------------------------------- #
+def _mask_key_reference(value: Optional[str]) -> Optional[str]:
+    """Show an ``env:NAME`` reference; never return a literal key."""
+    if value and not value.startswith(ENV_REFERENCE_PREFIX):
+        return "(set)"
+    return value
+
+
 class ProviderCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     kind: ProviderKind
@@ -191,11 +200,18 @@ class ProviderResponse(BaseModel):
     provider_type: str
     endpoint: Optional[str]
     model: str
+    # An `env:NAME` reference is shown as is; a literal key is never returned.
+    api_key_ref: Optional[str] = None
     dimension: Optional[str]
     capabilities: Optional[dict]
     enabled: bool
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
+
+    @field_validator("api_key_ref")
+    @classmethod
+    def _mask_literal_key(cls, value):
+        return _mask_key_reference(value)
 
 
 class ProviderTestResult(BaseModel):
@@ -247,7 +263,11 @@ class ApplicationCreate(BaseModel):
 
     # Model configuration (inline; a ModelConfiguration row is created).
     llm_provider: str = "ollama"
+    # Its own chat Inference endpoint; empty means the platform's global provider.
     llm_endpoint: Optional[str] = None
+    # An `env:NAME` reference (resolved from the server's environment at use time)
+    # or, for compatibility, the key itself.
+    llm_api_key_ref: Optional[str] = None
     llm_model: str = "llama3.2:1b"
     embedding_provider: str = Field(default_factory=_default_embedding_provider)
     embedding_model: str = Field(default_factory=_default_embedding_model)
@@ -275,6 +295,11 @@ class ApplicationUpdate(BaseModel):
     knowledge_base_ids: Optional[List[UUID]] = None
     streaming_enabled: Optional[bool] = None
     citations_enabled: Optional[bool] = None
+    # Model configuration. An empty llm_endpoint / llm_api_key_ref clears it.
+    llm_provider: Optional[str] = None
+    llm_endpoint: Optional[str] = None
+    llm_api_key_ref: Optional[str] = None
+    llm_model: Optional[str] = None
 
 
 class ModelConfigurationResponse(BaseModel):
@@ -290,6 +315,18 @@ class ModelConfigurationResponse(BaseModel):
     vlm_provider: Optional[str]
     vlm_model: Optional[str]
     generation_params: Optional[dict]
+    # An `env:NAME` reference is shown as is; a literal key is never returned.
+    llm_api_key_ref: Optional[str] = None
+
+    @field_validator("generation_params")
+    @classmethod
+    def _hide_key_reference(cls, value):
+        return {k: v for k, v in value.items() if k != LLM_API_KEY_REF} if value else value
+
+    @field_validator("llm_api_key_ref")
+    @classmethod
+    def _mask_literal_key(cls, value):
+        return _mask_key_reference(value)
 
 
 class ApplicationResponse(BaseModel):

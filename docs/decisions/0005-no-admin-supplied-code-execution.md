@@ -1,0 +1,7 @@
+# ADR-0005: No server-side execution of admin-supplied code
+
+- **Status:** Accepted (a standing product guardrail).
+- **Context:** Open WebUI runs admin-uploaded Python (Tools, Functions, Pipelines) in-process with the server's privileges. For a regulated, local-first product that attack surface outweighs the benefit.
+- **Decision:** Do not add arbitrary Python plugins, an execution sandbox, a plugin/pipeline framework, MCP, OpenAPI tool discovery, or Markdown skills in this programme. If extensibility is ever required, it must be out of process, role-gated and audited, and needs a new ADR.
+- **Verified state (2026-11-11):** `backend/src` has no `eval`, `exec`, `pickle`, `importlib`, `__import__` or `os.system`. The one `subprocess.run` invokes `nvidia-smi` with constant arguments (`routers/system.py`).
+- **Residual surface:** admin-only provider `/test` and `/models` make server-side HTTP calls to admin-supplied URLs (SSRF-class). Mitigation: the `LLM__ALLOWED_ENDPOINT_HOSTS` allowlist, now implemented. It covers Application endpoints (on save and on use) and the provider `/test` and `/models` actions. It is empty, meaning any host, by default, so the surface stays open until an operator sets it. It is a host match, not a network policy: a listed host that resolves to an internal address is still reachable, and provider rows saved with a non-listed endpoint are stored but never called.

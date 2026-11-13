@@ -301,6 +301,7 @@ class OllamaClient(LLMProvider):
         chunks: List[Dict[str, Any]],
         model: str = "llama3.2",
         system_prompt: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ):
         """
         Generate a streaming RAG answer using retrieved chunks.
@@ -309,13 +310,14 @@ class OllamaClient(LLMProvider):
             query: User's question
             chunks: Retrieved document chunks with metadata
             model: Model to use for generation
+            history: Earlier turns of a Conversation, as role/content pairs
 
         Yields:
             Streaming response chunks with partial answers
         """
         try:
             # Create prompt for streaming (simpler than structured)
-            prompt = self.prompt_builder.create_rag_prompt(query, chunks, system_prompt=system_prompt)
+            prompt = self.prompt_builder.create_rag_prompt(query, chunks, system_prompt=system_prompt, history=history)
 
             # Stream the response
             async for chunk in self.generate_stream(

@@ -1,0 +1,55 @@
+# Opt-in overlay: serve the LLM from llama.cpp's `llama-server` (CPU, GGUF).
+#
+#   LLAMACPP_MODELS_DIR=/path/to/gguf-dir LLAMACPP_MODEL_FILE=model.gguf \
+#     docker compose -f compose.yml -f compose.llamacpp.yml up -d
+#
+# llama-server exposes an OpenAI-compatible API, so the platform talks to it
+# through LLM__PROVIDER=openai-compatible. compose.yml is untouched; start
+# without this file to go back to Ollama. See docs/deployment/inference-backends.md
+# for what is and is not routed through this backend today.
+#
+# Settings (all optional except the model directory/file):
+#   LLAMACPP_IMAGE        image to run        (default ghcr.io/ggml-org/llama.cpp:server)
+#   LLAMACPP_MODELS_DIR   host dir holding the .gguf file   (default ./models)
+#   LLAMACPP_MODEL_FILE   file name inside that dir          (default model.gguf)
+#   LLAMACPP_MODEL_ALIAS  model name the API advertises. Use the same name as
+#                         the RAG application's model.        (default local-model)
+#   LLAMACPP_CTX          context window in tokens            (default 4096)
+#
+# Pair with AUTH__MODE=jwt or trusted_header if the API is reachable beyond the
+# host. llama-server itself has no authentication here and publishes no port.
+
+services:
+  llamacpp:
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
+    container_name: rag-llamacpp
+    command:
+      - "-m"
+      - "/models/${LLAMACPP_MODEL_FILE:-model.gguf}"
+      - "--alias"
+      - "${LLAMACPP_MODEL_ALIAS:-local-model}"
+      - "-c"
+      - "${LLAMACPP_CTX:-4096}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+    volumes:
+      - ${LLAMACPP_MODELS_DIR:-./models}:/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - rag-network
+
+  api:
+    environment:
+      LLM__PROVIDER: openai-compatible
+      LLM__ENDPOINT: http://llamacpp:8080/v1
+      LLM__MODEL: ${LLAMACPP_MODEL_ALIAS:-local-model}
+    depends_on:
+      llamacpp:
+        condition: service_healthy

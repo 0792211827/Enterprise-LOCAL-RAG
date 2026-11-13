@@ -83,3 +83,27 @@ async def test_security_status_reports_defaults(client):
 async def test_security_status_is_admin_only(client, as_caller):
     as_caller(Role.QUERIER)
     assert (await client.get("/api/v1/system/security")).status_code == 403
+
+
+@pytest.mark.parametrize(
+    "method, path, body",
+    [
+        ("GET", "/api/v1/providers/00000000-0000-0000-0000-000000000001/models", None),
+        ("POST", "/api/v1/applications", {"name": "x", "llm_endpoint": "http://anything/v1"}),
+        ("PATCH", "/api/v1/applications/00000000-0000-0000-0000-000000000001", {"llm_endpoint": "http://anything/v1"}),
+    ],
+)
+@pytest.mark.parametrize("role", [Role.QUERIER, Role.AUDITOR])
+async def test_only_admins_can_set_or_probe_endpoints(client, as_caller, role, method, path, body):
+    as_caller(role)
+    assert (await client.request(method, path, json=body)).status_code == 403
+
+
+@pytest.mark.parametrize("role", [Role.QUERIER, Role.AUDITOR])
+async def test_only_admins_can_upload_documents(client, as_caller, role):
+    as_caller(role)
+    response = await client.post(
+        "/api/v1/knowledge-bases/00000000-0000-0000-0000-000000000001/documents",
+        files={"file": ("a.txt", b"hello", "text/plain")},
+    )
+    assert response.status_code == 403

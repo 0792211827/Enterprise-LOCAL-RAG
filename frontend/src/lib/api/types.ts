@@ -68,6 +68,8 @@ export interface Provider {
   provider_type: string;
   endpoint: string | null;
   model: string;
+  /** `env:NAME` references are shown as is; a literal key is masked. */
+  api_key_ref?: string | null;
   dimension: string | null;
   capabilities: Record<string, unknown> | null;
   enabled: boolean;
@@ -112,6 +114,8 @@ export interface ModelConfiguration {
   id: string;
   llm_provider: string;
   llm_endpoint: string | null;
+  /** `env:NAME` references are shown as is; a literal key is masked. */
+  llm_api_key_ref?: string | null;
   llm_model: string;
   embedding_provider: string;
   embedding_model: string;
@@ -147,6 +151,8 @@ export interface ApplicationCreate {
   knowledge_base_ids?: string[];
   llm_provider?: string;
   llm_endpoint?: string;
+  /** `env:NAME` reads the key from the server's environment at request time. */
+  llm_api_key_ref?: string;
   llm_model?: string;
   embedding_provider?: string;
   embedding_model?: string;
@@ -219,6 +225,103 @@ export interface KnowledgeBaseAccessCheck {
   unrestricted: boolean;
   reason: string;
   knowledge_bases: { id: string; name: string; slug: string }[];
+}
+
+// Employee chat. An Application as an end user sees it: no prompt or knowledge bases.
+export interface ChatApplication {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  citations_enabled: boolean;
+}
+
+export interface ChatCitation {
+  index: number;
+  document_id: string | null;
+  title: string;
+  section_title: string | null;
+  chunk_id: string | null;
+  passage: string;
+  score: number;
+}
+
+export interface ChatDocument {
+  id: string;
+  title: string;
+  source_uri: string | null;
+  content_type: string | null;
+  text: string;
+}
+
+/** One frame of a streamed answer. */
+export type ChatStreamEvent =
+  | { type: "delta"; content: string }
+  | { type: "citations"; citations: ChatCitation[] }
+  | { type: "error"; message: string }
+  | { type: "done"; message_id: string | null };
+
+export interface ConversationSummary {
+  id: string;
+  application_id: string;
+  title: string;
+  created_at: string;
+  last_activity_at: string;
+  message_count: number;
+}
+
+export type Rating = "up" | "down";
+
+export interface MessageFeedback {
+  rating: Rating;
+  comment: string | null;
+  share_with_admins: boolean;
+}
+
+export interface ConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  citations: ChatCitation[];
+  created_at: string;
+  feedback: MessageFeedback | null;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[];
+}
+
+// What admins see of chat: counts, ratings, and only the exchanges users chose to share.
+export interface ChatCounts {
+  conversations: number;
+  messages: number;
+  by_application: { application_id: string; application_name: string; conversations: number; messages: number }[];
+}
+
+export interface ApplicationRatings {
+  application_id: string;
+  application_name: string;
+  up: number;
+  down: number;
+}
+
+export interface RatingItem {
+  message_id: string;
+  application_id: string;
+  rating: Rating;
+  comment: string | null;
+  shared: boolean;
+  rated_at: string;
+}
+
+export interface SharedExchange {
+  message_id: string;
+  application_id: string;
+  rating: Rating;
+  comment: string | null;
+  question: string;
+  answer: string;
+  sources: string[];
 }
 
 export interface Principal {
@@ -311,7 +414,9 @@ export type AuditAction =
   | "admin.mutation"
   | "access.denied"
   | "audit.export"
-  | "audit.purge";
+  | "audit.purge"
+  | "uploads.cleanup"
+  | "chat.purge";
 
 export type AuditOutcome = "ok" | "denied" | "error";
 

@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Request
 from src.dependencies import AgenticRAGDep, AuditDep, LangfuseDep, PrincipalDep, ScopeDep
 from src.models import AuditAction
@@ -52,7 +54,7 @@ async def ask_agentic(
         decision=decision,
     ) as audit:
         audit.model = request.model
-        response, sources = await _run_agent(request, agentic_rag, principal, decision)
+        response, sources, rerank = await _run_agent(request, agentic_rag, principal, decision)
         audit.answer = response.answer
         # The agent reports the graded sources it grounded on, not raw chunks.
         grounded = [s for s in sources if isinstance(s, dict)]
@@ -66,11 +68,12 @@ async def ask_agentic(
             "retrieval_attempts": response.retrieval_attempts,
             "cited_sources": [s if isinstance(s, str) else s.get("title") or s.get("document_id") for s in sources],
         }
+        audit.note_rerank(rerank)
         return response
 
 
-async def _run_agent(request, agentic_rag, principal, decision) -> tuple[AgenticAskResponse, list]:
-    """Run the agent; returns the response and the agent's raw sources."""
+async def _run_agent(request, agentic_rag, principal, decision) -> tuple[AgenticAskResponse, list, Optional[str]]:
+    """Run the agent; returns the response, the agent's raw sources and whether reranking was applied or skipped."""
     # A caller who may read nothing gets a refusal, not an agent run: with no
     # documents to ground on, the agent could answer from the model's general
     # knowledge, which is not what a permission-scoped deployment promises.
@@ -84,7 +87,7 @@ async def _run_agent(request, agentic_rag, principal, decision) -> tuple[Agentic
             reasoning_steps=["No accessible knowledge bases for this caller; retrieval skipped."],
             retrieval_attempts=0,
         )
-        return refusal, []
+        return refusal, [], None
 
     try:
         result = await agentic_rag.ask(
@@ -105,7 +108,7 @@ async def _run_agent(request, agentic_rag, principal, decision) -> tuple[Agentic
             rewritten_query=result.get("rewritten_query"),
             trace_id=result.get("trace_id"),
         )
-        return response, sources
+        return response, sources, result.get("rerank")
 
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))

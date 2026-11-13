@@ -6,6 +6,8 @@ portable ``GUID`` column type), so no PostgreSQL/OpenSearch/Redis is required.
 
 import json
 import uuid
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -490,3 +492,342 @@ def test_chat_completion_streams_sse(client, rag_mocks):
     assert payloads[0]["choices"][0]["delta"] == {"role": "assistant"}
     assert "".join(p["choices"][0]["delta"].get("content", "") for p in payloads) == "25 days."
     assert payloads[-1]["choices"][0]["finish_reason"] == "stop"
+
+
+# --------------------------------------------------------------------------- #
+# Per-application inference endpoints
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def endpoint_providers(app, rag_mocks):
+    """A real registry whose builder returns one distinct fake provider per endpoint."""
+    from src.dependencies import get_provider_registry
+    from src.services.providers.llm.registry import ProviderRegistry
+
+    built = []
+
+    def builder(provider_type, endpoint, api_key, model):
+        provider = AsyncMock()
+        provider.endpoint, provider.api_key, provider.provider_type = endpoint, api_key, provider_type
+        provider.generate_rag_answer = AsyncMock(return_value={"answer": f"answered by {endpoint}", "sources": []})
+
+        async def stream(**kwargs):
+            yield {"response": f"streamed by {endpoint}"}
+
+        provider.generate_rag_answer_stream = stream
+        built.append(provider)
+        return provider
+
+    registry = ProviderRegistry(builder=builder)
+    app.dependency_overrides[get_provider_registry] = lambda: registry
+    return built
+
+
+def _app_on_endpoint(client, name, endpoint=None, **extra):
+    kb_id = client.post("/api/v1/knowledge-bases", json={"name": f"{name} KB"}).json()["id"]
+    payload = {"name": name, "llm_endpoint": endpoint, "knowledge_base_ids": [kb_id], **extra}
+    resp = client.post("/api/v1/applications", json=payload)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def _ask(client, application):
+    resp = client.post(f"/api/v1/applications/{application['id']}/ask", json={"query": "How much leave?"})
+    return resp
+
+
+def _complete(client, application):
+    return client.post(
+        "/v1/chat/completions",
+        json={"model": application["slug"], "messages": [{"role": "user", "content": "How much leave?"}]},
+    )
+
+
+def test_applications_are_answered_by_their_own_endpoint(client, rag_mocks, endpoint_providers):
+    _, _, global_llm = rag_mocks
+    gpu_a = _app_on_endpoint(client, "GPU A", "http://gpu-a:8000/v1", llm_provider="openai-compatible")
+    gpu_b = _app_on_endpoint(client, "GPU B", "http://gpu-b:8000/v1", llm_provider="openai-compatible")
+    plain = _app_on_endpoint(client, "Plain")
+
+    assert _ask(client, gpu_a).json()["answer"] == "answered by http://gpu-a:8000/v1"
+    assert _ask(client, gpu_b).json()["answer"] == "answered by http://gpu-b:8000/v1"
+    assert _ask(client, plain).json()["answer"] == "25 days."  # the global provider, as today
+
+    # The OpenAI-compatible path routes the same way.
+    assert _complete(client, gpu_a).json()["choices"][0]["message"]["content"] == "answered by http://gpu-a:8000/v1"
+    assert _complete(client, gpu_b).json()["choices"][0]["message"]["content"] == "answered by http://gpu-b:8000/v1"
+    assert _complete(client, plain).json()["choices"][0]["message"]["content"] == "25 days."
+
+    assert {p.endpoint for p in endpoint_providers} == {"http://gpu-a:8000/v1", "http://gpu-b:8000/v1"}
+    assert global_llm.generate_rag_answer.await_count == 2  # only the two plain requests
+
+
+def test_streaming_uses_the_applications_endpoint(client, rag_mocks, endpoint_providers):
+    gpu = _app_on_endpoint(client, "Streamer", "http://gpu-a:8000/v1", llm_provider="openai-compatible")
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        json={"model": gpu["slug"], "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    ) as resp:
+        raw = "".join(resp.iter_text())
+    assert "streamed by http://gpu-a:8000/v1" in raw
+
+
+def test_one_provider_is_built_per_endpoint_and_key(client, endpoint_providers, monkeypatch):
+    monkeypatch.setenv("GPU_KEY", "first")
+    a = _app_on_endpoint(client, "Cache A", "http://gpu:8000/v1", llm_provider="openai-compatible", llm_api_key_ref="env:GPU_KEY")
+    b = _app_on_endpoint(client, "Cache B", "http://gpu:8000/v1", llm_provider="openai-compatible", llm_api_key_ref="env:GPU_KEY")
+    _ask(client, a)
+    _ask(client, b)
+    assert len(endpoint_providers) == 1
+
+    monkeypatch.setenv("GPU_KEY", "rotated")  # read at use time, so a rotated key is a new provider
+    _ask(client, a)
+    assert [p.api_key for p in endpoint_providers] == ["first", "rotated"]
+
+
+def test_key_references_resolve_from_the_environment_and_literals_pass_through(client, endpoint_providers, monkeypatch):
+    monkeypatch.setenv("GPU_KEY", "from-env")
+    referenced = _app_on_endpoint(client, "Ref", "http://gpu-a/v1", llm_provider="openai-compatible", llm_api_key_ref="env:GPU_KEY")
+    literal = _app_on_endpoint(client, "Lit", "http://gpu-b/v1", llm_provider="openai-compatible", llm_api_key_ref="sk-plain")
+    _ask(client, referenced)
+    _ask(client, literal)
+    assert {p.endpoint: p.api_key for p in endpoint_providers} == {"http://gpu-a/v1": "from-env", "http://gpu-b/v1": "sk-plain"}
+
+
+def test_a_missing_key_variable_is_named_in_the_error(client, endpoint_providers, monkeypatch):
+    monkeypatch.delenv("NOT_SET_ANYWHERE", raising=False)
+    application = _app_on_endpoint(
+        client, "No Key", "http://gpu/v1", llm_provider="openai-compatible", llm_api_key_ref="env:NOT_SET_ANYWHERE"
+    )
+
+    playground = _ask(client, application)
+    assert playground.status_code == 500
+    assert "NOT_SET_ANYWHERE" in playground.json()["detail"]
+
+    completion = _complete(client, application)
+    assert completion.status_code == 500
+    assert "NOT_SET_ANYWHERE" in completion.json()["error"]["message"]
+    assert endpoint_providers == []
+
+
+def test_the_endpoint_can_be_set_later_and_literal_keys_are_never_returned(client, endpoint_providers):
+    application = _app_on_endpoint(client, "Later")
+    patched = client.patch(
+        f"/api/v1/applications/{application['id']}",
+        json={"llm_provider": "openai-compatible", "llm_endpoint": "http://new-gpu/v1", "llm_api_key_ref": "sk-secret"},
+    )
+    assert patched.status_code == 200, patched.text
+    config = patched.json()["model_configuration"]
+    assert config["llm_endpoint"] == "http://new-gpu/v1"
+    assert "sk-secret" not in patched.text
+    assert _ask(client, application).json()["answer"] == "answered by http://new-gpu/v1"
+
+
+# --------------------------------------------------------------------------- #
+# Endpoint host allowlist
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def allow_hosts(app):
+    from src.config import LLMSettings, Settings
+
+    def _set(hosts: str):
+        app.dependency_overrides[get_settings] = lambda: Settings(llm=LLMSettings(allowed_endpoint_hosts=hosts))
+
+    return _set
+
+
+def test_an_empty_allowlist_allows_any_host(client, allow_hosts):
+    allow_hosts("")
+    resp = client.post("/api/v1/applications", json={"name": "Open", "llm_endpoint": "http://anywhere.example/v1"})
+    assert resp.status_code == 201, resp.text
+
+
+def test_saving_an_endpoint_on_an_unlisted_host_is_rejected(client, allow_hosts):
+    allow_hosts("gpu-a.internal, GPU-B.internal:8000")
+
+    ok = client.post("/api/v1/applications", json={"name": "Listed", "llm_endpoint": "http://gpu-a.internal:9000/v1"})
+    assert ok.status_code == 201, ok.text
+    listed_port = client.post("/api/v1/applications", json={"name": "Port", "llm_endpoint": "http://gpu-b.internal:8000/v1"})
+    assert listed_port.status_code == 201, listed_port.text
+    # Same host, port not listed.
+    assert client.post("/api/v1/applications", json={"name": "Wrong port", "llm_endpoint": "http://gpu-b.internal:9/v1"}).status_code == 400
+
+    rejected = client.post("/api/v1/applications", json={"name": "Evil", "llm_endpoint": "http://169.254.169.254/latest"})
+    assert rejected.status_code == 400
+    assert "169.254.169.254" in rejected.json()["detail"]
+    assert "LLM__ALLOWED_ENDPOINT_HOSTS" in rejected.json()["detail"]
+
+    # An endpoint on a lookalike host is not a match.
+    sneaky = client.post("/api/v1/applications", json={"name": "Sneaky", "llm_endpoint": "http://gpu-a.internal.evil.example/v1"})
+    assert sneaky.status_code == 400
+
+    # Nothing from the rejected requests was saved.
+    assert {a["name"] for a in client.get("/api/v1/applications").json()} == {"Listed", "Port"}
+
+
+def test_updating_an_endpoint_to_an_unlisted_host_is_rejected(client, allow_hosts):
+    allow_hosts("gpu-a.internal")
+    application = client.post("/api/v1/applications", json={"name": "Upd", "llm_endpoint": "http://gpu-a.internal/v1"}).json()
+    resp = client.patch(f"/api/v1/applications/{application['id']}", json={"llm_endpoint": "http://elsewhere/v1"})
+    assert resp.status_code == 400
+    assert client.get(f"/api/v1/applications/{application['id']}").json()["model_configuration"]["llm_endpoint"] == (
+        "http://gpu-a.internal/v1"
+    )
+
+
+def test_a_saved_endpoint_is_refused_at_use_once_it_is_no_longer_listed(client, rag_mocks):
+    from src.dependencies import get_provider_registry
+    from src.services.providers.llm.registry import ProviderRegistry
+
+    kb_id = client.post("/api/v1/knowledge-bases", json={"name": "KB"}).json()["id"]
+    application = client.post(
+        "/api/v1/applications",
+        json={"name": "Stale", "llm_endpoint": "http://old-gpu/v1", "knowledge_base_ids": [kb_id]},
+    ).json()
+    app_ = client.app
+    app_.dependency_overrides[get_provider_registry] = lambda: ProviderRegistry(
+        builder=lambda *a: AsyncMock(), allowed_hosts=["new-gpu"]
+    )
+
+    resp = client.post(f"/api/v1/applications/{application['id']}/ask", json={"query": "q"})
+    assert resp.status_code == 500
+    assert "old-gpu" in resp.json()["detail"]
+    completion = client.post(
+        "/v1/chat/completions", json={"model": application["slug"], "messages": [{"role": "user", "content": "q"}]}
+    )
+    assert completion.status_code == 500 and "old-gpu" in completion.json()["error"]["message"]
+
+
+def _provider_row(client, endpoint):
+    resp = client.post(
+        "/api/v1/providers",
+        json={"name": "p", "kind": "llm", "provider_type": "openai-compatible", "endpoint": endpoint, "model": "m"},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+def test_provider_test_and_model_listing_obey_the_allowlist(client, allow_hosts, monkeypatch):
+    allow_hosts("gpu-a.internal")
+    blocked = _provider_row(client, "http://169.254.169.254/v1")
+
+    test = client.post(f"/api/v1/providers/{blocked}/test")
+    models = client.get(f"/api/v1/providers/{blocked}/models")
+    for resp in (test, models):
+        assert resp.status_code == 400
+        assert "169.254.169.254" in resp.json()["detail"]
+
+
+def test_provider_actions_still_reach_a_listed_host(client, allow_hosts, monkeypatch):
+    import src.routers.providers as providers_router
+
+    allow_hosts("gpu-a.internal")
+    fake = AsyncMock()
+    fake.list_models = AsyncMock(return_value=[{"id": "qwen"}])
+    monkeypatch.setattr(providers_router, "_llm_client_for_provider", lambda provider: fake)
+    listed = _provider_row(client, "http://gpu-a.internal/v1")
+
+    resp = client.get(f"/api/v1/providers/{listed}/models")
+    assert resp.status_code == 200
+    assert resp.json()["reachable"] is True
+
+
+# --------------------------------------------------------------------------- #
+# Ingestion hardening
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def uploads(client, app, session_factory, tmp_path):
+    """An upload endpoint wired to a temp upload directory and a configurable size cap."""
+    from src.config import IngestionSettings, Settings
+
+    ingestion = MagicMock()
+    ingestion.ingest_document = AsyncMock(return_value={})
+    database = MagicMock()
+    database.get_session.return_value.__enter__ = lambda *a: session_factory()
+    database.get_session.return_value.__exit__ = lambda *a: None
+    app.dependency_overrides[get_ingestion_service] = lambda: ingestion
+    app.dependency_overrides[get_database] = lambda: database
+    kb_id = client.post("/api/v1/knowledge-bases", json={"name": "Uploads KB"}).json()["id"]
+
+    def configure(max_upload_mb=50):
+        settings = Settings(ingestion=IngestionSettings(max_upload_mb=max_upload_mb, upload_dir=str(tmp_path / "uploads")))
+        app.dependency_overrides[get_settings] = lambda: settings
+
+    configure()
+    return SimpleNamespace(kb_id=kb_id, configure=configure, root=tmp_path / "uploads")
+
+
+def _stored_documents(session_factory):
+    from src.models.document import Document
+
+    with session_factory() as session:
+        return list(session.query(Document))
+
+
+def test_an_upload_over_the_size_cap_is_refused_and_nothing_is_stored(client, uploads, session_factory):
+    uploads.configure(max_upload_mb=1)
+    resp = client.post(
+        f"/api/v1/knowledge-bases/{uploads.kb_id}/documents",
+        files={"file": ("big.pdf", b"0" * (1024 * 1024 + 1), "application/pdf")},
+    )
+    assert resp.status_code == 413
+    assert "1 MB" in resp.json()["detail"]
+    assert _stored_documents(session_factory) == []
+    assert not uploads.root.exists() or not any(uploads.root.rglob("*"))
+
+
+def test_an_upload_at_the_cap_is_accepted(client, uploads):
+    uploads.configure(max_upload_mb=1)
+    resp = client.post(
+        f"/api/v1/knowledge-bases/{uploads.kb_id}/documents",
+        files={"file": ("exact.txt", b"0" * (1024 * 1024), "text/plain")},
+    )
+    assert resp.status_code == 202, resp.text
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    ["../../../etc/passwd.pdf", "..\\..\\windows\\evil.pdf", "/abs/path/x.pdf", "a/../../b.pdf", "evil\x00.pdf", "<script>\n.pdf"],
+)
+def test_stored_filenames_cannot_reach_outside_the_upload_area(client, uploads, session_factory, hostile):
+    resp = client.post(
+        f"/api/v1/knowledge-bases/{uploads.kb_id}/documents",
+        files={"file": (hostile, b"%PDF-1.4 content", "application/pdf")},
+    )
+    assert resp.status_code == 202, resp.text
+
+    [document] = _stored_documents(session_factory)
+    stored = Path(document.file_path).resolve()
+    assert stored.is_relative_to(uploads.root.resolve())
+    assert stored.parent.name == uploads.kb_id and stored.exists()
+    # The stored name is the content hash plus a safe extension: nothing from the supplied name.
+    assert stored.name == f"{document.checksum}.pdf"
+    assert "/" not in document.source_uri and "\\" not in document.source_uri and "\x00" not in document.source_uri
+    assert not list(uploads.root.parent.glob("**/passwd*")) and not list(uploads.root.parent.glob("**/evil*"))
+
+
+def test_an_odd_extension_is_dropped_not_trusted(client, uploads, session_factory):
+    client.post(
+        f"/api/v1/knowledge-bases/{uploads.kb_id}/documents",
+        files={"file": ("report.p;df$(rm)", b"%PDF-1.4", "application/pdf")},
+    )
+    [document] = _stored_documents(session_factory)
+    assert Path(document.file_path).name == document.checksum  # no usable extension, so none
+
+
+def test_a_reprocess_after_cleanup_says_the_file_is_gone(client, uploads, session_factory):
+    from src.models.document import Document
+
+    client.post(
+        f"/api/v1/knowledge-bases/{uploads.kb_id}/documents",
+        files={"file": ("a.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+    [document] = _stored_documents(session_factory)
+    with session_factory() as session:
+        stored = session.get(Document, document.id)
+        stored.file_path = None
+        session.commit()
+
+    resp = client.post(f"/api/v1/documents/{document.id}/reprocess")
+    assert resp.status_code == 409
+    assert "cleanup" in resp.json()["detail"].lower()

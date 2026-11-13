@@ -1,10 +1,11 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
-from src.dependencies import AuditDep, EmbeddingsDep, OpenSearchDep, ScopeDep
+from src.dependencies import AuditDep, EmbeddingsDep, OpenSearchDep, RerankerDep, ScopeDep
 from src.models import AuditAction
 from src.schemas.api.search import HybridSearchRequest, SearchHit, SearchResponse
 from src.services.audit import AuditContext, audited_query
+from src.services.retrieval import embed_or_none, retrieve
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ async def hybrid_search(
     opensearch_client: OpenSearchDep,
     embeddings_service: EmbeddingsDep,
     scope: ScopeDep,
+    reranker: RerankerDep,
     audit_recorder: AuditDep,
     http_request: Request,
 ) -> SearchResponse:
@@ -33,38 +35,36 @@ async def hybrid_search(
         query=request.query,
         decision=decision,
     ) as audit:
-        response = await _search(request, opensearch_client, embeddings_service, decision.permitted)
+        response = await _search(request, opensearch_client, embeddings_service, scope, reranker, audit)
         audit.hits = [hit.model_dump() for hit in response.hits]
         return response
 
 
-async def _search(request, opensearch_client, embeddings_service, kb_ids) -> SearchResponse:
+async def _search(request, opensearch_client, embeddings_service, scope, reranker, audit) -> SearchResponse:
     try:
         if not opensearch_client.health_check():
             raise HTTPException(status_code=503, detail="Search service is currently unavailable")
 
-        query_embedding = None
-        if request.use_hybrid:
-            try:
-                query_embedding = await embeddings_service.embed_query(request.query)
-                logger.info("Generated query embedding for hybrid search")
-            except Exception as e:
-                logger.warning(f"Failed to generate embeddings, falling back to BM25: {e}")
-                query_embedding = None
+        query_embedding = await embed_or_none(embeddings_service, request.query) if request.use_hybrid else None
 
         logger.info(f"Hybrid search: '{request.query}' (hybrid: {request.use_hybrid and query_embedding is not None})")
 
-        results = opensearch_client.search_unified(
-            query=request.query,
-            query_embedding=query_embedding,
+        result = await retrieve(
+            opensearch_client,
+            embeddings_service,
+            request.query,
+            scope=scope,
+            mode="hybrid" if query_embedding is not None else "bm25",
             size=request.size,
             from_=request.from_,
             categories=request.categories,
             latest=request.latest_papers,
-            use_hybrid=request.use_hybrid,
             min_score=request.min_score,
-            knowledge_base_ids=kb_ids,
+            query_embedding=query_embedding,
+            reranker=reranker,
         )
+        audit.note_rerank(result.rerank)
+        results = {"total": result.total, "hits": result.hits}
 
         hits = []
         for hit in results.get("hits", []):

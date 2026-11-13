@@ -1,6 +1,7 @@
+import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import uvicorn
 from fastapi import Depends, FastAPI, Request
@@ -17,6 +18,8 @@ from src.routers import (
     applications,
     audit,
     auth,
+    chat,
+    chat_admin,
     chat_completions,
     documents,
     hybrid_search,
@@ -29,13 +32,16 @@ from src.routers import (
 from src.routers.ask import ask_router, stream_router
 from src.services.audit import AUDIT_UNAVAILABLE_MESSAGE, AuditWriteError, make_audit_recorder
 from src.services.cache.factory import make_cache_client
+from src.services.chat import run_daily
 from src.services.embeddings.factory import make_embeddings_service
 from src.services.langfuse.factory import make_langfuse_tracer
 from src.services.ollama.factory import make_ollama_client
+from src.services.opensearch.dimension_guard import check_index_dimension
 from src.services.opensearch.factory import make_opensearch_client
 from src.services.pdf_parser.factory import make_pdf_parser_service
-from src.services.providers.llm.factory import make_llm_provider
+from src.services.providers.llm.factory import make_llm_provider, make_provider_registry
 from src.services.providers.vlm.factory import make_vlm_provider
+from src.services.rerank.factory import make_reranker
 
 # Setup logging
 logging.basicConfig(
@@ -88,6 +94,11 @@ async def lifespan(app: FastAPI):
             logger.info(f"OpenSearch ready: {stats['count']} documents indexed")
         except Exception:
             logger.info("OpenSearch index ready (stats unavailable)")
+        # Ingestion is refused (409) while the existing index disagrees with
+        # EMBEDDING__DIMENSION; search and the rest of the API stay up.
+        app.state.ingestion_guard = check_index_dimension(opensearch_client, settings.embedding.dimension)
+        if app.state.ingestion_guard is None:
+            logger.info("Chunk index dimension agrees with configuration")
     else:
         logger.warning("OpenSearch connection failed - search features will be limited")
 
@@ -96,6 +107,8 @@ async def lifespan(app: FastAPI):
     app.state.embeddings_service = make_embeddings_service()
     app.state.ollama_client = make_ollama_client()
     app.state.llm_provider = make_llm_provider(settings)
+    app.state.provider_registry = make_provider_registry(settings)
+    app.state.reranker = make_reranker(settings)
     app.state.vlm_provider = make_vlm_provider(settings)
     app.state.langfuse_tracer = make_langfuse_tracer()
     app.state.cache_client = make_cache_client(settings)
@@ -105,11 +118,23 @@ async def lifespan(app: FastAPI):
         settings.llm.provider,
         "enabled" if app.state.vlm_provider else "disabled",
     )
+    logger.info("Reranker: %s", "enabled" if app.state.reranker else "disabled")
+
+    purge_task = None
+    if settings.chat.retention_days > 0:
+        purge_task = asyncio.create_task(run_daily(database.get_session, settings.chat.retention_days))
+        logger.info("Chat retention: Conversations are purged %d days after their last message", settings.chat.retention_days)
+    else:
+        logger.info("Chat retention: Conversations are kept forever (CHAT__RETENTION_DAYS=0)")
 
     logger.info("API ready")
     yield
 
     # Cleanup
+    if purge_task is not None:
+        purge_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await purge_task
     database.teardown()
     logger.info("API shutdown complete")
 
@@ -176,6 +201,9 @@ app.include_router(ask_router, prefix="/api/v1", dependencies=QUERIER)
 app.include_router(stream_router, prefix="/api/v1", dependencies=QUERIER)
 app.include_router(agentic_ask.router, dependencies=QUERIER)
 
+# Employee chat: the Applications a user may use, streamed answers, source Documents.
+app.include_router(chat.router, dependencies=QUERIER)
+
 # Admin Control Plane. Includes the provider /test and /models endpoints, which
 # make the backend call caller-supplied URLs and so must never be open.
 app.include_router(knowledge_bases.router, dependencies=ADMIN)
@@ -185,6 +213,7 @@ app.include_router(providers.router, dependencies=ADMIN)
 app.include_router(retrieval.router, dependencies=ADMIN)
 app.include_router(system.router, dependencies=ADMIN)
 app.include_router(api_keys.router, dependencies=ADMIN)
+app.include_router(chat_admin.router, dependencies=ADMIN)
 
 # Read-only audit trail. Admins hold the auditor role too unless
 # AUTH__ADMIN_CAN_READ_AUDIT=false (separation of duties).

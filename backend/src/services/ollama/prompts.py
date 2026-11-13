@@ -31,19 +31,52 @@ class RAGPromptBuilder:
             )
         return prompt_file.read_text().strip()
 
-    def create_rag_prompt(self, query: str, chunks: List[Dict[str, Any]], system_prompt: Optional[str] = None) -> str:
+    def create_rag_prompt(
+        self,
+        query: str,
+        chunks: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
         """Create a RAG prompt with query and retrieved chunks.
 
         Args:
             query: User's question
             chunks: List of retrieved chunks with metadata from OpenSearch
             system_prompt: Overrides the default system prompt when provided
+            history: Earlier turns of the Conversation, as role/content pairs
 
         Returns:
             Formatted prompt string
         """
-        prompt = f"{system_prompt or self.system_prompt}\n\n"
-        prompt += "### Context from Documents:\n\n"
+        earlier = ""
+        if history:
+            turns = "\n".join(f"{'User' if turn['role'] == 'user' else 'Assistant'}: {turn['content']}" for turn in history)
+            earlier = f"### Conversation so far:\n{turns}\n\n"
+        return f"{system_prompt or self.system_prompt}\n\n{earlier}{self._build_user_prompt(query, chunks)}"
+
+    def create_rag_messages(
+        self,
+        query: str,
+        chunks: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> List[Dict[str, str]]:
+        """Create the same RAG prompt as chat messages, with a real system role.
+
+        For chat-completions backends, which weight a ``system`` message more
+        reliably than instructions folded into the user turn.
+        """
+        return [
+            {"role": "system", "content": system_prompt or self.system_prompt},
+            *({"role": turn["role"], "content": turn["content"]} for turn in history or []),
+            {"role": "user", "content": self._build_user_prompt(query, chunks)},
+        ]
+
+    @staticmethod
+    def _build_user_prompt(query: str, chunks: List[Dict[str, Any]]) -> str:
+        """The retrieved context, question and answer instructions."""
+        prompt = "### Context from Documents:\n\n"
 
         for i, chunk in enumerate(chunks, 1):
             # Get the actual chunk text

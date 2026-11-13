@@ -30,6 +30,7 @@ interface Form {
   llmProviderId: string;
   llmProvider: string;
   llmEndpoint: string;
+  llmApiKeyRef: string;
   llmModel: string;
   retrievalMode: RetrievalMode;
   topK: number;
@@ -48,6 +49,7 @@ const INITIAL: Form = {
   llmProviderId: "",
   llmProvider: "ollama",
   llmEndpoint: "",
+  llmApiKeyRef: "",
   llmModel: "llama3.2:1b",
   retrievalMode: "hybrid",
   topK: 8,
@@ -86,6 +88,7 @@ export default function NewAssistantPage() {
         knowledge_base_ids: form.kbId ? [form.kbId] : [],
         llm_provider: form.llmProvider,
         llm_endpoint: form.llmEndpoint || undefined,
+        llm_api_key_ref: form.llmApiKeyRef || undefined,
         llm_model: form.llmModel,
         retrieval_mode: form.retrievalMode,
         top_k: form.topK,
@@ -422,13 +425,15 @@ function StepModel({ form, patch }: { form: Form; patch: (p: Partial<Form>) => v
 
   const choose = (p: Provider | undefined) => {
     if (!p) {
-      patch({ llmProviderId: "", llmProvider: "ollama", llmEndpoint: "" });
+      patch({ llmProviderId: "", llmProvider: "ollama", llmEndpoint: "", llmApiKeyRef: "" });
       return;
     }
     patch({
       llmProviderId: p.id,
       llmProvider: p.provider_type,
       llmEndpoint: p.endpoint ?? "",
+      // Only a reference can be carried over; a literal key is never sent back to the browser.
+      llmApiKeyRef: p.api_key_ref?.startsWith("env:") ? p.api_key_ref : "",
       llmModel: p.model || form.llmModel,
     });
     setTest(null);

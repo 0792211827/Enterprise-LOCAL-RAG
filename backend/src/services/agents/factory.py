@@ -4,6 +4,8 @@ from src.services.langfuse.client import LangfuseTracer
 from src.services.ollama.client import OllamaClient
 from src.services.opensearch.client import OpenSearchClient
 from src.services.providers.embeddings.base import EmbeddingProvider
+from src.services.providers.llm.base import LLMProvider
+from src.services.rerank.client import Reranker
 
 from .agentic_rag import AgenticRAGService
 from .config import GraphConfig
@@ -18,13 +20,15 @@ def make_agentic_rag_service(
     top_k: int = 3,
     use_hybrid: bool = True,
     knowledge_base_ids: Optional[List[str]] = None,
+    llm_provider: Optional[LLMProvider] = None,
+    reranker: Optional[Reranker] = None,
 ) -> AgenticRAGService:
     """
     Create AgenticRAGService with dependency injection.
 
     Args:
         opensearch_client: Client for document search
-        ollama_client: Client for LLM generation
+        ollama_client: Ollama client (the nodes' LLM when ``llm_provider`` is None)
         embeddings_client: Client for embeddings
         langfuse_tracer: Optional Langfuse tracer for observability
         model: Default LLM model for graph nodes (default: GraphConfig's default)
@@ -32,6 +36,8 @@ def make_agentic_rag_service(
         use_hybrid: Use hybrid search (default: True)
         knowledge_base_ids: Knowledge bases the retriever may search (the
             caller's scope); None is unscoped
+        llm_provider: The configured LLM provider; every node uses it when set
+        reranker: Optional reranker applied to the retriever's candidates
 
     Returns:
         Configured AgenticRAGService instance
@@ -50,4 +56,6 @@ def make_agentic_rag_service(
         embeddings_client=embeddings_client,
         langfuse_tracer=langfuse_tracer,
         graph_config=graph_config,
+        llm_provider=llm_provider,
+        reranker=reranker,
     )

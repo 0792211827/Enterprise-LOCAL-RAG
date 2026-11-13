@@ -1,5 +1,5 @@
 .PHONY: help start stop restart status logs health setup format lint test test-cov \
-        frontend-setup frontend-dev frontend-build clean audit-purge start-hardened health-hardened
+        frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup eval eval-compare start-hardened health-hardened
 
 # The virtualenv lives at the repo root, not in backend/. uv resolves this
 # relative to the project root (backend/, where pyproject.toml is).
@@ -73,6 +73,34 @@ test-cov: ## Run tests with coverage
 #   make audit-purge DAYS=365 DRY_RUN=1
 audit-purge: ## Delete audit events older than DAYS (or AUDIT__RETENTION_DAYS)
 	docker exec rag-api python -m src.cli.audit_purge $(if $(DAYS),--days $(DAYS)) $(if $(DRY_RUN),--dry-run)
+
+# Chat retention. The API purges daily on its own; this runs it on demand.
+# DAYS defaults to CHAT__RETENTION_DAYS; DRY_RUN=1 only counts.
+#   make chat-purge DAYS=30 DRY_RUN=1
+chat-purge: ## Delete Conversations idle longer than DAYS (or CHAT__RETENTION_DAYS)
+	docker exec rag-api python -m src.cli.chat_purge $(if $(DAYS),--days $(DAYS)) $(if $(DRY_RUN),--dry-run)
+
+# Upload-area cleanup. Off unless asked for: removes uploaded files older than DAYS
+# (default INGESTION__UPLOAD_RETENTION_DAYS) that no queued or processing document needs.
+#   make uploads-cleanup DAYS=14 DRY_RUN=1
+uploads-cleanup: ## Remove stale files from the upload area older than DAYS
+	docker exec rag-api python -m src.cli.upload_cleanup $(if $(DAYS),--days $(DAYS)) $(if $(DRY_RUN),--dry-run)
+
+# Eval harness. Runs in the rag-api container: the Golden set is copied in and the
+# report copied back to REPORT (default eval-report.json). The exit status is the
+# command's: non-zero only when a must_not_return case leaked (see docs/evaluation.md).
+#   make eval GOLDEN=evals/example-golden-set.yaml APP=hr-assistant
+#   make eval GOLDEN=... APP=... K=5 RETRIEVAL_ONLY=1 GROUNDEDNESS=1 REPORT=before.json
+eval: ## Score APP against the Golden set GOLDEN
+	@test -n "$(GOLDEN)" -a -n "$(APP)" || { echo "usage: make eval GOLDEN=path.yaml APP=slug"; exit 2; }
+	docker cp $(GOLDEN) rag-api:/tmp/golden.yaml
+	@docker exec rag-api python -m src.cli.eval run /tmp/golden.yaml --application $(APP) --out /tmp/eval-report.json \
+		$(if $(K),--k $(K)) $(if $(RETRIEVAL_ONLY),--retrieval-only) $(if $(GROUNDEDNESS),--groundedness); \
+	status=$$?; docker cp rag-api:/tmp/eval-report.json $(or $(REPORT),eval-report.json) && exit $$status
+
+eval-compare: ## Compare two eval reports: BEFORE=a.json AFTER=b.json
+	@test -n "$(BEFORE)" -a -n "$(AFTER)" || { echo "usage: make eval-compare BEFORE=a.json AFTER=b.json"; exit 2; }
+	cd backend && uv run python -m src.cli.eval compare ../$(BEFORE) ../$(AFTER)
 
 # Development (frontend)
 frontend-setup: ## Install frontend dependencies
