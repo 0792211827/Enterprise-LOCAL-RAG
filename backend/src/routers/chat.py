@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from src.dependencies import (
     AuditDep,
+    ChatLimiterDep,
     EmbeddingsDep,
     LangfuseDep,
     LLMProviderDep,
@@ -48,7 +49,7 @@ from src.schemas.api.chat import (
 from src.services.applications import is_offered_to, prepare_stream, scope_application
 from src.services.audit import AuditContext, QueryAudit, audited_stream
 from src.services.audit.events import elapsed_ms
-from src.services.chat import history_for_prompt, retrieval_query, trace_chat_exchange
+from src.services.chat import RateLimited, history_for_prompt, retrieval_query, trace_chat_exchange
 from src.services.providers.llm.registry import ProviderConfigurationError
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,10 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 APPLICATION_NOT_FOUND = "Application not found"
 CONVERSATION_NOT_FOUND = "Conversation not found"
 STREAM_FAILED_MESSAGE = "The answer could not be completed. Please try again."
+RATE_LIMIT_MESSAGES = {
+    "rate": "You are sending messages too quickly. Please wait {seconds} seconds and try again.",
+    "concurrency": "You already have answers being written. Please wait for one to finish and try again.",
+}
 TITLE_LENGTH = 80
 
 
@@ -227,12 +232,16 @@ async def send_message(
     reranker: RerankerDep,
     audit_recorder: AuditDep,
     langfuse: LangfuseDep,
+    limiter: ChatLimiterDep,
 ):
     """Ask in a Conversation; the answer streams as server-sent events.
 
     Events are JSON ``data:`` lines: ``delta`` (``content``), then ``citations`` (``citations``) and ``done``
     (``message_id``, the saved answer's id, or null if it was not saved). A failure mid-stream ends with an
     ``error`` event. The question and the answer are saved together, once the answer is complete.
+
+    Each user may send a limited number of messages a minute and have a limited number of answers being written at
+    once; beyond that this is a 429 with a ``Retry-After`` header.
     """
     repo = ConversationRepository(session)
     conversation = _owned_conversation(repo, conversation_id, principal)
@@ -258,6 +267,16 @@ async def send_message(
         application_id=application.id,
         redact_text=True,  # chat text never enters the audit log; the digests still do
     )
+    slot = None
+    if limiter is not None:
+        try:
+            slot = await limiter.admit(principal.subject)
+        except RateLimited as limited:
+            raise HTTPException(
+                status_code=429,
+                detail=RATE_LIMIT_MESSAGES[limited.reason].format(seconds=limited.retry_after),
+                headers={"Retry-After": str(limited.retry_after)},
+            )
     try:
         prepared = await prepare_stream(
             application,
@@ -271,6 +290,8 @@ async def send_message(
             search_query=retrieval_query(payload.query, history),
         )
     except BaseException as exc:
+        if slot is not None:
+            slot.release()
         audit.record_after_abort(exc)
         raise
     audit.hits, audit.model = prepared.hits, prepared.model
@@ -332,9 +353,14 @@ async def send_message(
         )
 
     async def body():
-        async for frame in audited_stream(events(), audit, error_frame=_error_frame):
-            yield frame
-        yield _frame({"type": "done", "message_id": saved["message_id"]})
+        # The slot is freed however the stream ends: finished, failed, or the client went away.
+        try:
+            async for frame in audited_stream(events(), audit, error_frame=_error_frame):
+                yield frame
+            yield _frame({"type": "done", "message_id": saved["message_id"]})
+        finally:
+            if slot is not None:
+                slot.release()
 
     return StreamingResponse(body(), media_type="text/event-stream")
 

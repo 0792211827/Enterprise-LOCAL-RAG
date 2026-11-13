@@ -379,7 +379,7 @@ class AuditSettings(BaseConfigSettings):
 
 
 class ChatSettings(BaseConfigSettings):
-    """Employee chat: how long stored Conversations live, how much history a follow-up sees, and chat privacy."""
+    """Employee chat: retention, follow-up history, privacy, per-user rate limits and Document Attachments."""
 
     model_config = SettingsConfigDict(
         env_file=ENV_FILES,
@@ -396,6 +396,22 @@ class ChatSettings(BaseConfigSettings):
     # Chat prompts and answers stay out of Langfuse traces unless this is turned on. Audit records never
     # carry chat text, whatever AUDIT__LEVEL is.
     trace_content: bool = False
+
+    # Per-user limits, so one employee cannot starve the shared GPUs. 0 turns a limit off. They live in Redis
+    # (shared by every API worker); if Redis is unreachable each worker keeps its own in-memory count instead,
+    # so the limits still hold per worker rather than disappearing.
+    rate_limit_per_minute: int = Field(default=30, ge=0)
+    max_concurrent_generations: int = Field(default=3, ge=0)
+    # A generation slot is a lease: one never released (a worker killed mid-answer) frees itself after this long.
+    generation_slot_seconds: int = Field(default=600, ge=1)
+
+    # Document Attachments: how many per message, how big, and how much text may go into the prompt.
+    attachments_per_message: int = Field(default=5, ge=1)
+    attachment_max_mb: int = Field(default=20, ge=1)
+    conversation_attachments_max_mb: int = Field(default=100, ge=1)
+    # Roughly four characters to a token. All of a Conversation's Attachments go into the prompt in full, so
+    # together they must fit this budget (it should sit well under the model's context window).
+    attachment_token_budget: int = Field(default=8000, ge=1)
 
 
 class Settings(BaseConfigSettings):

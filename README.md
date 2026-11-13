@@ -447,6 +447,14 @@ with citations that open the source Document and passage.
   forever) after their last message, together with their messages and ratings. The
   API runs the purge daily; `make chat-purge` runs it on demand. A purge that deletes
   something leaves a `chat.purge` audit event with counts only.
+- **Per-user rate limits.** Each employee may send `CHAT__RATE_LIMIT_PER_MINUTE` messages
+  a minute (default 30) and have `CHAT__MAX_CONCURRENT_GENERATIONS` answers being written
+  at once (default 3); 0 turns a limit off. Beyond either, `POST .../messages` answers `429`
+  with a `Retry-After` header and a friendly message the chat shows. Limits are per
+  user, and a slot is freed when a stream finishes, fails or the browser disconnects (and a
+  lost one expires after `CHAT__GENERATION_SLOT_SECONDS`). Counts live in Redis; **if Redis
+  is unreachable the limits do not switch off**: each API worker counts in its own memory
+  (so across several workers the effective limit is looser) and tries Redis again after 15 seconds.
 - **Privacy defaults.** Chat audit records hold metadata and SHA-256 digests, never
   the question or answer, even at `AUDIT__LEVEL=full`. Chat questions and answers stay
   out of Langfuse traces (which carry metadata only) unless `CHAT__TRACE_CONTENT=true`.

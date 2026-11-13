@@ -7,8 +7,13 @@ from src.services.cache.client import CacheClient
 logger = logging.getLogger(__name__)
 
 
-def make_redis_client(settings: Settings) -> redis.Redis:
-    """Create Redis client with connection pooling."""
+def make_redis_client(settings: Settings, verify: bool = True, timeout: float | None = None) -> redis.Redis:
+    """Create Redis client with connection pooling.
+
+    :param verify: ping at creation, raising if Redis is unreachable. Pass ``False`` for a client that connects
+        lazily and so recovers when Redis comes back.
+    :param timeout: connect/read timeout in seconds, instead of the configured one.
+    """
     redis_settings = settings.redis
 
     try:
@@ -18,15 +23,15 @@ def make_redis_client(settings: Settings) -> redis.Redis:
             password=redis_settings.password if redis_settings.password else None,
             db=redis_settings.db,
             decode_responses=redis_settings.decode_responses,
-            socket_timeout=redis_settings.socket_timeout,
-            socket_connect_timeout=redis_settings.socket_connect_timeout,
+            socket_timeout=timeout or redis_settings.socket_timeout,
+            socket_connect_timeout=timeout or redis_settings.socket_connect_timeout,
             retry_on_timeout=True,
             retry_on_error=[redis.ConnectionError, redis.TimeoutError],
         )
 
-        # Test connection
-        client.ping()
-        logger.info(f"Connected to Redis at {redis_settings.host}:{redis_settings.port}")
+        if verify:
+            client.ping()
+            logger.info(f"Connected to Redis at {redis_settings.host}:{redis_settings.port}")
         return client
 
     except redis.ConnectionError as e:

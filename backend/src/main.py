@@ -32,7 +32,7 @@ from src.routers import (
 from src.routers.ask import ask_router, stream_router
 from src.services.audit import AUDIT_UNAVAILABLE_MESSAGE, AuditWriteError, make_audit_recorder
 from src.services.cache.factory import make_cache_client
-from src.services.chat import run_daily
+from src.services.chat import make_chat_limiter, run_daily
 from src.services.embeddings.factory import make_embeddings_service
 from src.services.langfuse.factory import make_langfuse_tracer
 from src.services.ollama.factory import make_ollama_client
@@ -112,6 +112,7 @@ async def lifespan(app: FastAPI):
     app.state.vlm_provider = make_vlm_provider(settings)
     app.state.langfuse_tracer = make_langfuse_tracer()
     app.state.cache_client = make_cache_client(settings)
+    app.state.chat_limiter = make_chat_limiter(settings)
     logger.info(
         "Services initialized: PDF parser, OpenSearch, Embeddings (%s), LLM (%s), VLM (%s), Langfuse, Cache",
         settings.embedding.provider,

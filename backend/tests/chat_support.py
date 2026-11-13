@@ -30,6 +30,7 @@ from src.models.retrieval import RetrievalConfiguration
 from src.repositories import GrantRepository
 from src.routers import chat, chat_admin
 from src.services.audit import DatabaseAuditRecorder
+from src.services.chat import ChatLimiter
 
 from tests.audit_support import opener, sqlite_session_factory
 
@@ -172,14 +173,17 @@ def stack(world):
     app.dependency_overrides[get_llm_provider] = lambda: llm
     app.dependency_overrides[get_langfuse_tracer] = lambda: tracer
     app.state.audit_recorder = DatabaseAuditRecorder(opener(world.factory), level="full")
+    app.state.chat_limiter = ChatLimiter(per_minute=1000, max_concurrent=100)  # generous, as by default
 
     return SimpleNamespace(
+        app=app,
         http=TestClient(app),
         index=index,
         llm=llm,
         tracer=tracer,
         act_as=lambda principal: current.update(principal=principal),
         use_settings=lambda value: settings.update(value=value),
+        use_limiter=lambda limiter: setattr(app.state, "chat_limiter", limiter),
     )
 
 

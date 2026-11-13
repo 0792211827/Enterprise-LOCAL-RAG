@@ -21,6 +21,7 @@ from src.services.agents.agentic_rag import AgenticRAGService
 from src.services.agents.factory import make_agentic_rag_service
 from src.services.audit import AuditRecorder, NoopAuditRecorder
 from src.services.cache.client import CacheClient
+from src.services.chat.limits import ChatLimiter
 from src.services.langfuse.client import LangfuseTracer
 from src.services.ollama.client import OllamaClient
 from src.services.opensearch.client import OpenSearchClient
@@ -129,6 +130,11 @@ def get_cache_client(request: Request) -> CacheClient | None:
     return getattr(request.app.state, "cache_client", None)
 
 
+def get_chat_limiter(request: Request) -> Optional[ChatLimiter]:
+    """The per-user chat limiter (None for an app assembled without the lifespan: no limits)."""
+    return getattr(request.app.state, "chat_limiter", None)
+
+
 def require_ingestion_ready(request: Request) -> None:
     """Refuse ingestion (409) while the chunk index disagrees with configuration."""
     guard = getattr(request.app.state, "ingestion_guard", None)
@@ -155,6 +161,7 @@ CacheDep = Annotated[CacheClient | None, Depends(get_cache_client)]
 LLMProviderDep = Annotated[LLMProvider, Depends(get_llm_provider)]
 RerankerDep = Annotated[Optional[Reranker], Depends(get_reranker)]
 ProviderRegistryDep = Annotated[ProviderRegistry, Depends(get_provider_registry)]
+ChatLimiterDep = Annotated[Optional[ChatLimiter], Depends(get_chat_limiter)]
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 AuditDep = Annotated[AuditRecorder, Depends(get_audit_recorder)]
 SessionOpenerDep = Annotated[Callable[[], ContextManager[Session]], Depends(get_session_opener)]
