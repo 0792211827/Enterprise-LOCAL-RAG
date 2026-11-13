@@ -45,6 +45,10 @@ def build_source(connector: Connector, settings: Settings) -> Source:
         from .sources import PathSource
 
         return PathSource(config.get("path", ""), settings)
+    if connector.source_type == ConnectorSourceType.S3.value:
+        from .sources import S3Source
+
+        return S3Source(config, settings)
     raise ConnectorError(f"Unknown source type '{connector.source_type}'.")
 
 

@@ -140,6 +140,13 @@ class ConnectorSettings(BaseConfigSettings):
     mount_root: str = ""
     # A run that began less than this long ago blocks another run of the same Connector (a crashed run's lock expires).
     lock_minutes: int = Field(default=360, ge=1)
+    # Hosts an S3 Connector may connect to, comma-separated (`minio.internal` any port, or `minio.internal:9000`).
+    # Empty = any host the admin names, as for inference endpoints. Nothing else is ever contacted.
+    allowed_s3_hosts: str = ""
+
+    @property
+    def allowed_s3_host_values(self) -> List[str]:
+        return split_csv(self.allowed_s3_hosts)
 
 
 class RerankSettings(BaseConfigSettings):

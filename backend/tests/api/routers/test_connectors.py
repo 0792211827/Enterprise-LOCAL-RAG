@@ -132,3 +132,75 @@ def test_a_connector_can_be_paused_repointed_and_deleted_without_touching_its_do
     with stack.factory() as session:
         assert session.scalar(select(Connector)) is None and session.scalar(select(ConnectorFileState)) is None
         assert session.scalar(select(Document)).title == "leave.txt"  # stays as an ordinary Document
+
+
+# --- S3-compatible storage ----------------------------------------------------------------------------------------- #
+def s3_body(stack, **overrides):
+    return {
+        "name": "bucket-sync",
+        "knowledge_base_id": stack.kb_id,
+        "source_type": "s3",
+        "endpoint_url": "http://minio.internal:9000/",
+        "bucket": "docs",
+        "prefix": "hr",
+        "access_key_ref": "env:MINIO_ACCESS_KEY",
+        "secret_key_ref": "env:MINIO_SECRET_KEY",
+        **overrides,
+    }
+
+
+def test_an_s3_connector_stores_references_never_secrets(stack):
+    response = stack.http.post("/api/v1/connectors", json=s3_body(stack))
+
+    assert response.status_code == 201, response.text
+    assert response.json()["source"] == {
+        "endpoint_url": "http://minio.internal:9000",
+        "bucket": "docs",
+        "prefix": "hr/",
+        "access_key_ref": "env:MINIO_ACCESS_KEY",
+        "secret_key_ref": "env:MINIO_SECRET_KEY",
+    }
+    with stack.factory() as session:
+        stored = session.scalar(select(Connector)).source_config
+    assert all(v.startswith("env:") for k, v in stored.items() if k.endswith("_ref"))
+
+
+@pytest.mark.parametrize("field", ["access_key_ref", "secret_key_ref"])
+def test_a_literal_credential_is_refused_and_nothing_is_stored(stack, field):
+    response = stack.http.post("/api/v1/connectors", json=s3_body(stack, **{field: "AKIAIOSFODNN7EXAMPLE"}))
+
+    assert response.status_code == 422
+    with stack.factory() as session:
+        assert session.scalar(select(Connector)) is None
+
+
+def test_an_s3_connector_needs_its_endpoint_bucket_and_credentials(stack):
+    for missing in ("endpoint_url", "bucket", "access_key_ref", "secret_key_ref"):
+        body_ = s3_body(stack)
+        del body_[missing]
+        assert stack.http.post("/api/v1/connectors", json=body_).status_code == 422, missing
+    assert stack.http.post("/api/v1/connectors", json=s3_body(stack, path="/mnt/sources/x")).status_code == 422
+    assert stack.http.post("/api/v1/connectors", json=body(stack, bucket="docs")).status_code == 422
+
+
+def test_the_endpoint_must_be_http_and_on_the_hosts_allowlist(stack):
+    assert stack.http.post("/api/v1/connectors", json=s3_body(stack, endpoint_url="minio.internal")).status_code == 422
+
+    stack.use_settings(
+        Settings(auth=AuthSettings(mode="jwt"), connector=ConnectorSettings(mount_root="/mnt/sources", allowed_s3_hosts="minio.internal"))
+    )
+    refused = stack.http.post("/api/v1/connectors", json=s3_body(stack, endpoint_url="http://evil.example"))
+    assert refused.status_code == 422 and "CONNECTOR__ALLOWED_S3_HOSTS" in refused.text
+    assert stack.http.post("/api/v1/connectors", json=s3_body(stack)).status_code == 201
+
+
+def test_an_s3_connector_can_be_repointed_but_not_given_a_path(stack):
+    created = stack.http.post("/api/v1/connectors", json=s3_body(stack)).json()
+    url = f"/api/v1/connectors/{created['id']}"
+
+    changed = stack.http.patch(url, json={"bucket": "archive", "prefix": "", "secret_key_ref": "env:OTHER_SECRET"}).json()
+
+    assert changed["source"]["bucket"] == "archive" and changed["source"]["secret_key_ref"] == "env:OTHER_SECRET"
+    assert changed["source"]["access_key_ref"] == "env:MINIO_ACCESS_KEY"
+    assert stack.http.patch(url, json={"path": "/mnt/sources/x"}).status_code == 422
+    assert stack.http.patch(url, json={"secret_key_ref": "plain"}).status_code == 422

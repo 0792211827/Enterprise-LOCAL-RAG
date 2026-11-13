@@ -547,7 +547,9 @@ The role-to-surface split is enforced on the server: `querier` reaches chat only
 A **Connector** mirrors one source folder into one Knowledge Base, so a
 department's file share stays searchable without anyone uploading files by hand.
 It adds new files, updates changed ones and removes deleted ones. It reads
-`.pdf`, `.txt` and `.md` files (other types are counted as skipped).
+`.pdf`, `.txt` and `.md` files (other types are counted as skipped). The source
+is either a **mounted folder** or an **S3-compatible bucket** (AWS S3, MinIO, …);
+both behave identically.
 
 1. **Mount the share** where the job runs (SMB/NFS mounted by the operating
    system, or a Docker bind mount) and set `CONNECTOR__MOUNT_ROOT` to the
@@ -558,10 +560,43 @@ It adds new files, updates changed ones and removes deleted ones. It reads
    `{"name": "hr-share", "knowledge_base_id": "…", "path": "/mnt/sources/hr"}`.
    `GET /api/v1/connectors` shows each one's last run; `PATCH` pauses it or
    repoints it; `DELETE` stops mirroring and leaves its Documents in place.
+   **An S3-compatible bucket** instead takes
+   `{"name": "bucket", "knowledge_base_id": "…", "source_type": "s3",
+   "endpoint_url": "https://minio.internal:9000", "bucket": "docs",
+   "prefix": "hr/", "access_key_ref": "env:MINIO_ACCESS_KEY",
+   "secret_key_ref": "env:MINIO_SECRET_KEY"}`. Credentials are **only**
+   `env:NAME` references, read from the job's environment when it runs (put the
+   values in `.env`); a literal key is rejected, so nothing secret is stored in
+   the database. The job contacts only the configured endpoint (path-style
+   addressing, explicit credentials, no metadata-service lookups);
+   `CONNECTOR__ALLOWED_S3_HOSTS` can restrict which hosts an admin may name.
 3. **Run it** as a separate command, not inside the API process:
    `make connector-sync NAME=hr-share` (or `ALL=1`;
    `python -m src.cli.connector sync hr-share` inside the container).
    `DRY_RUN=1` reports what would change and changes nothing.
+
+**On a schedule (optional).** The `connectors` compose profile runs every
+enabled Connector on an interval in its own container, and is **off by
+default** (plain `docker compose up` never starts it):
+
+```bash
+# .env: CONNECTOR_INTERVAL_MINUTES=60, CONNECTOR_MOUNT_DIR=/srv/shares (mounted read-only at /mnt/sources)
+docker compose --profile connectors up -d connector
+```
+
+A failed round is logged and retried on the next interval; the schedule never
+stops on its own. For cron or a systemd timer, call `make connector-sync ALL=1`
+instead.
+
+**Verified against MinIO.** `backend/tests/integration/test_connector_s3.py`
+runs add, change, delete and unchanged-skip through the real boto3 client against
+a live MinIO and OpenSearch (skipped when they are not running):
+
+```bash
+docker run -d -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data
+docker run -d -p 9200:9200 -e discovery.type=single-node -e DISABLE_SECURITY_PLUGIN=true opensearchproject/opensearch:2.19.0
+cd backend && uv run python -m pytest tests/integration/test_connector_s3.py
+```
 
 Each run prints a summary and exits non-zero if something went wrong:
 

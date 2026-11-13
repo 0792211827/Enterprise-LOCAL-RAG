@@ -4,6 +4,7 @@
     python -m src.cli.connector sync hr-share
     python -m src.cli.connector sync --all
     python -m src.cli.connector sync hr-share --dry-run
+    python -m src.cli.connector schedule --interval-minutes 60     # run every enabled Connector, forever
 
 or ``make connector-sync NAME=hr-share`` against the running ``rag-api`` container. Connectors are defined by an admin
 (``/api/v1/connectors``); this job is the only thing that runs them, so the API process stays stateless.
@@ -20,6 +21,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import time
 from typing import Any, Optional
 
 from src.services.connectors import ConnectorError, ConnectorSync
@@ -91,6 +93,28 @@ async def _sync_all(sync: ConnectorSync, names: list[str], dry_run: bool, allow_
     return status
 
 
+def _schedule(sync: ConnectorSync, interval_minutes: int, allow_empty: bool, sleep=time.sleep, rounds: Optional[int] = None) -> int:
+    """Run every enabled Connector, then wait, again and again. A failed round never ends the loop: the next one retries.
+
+    One process for the whole schedule, so the embedding model is loaded once rather than every round.
+    """
+    done = 0
+    while rounds is None or done < rounds:
+        refusal = _guard(sync)
+        if refusal:
+            print(refusal, file=sys.stderr, flush=True)
+        else:
+            try:
+                sync.opensearch.setup_indices()
+                asyncio.run(_sync_all(sync, _names(sync), False, allow_empty))
+            except Exception as exc:  # noqa: BLE001 - the schedule outlives any one round
+                print(f"round failed: {exc}", file=sys.stderr, flush=True)
+        done += 1
+        if rounds is None or done < rounds:
+            sleep(interval_minutes * 60)
+    return EXIT_OK
+
+
 def main(argv: Optional[list] = None, sync: Optional[ConnectorSync] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -105,14 +129,22 @@ def main(argv: Optional[list] = None, sync: Optional[ConnectorSync] = None) -> i
         help="Accept a source that lists no files and remove everything synced from it (otherwise refused, as an "
         "unmounted share looks the same)",
     )
+    loop = commands.add_parser("schedule", help="Run every enabled Connector on an interval, until stopped")
+    loop.add_argument("--interval-minutes", type=int, default=60, help="Minutes between rounds (default 60)")
     args = parser.parse_args(argv)
 
     database = None
+    _real = sync is None  # an injected sync (a test) runs one round instead of forever
     if sync is None:
         sync, database = build_sync()
     try:
         if args.command == "list":
             return _list(sync)
+        if args.command == "schedule":
+            if args.interval_minutes < 1:
+                print("--interval-minutes must be at least 1", file=sys.stderr)
+                return EXIT_ERROR
+            return _schedule(sync, args.interval_minutes, allow_empty=False, rounds=None if _real else 1)
         if bool(args.names) == bool(args.all):
             print("Name the Connectors to run, or pass --all.", file=sys.stderr)
             return EXIT_ERROR

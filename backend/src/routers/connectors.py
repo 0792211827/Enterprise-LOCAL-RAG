@@ -13,7 +13,8 @@ from src.models.connector import Connector, ConnectorSourceType, FileSyncStatus
 from src.repositories import KnowledgeBaseRepository
 from src.repositories.connector import ConnectorRepository
 from src.schemas.api.connector import ConnectorCreate, ConnectorResponse, ConnectorUpdate
-from src.services.connectors import ConnectorError, check_mount_path
+from src.services.connectors import ConnectorError, check_mount_path, check_s3_endpoint
+from src.services.connectors.sources import normalise_prefix
 
 router = APIRouter(prefix="/api/v1/connectors", tags=["connectors"])
 
@@ -44,6 +45,22 @@ def _checked_path(path: str, settings) -> str:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+S3_FIELDS = ("endpoint_url", "bucket", "prefix", "region", "access_key_ref", "secret_key_ref")
+
+
+def _checked_s3(values: dict, settings) -> dict:
+    """The S3 source settings to store, with the endpoint checked. Credentials arrive as env:NAME references (the
+    schema refuses anything else), so what is stored holds no secret."""
+    try:
+        config = {name: (values.get(name) or "").strip() for name in S3_FIELDS if values.get(name) is not None}
+        config["endpoint_url"] = check_s3_endpoint(config.get("endpoint_url", ""), settings)
+        if "prefix" in config:
+            config["prefix"] = normalise_prefix(config["prefix"])
+        return config
+    except ConnectorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get("", response_model=List[ConnectorResponse])
 def list_connectors(session: SessionDep):
     repo = ConnectorRepository(session)
@@ -58,12 +75,16 @@ def create_connector(payload: ConnectorCreate, session: SessionDep, settings: Se
     repo = ConnectorRepository(session)
     if repo.get_by_name(payload.name):
         raise HTTPException(status_code=409, detail=f"A connector named '{payload.name}' already exists")
+    if payload.source_type == ConnectorSourceType.S3.value:
+        source_config = _checked_s3(payload.model_dump(), settings)
+    else:
+        source_config = {"path": _checked_path(payload.path or "", settings)}
     connector = repo.create(
         Connector(
             name=payload.name,
             knowledge_base_id=payload.knowledge_base_id,
-            source_type=ConnectorSourceType.PATH.value,
-            source_config={"path": _checked_path(payload.path or "", settings)},
+            source_type=payload.source_type,
+            source_config=source_config,
             enabled=payload.enabled,
             created_by=principal.subject,
         )
@@ -89,8 +110,16 @@ def update_connector(connector_id: UUID, payload: ConnectorUpdate, session: Sess
     repo = ConnectorRepository(session)
     if payload.enabled is not None:
         connector.enabled = payload.enabled
-    if payload.path is not None:
-        connector.source_config = {**(connector.source_config or {}), "path": _checked_path(payload.path, settings)}
+    is_s3 = connector.source_type == ConnectorSourceType.S3.value
+    given = payload.model_dump(exclude_unset=True, exclude={"enabled"})
+    if is_s3 and "path" in given:
+        raise HTTPException(status_code=422, detail="path does not apply to an S3 Connector")
+    if not is_s3 and set(given) - {"path"}:
+        raise HTTPException(status_code=422, detail="S3 settings do not apply to a mounted-path Connector")
+    if is_s3 and given:
+        connector.source_config = _checked_s3({**(connector.source_config or {}), **given}, settings)
+    elif given.get("path") is not None:
+        connector.source_config = {**(connector.source_config or {}), "path": _checked_path(given["path"], settings)}
     return _view(repo.save(connector), repo)
 
 

@@ -41,6 +41,36 @@ services:
     networks:
       - rag-network
 
+  # Connector scheduler (OPTIONAL, off by default): mirrors source folders into Knowledge Bases on an interval.
+  #   docker compose --profile connectors up -d connector
+  # Plain `docker compose up` never starts it. Mount your shares read-only under CONNECTOR_MOUNT_DIR (default
+  # ./connector-mounts) -- that is CONNECTOR__MOUNT_ROOT inside the container. S3 credentials come from the
+  # environment variables an S3 Connector names (env:NAME), set in .env. See README, "Connectors".
+  connector:
+    profiles: ["connectors"]
+    build: ./backend
+    container_name: rag-connector
+    command: ["python", "-m", "src.cli.connector", "schedule", "--interval-minutes", "${CONNECTOR_INTERVAL_MINUTES:-60}"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - OPENSEARCH_HOST=http://opensearch:9200
+      - OPENSEARCH__HOST=http://opensearch:9200
+      - POSTGRES_DATABASE_URL=postgresql+psycopg2://rag_user:rag_password@postgres:5432/rag_db
+      - CONNECTOR__MOUNT_ROOT=/mnt/sources
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+      - rag_uploads:/tmp/rag-uploads
+      - ${CONNECTOR_MOUNT_DIR:-./connector-mounts}:/mnt/sources:ro
+    restart: unless-stopped
+    networks:
+      - rag-network
+
   # Admin Control Plane (Next.js frontend)
   frontend:
     build:
