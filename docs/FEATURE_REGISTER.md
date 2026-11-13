@@ -27,7 +27,7 @@ No secrets, tokens or customer data are recorded in this file.
 | 1 | Hybrid search (BM25 + kNN + RRF) | Present | **COMPLETE** (RRF, optional reranker). New indices use lucene (pre-filter); an index built earlier keeps the nmslib post-filter caveat until `make reindex` | Preserve; add regression/benchmark tests |
 | 2 | Agentic retrieval (LangGraph) | Present | **COMPLETE** — works, tested, and (Phase 4) runs on the configured `LLM__PROVIDER`; verified live on native Ollama, Ollama `/v1` and llama.cpp. Answer quality depends on model size (a 1B model's grader behaved differently under llama.cpp) | Preserve; add a recall/behaviour benchmark with a larger model |
 | 3 | Docker/Compose deployment | Present | **COMPLETE** (API stack up on this machine; hardened overlay validates) | Preserve |
-| 4 | Ad-hoc chat file/image attachment | Partial | **MISSING** (no chat attachment path at all) | Defer; later cycle |
+| 4 | Ad-hoc chat file/image attachment | Partial | **Present** (tickets 15, 17, 18): documents in full or via a private index partition; images opt-in (`CHAT__IMAGES_ENABLED`) | Preserve |
 | 5 | Extraction engines / OCR fallback | Partial (Docling only) | **PARTIAL** — Docling only, `do_ocr` is a config bool defaulting to off, and no test for scanned PDFs. VLM provider exists but is unused by ingestion | Defer; only if tests show a gap |
 | 6 | Per-KB access control | Partial; legacy routes may search all KBs | **COMPLETE** for retrieval (legacy routes included), with hardening items (see §3.6) | Preserve; hardening pass |
 | 7 | Model presets / applications | Partial | **PARTIAL** — applications bundle KBs, prompt, retrieval config; but per-application provider/endpoint is stored and **not honoured**, and `rag_strategy="agentic"` is stored but not run by the application path | Implement H2a (approved subset only) |
@@ -72,7 +72,9 @@ Not required (kept out): see §5.
 - **Static:** `docker compose -f compose.yml -f compose.hardened.yml config -q` exits 0.
 - **BLOCKED:** a clean-clone, from-scratch `make start` of the *full* stack (the existing named volumes and images were reused, deliberately, to avoid deleting the operator's data).
 
-### 3.4 Chat attachments: MISSING
+### 3.4 Chat attachments: IMPLEMENTED (tickets 15, 17, 18)
+
+> Superseded by the build: see README "Employee chat". The notes below record the position before it was built.
 
 - `ChatMessage.content` is `str` (`schemas/api/domain.py:441-443`), so `/v1/chat/completions` cannot accept image or file parts. The only upload route is the admin KB document upload (`routers/documents.py`).
 - Prerequisites before building: a temp-file lifecycle (the current upload writes to `tempfile.gettempdir()/rag-uploads` with **no size cap, no type allowlist and no cleanup**), a supported-types decision, and the VLM question (the VLM provider is created at startup but is not used by the ingestion pipeline).

@@ -1,11 +1,16 @@
 from .attachments import (
     ATTACHMENT_NOTICE,
+    IMAGE_KINDS,
+    IMAGE_MEDIA_TYPES,
     AttachmentError,
     AttachmentExcerpts,
     AttachmentText,
     estimate_tokens,
     extract_text,
+    image_data_url,
+    looks_like_image,
     question_with_attachments,
+    sniff_image,
     sniff_kind,
 )
 from .export import golden_candidates_yaml, shared_sources
@@ -17,6 +22,11 @@ from .tracing import trace_chat_exchange
 
 __all__ = [
     "ATTACHMENT_NOTICE",
+    "IMAGE_KINDS",
+    "IMAGE_MEDIA_TYPES",
+    "image_data_url",
+    "looks_like_image",
+    "sniff_image",
     "AttachmentError",
     "AttachmentExcerpts",
     "AttachmentText",

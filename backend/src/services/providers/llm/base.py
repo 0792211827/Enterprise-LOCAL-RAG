@@ -17,6 +17,9 @@ class LLMProvider(ABC):
 
     #: Default model identifier used when a caller does not specify one.
     default_model: str = ""
+    #: Whether ``generate_rag_answer_stream`` accepts ``images`` (OpenAI-style image content parts). Only the
+    #: chat-completions providers do; the model behind the endpoint must itself be multimodal.
+    supports_images: bool = False
 
     @abstractmethod
     async def health_check(self) -> Dict[str, Any]:
@@ -58,8 +61,12 @@ class LLMProvider(ABC):
         model: str,
         system_prompt: Optional[str] = None,
         history: Optional[List[Dict[str, str]]] = None,
+        images: Optional[List[str]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Stream a grounded RAG answer from retrieved chunks, after any earlier turns of a Conversation."""
+        """Stream a grounded RAG answer from retrieved chunks, after any earlier turns of a Conversation.
+
+        :param images: data URLs of images to send with the question; only providers with ``supports_images`` take them.
+        """
         raise NotImplementedError
 
     def get_langchain_model(self, model: Optional[str] = None, temperature: float = 0.0, **kwargs: Any) -> Any:

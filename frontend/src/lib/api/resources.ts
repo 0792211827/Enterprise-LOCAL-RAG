@@ -13,6 +13,7 @@ import type {
   ApplicationRatings,
   ChatApplication,
   ChatAttachment,
+  ChatConfig,
   ChatCompletionResponse,
   ChatCounts,
   ChatDocument,
@@ -198,6 +199,7 @@ export const chatApi = {
       onEvent,
       signal,
     ),
+  config: () => apiGet<ChatConfig>("/api/v1/chat/config"),
   attachments: (conversationId: string) =>
     apiGet<ChatAttachment[]>(`/api/v1/chat/conversations/${conversationId}/attachments`),
   attach: (conversationId: string, file: File) => {

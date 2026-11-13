@@ -7,7 +7,7 @@ Owned by the caller's IdP subject and readable only by them -- no admin surface 
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from src.db.interfaces.postgresql import Base
 from src.db.types import GUID
 
@@ -94,3 +94,17 @@ class AttachmentPartition(Base):
     conversation_id = Column(GUID(), nullable=False, index=True)
     chunk_count = Column(Integer, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+
+
+class AttachmentImage(Base):
+    """The bytes of an image Attachment, kept so every later question in the Conversation can send it to the model.
+
+    Owned by the Conversation like any Attachment: removed with the Attachment, the Conversation, or the retention purge.
+    """
+
+    __tablename__ = "chat_attachment_images"
+
+    attachment_id = Column(GUID(), ForeignKey("chat_attachments.id", ondelete="CASCADE"), primary_key=True)
+    conversation_id = Column(GUID(), nullable=False, index=True)
+    media_type = Column(String, nullable=False)  # image/png, image/jpeg or image/webp
+    data = Column(LargeBinary, nullable=False)

@@ -269,6 +269,7 @@ class PreparedStream:
     _query: str = ""
     _system_prompt: Optional[str] = None
     _history: Optional[List[Dict[str, str]]] = None
+    _images: Optional[List[str]] = None
 
     async def deltas(self):
         """Yield answer deltas, token by token (a fixed answer is one delta)."""
@@ -276,7 +277,9 @@ class PreparedStream:
             yield self.fixed_answer
             return
         # Only passed when there is some, so providers that predate Conversations keep working.
-        extra = {"history": self._history} if self._history else {}
+        extra: Dict[str, Any] = {"history": self._history} if self._history else {}
+        if self._images:
+            extra["images"] = self._images
         async for chunk in self._llm.generate_rag_answer_stream(
             query=self._query, chunks=self.chunks, model=self.model, system_prompt=self._system_prompt, **extra
         ):
@@ -297,6 +300,7 @@ async def prepare_stream(
     reranker: Any = None,
     history: Optional[List[Dict[str, str]]] = None,
     search_query: Optional[str] = None,
+    images: Optional[List[str]] = None,
 ) -> PreparedStream:
     """Retrieve for the application and return the answer ready to stream.
 
@@ -305,6 +309,7 @@ async def prepare_stream(
 
     :param history: earlier turns of a Conversation, given to the model as context.
     :param search_query: what to retrieve with when that differs from ``query`` (a follow-up).
+    :param images: data URLs sent to the chat model with the question as image content parts.
     """
     searching = search_query or query
     if is_agentic(application):
@@ -330,6 +335,7 @@ async def prepare_stream(
         _query=query,
         _system_prompt=effective_system_prompt(application, system_prompt_override),
         _history=history,
+        _images=images,
     )
 
 

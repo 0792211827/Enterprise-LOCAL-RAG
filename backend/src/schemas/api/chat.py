@@ -19,6 +19,14 @@ class ChatApplication(BaseModel):
     citations_enabled: bool
 
 
+class ChatConfig(BaseModel):
+    """What the chat UI needs to know about this deployment."""
+
+    images_enabled: bool
+    image_max_mb: int
+    attachments_per_message: int
+
+
 class ChatMessageRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=4000)
 

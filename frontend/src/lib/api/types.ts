@@ -248,6 +248,13 @@ export interface ChatCitation {
   attachment_id?: string | null;
 }
 
+/** What the chat UI needs to know about this deployment. */
+export interface ChatConfig {
+  images_enabled: boolean;
+  image_max_mb: number;
+  attachments_per_message: number;
+}
+
 export interface ChatDocument {
   id: string;
   title: string;

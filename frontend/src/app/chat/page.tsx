@@ -18,6 +18,8 @@ interface Turn {
 }
 
 const ACCEPTED = ".pdf,.docx,.pptx,.xlsx,.txt,.md,.markdown,.csv";
+const ACCEPTED_IMAGES = ".png,.jpg,.jpeg,.webp";
+const IMAGE_KINDS = ["png", "jpg", "webp"];
 
 const formatSize = (bytes: number) =>
   bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -26,6 +28,9 @@ export default function ChatPage() {
   const queryClient = useQueryClient();
   const apps = useQuery({ queryKey: ["chat", "applications"], queryFn: chatApi.applications });
   const history = useQuery({ queryKey: ["chat", "conversations"], queryFn: chatApi.conversations });
+  // The image control is shown only when the operator has switched image upload on.
+  const config = useQuery({ queryKey: ["chat", "config"], queryFn: chatApi.config, staleTime: 5 * 60_000 });
+  const imagesEnabled = config.data?.images_enabled === true;
   const [appId, setAppId] = useState<string>("");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -37,6 +42,7 @@ export default function ChatPage() {
   const [attachError, setAttachError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const imageInput = useRef<HTMLInputElement | null>(null);
   const abort = useRef<AbortController | null>(null);
   const bottom = useRef<HTMLDivElement | null>(null);
   const currentId = useRef<string | null>(null);
@@ -203,6 +209,7 @@ export default function ChatPage() {
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
+      if (imageInput.current) imageInput.current.value = "";
     }
   };
 
@@ -354,6 +361,29 @@ export default function ChatPage() {
           >
             {uploading ? "Reading…" : "📎"}
           </button>
+          {imagesEnabled && (
+            <>
+              <input
+                ref={imageInput}
+                type="file"
+                accept={ACCEPTED_IMAGES}
+                multiple
+                className="hidden"
+                onChange={(e) => attach(e.target.files)}
+                aria-label="Attach images"
+              />
+              <button
+                type="button"
+                className="btn"
+                onClick={() => imageInput.current?.click()}
+                disabled={busy || uploading || !application}
+                title={`Attach images (PNG, JPG, WEBP, up to ${config.data?.image_max_mb} MB each) to ask about them. Only you can see them, and they are deleted with this conversation.`}
+                aria-label="Attach an image"
+              >
+                🖼
+              </button>
+            </>
+          )}
           <input
             className="input flex-1"
             placeholder="Ask a question…"
@@ -392,7 +422,8 @@ function AttachmentChip({
         attachment.searched ? " — too long to send in full, so it is searched for each question" : ""
       }`}
     >
-      📄 <span className="max-w-[12rem] truncate">{attachment.filename}</span>
+      {IMAGE_KINDS.includes(attachment.kind) ? "🖼" : "📄"}{" "}
+      <span className="max-w-[12rem] truncate">{attachment.filename}</span>
       <span className="opacity-60">{formatSize(attachment.size_bytes)}</span>
       {attachment.searched && <span className="rounded bg-black/10 px-1 text-[10px] uppercase">searched</span>}
       {onRemove && (

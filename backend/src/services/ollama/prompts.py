@@ -61,16 +61,24 @@ class RAGPromptBuilder:
         chunks: List[Dict[str, Any]],
         system_prompt: Optional[str] = None,
         history: Optional[List[Dict[str, str]]] = None,
-    ) -> List[Dict[str, str]]:
+        images: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """Create the same RAG prompt as chat messages, with a real system role.
 
         For chat-completions backends, which weight a ``system`` message more
         reliably than instructions folded into the user turn.
+
+        ``images`` (data URLs) turn the final user message into OpenAI-style content parts: the prompt as a
+        ``text`` part followed by one ``image_url`` part per image.
         """
+        prompt = self._build_user_prompt(query, chunks)
+        user_content: Any = prompt
+        if images:
+            user_content = [{"type": "text", "text": prompt}, *({"type": "image_url", "image_url": {"url": url}} for url in images)]
         return [
             {"role": "system", "content": system_prompt or self.system_prompt},
             *({"role": turn["role"], "content": turn["content"]} for turn in history or []),
-            {"role": "user", "content": self._build_user_prompt(query, chunks)},
+            {"role": "user", "content": user_content},
         ]
 
     @staticmethod

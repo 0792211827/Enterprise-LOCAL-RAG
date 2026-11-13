@@ -39,6 +39,8 @@ class OpenAICompatibleLLMProvider(LLMProvider):
     optional API key; it does not care how the model is hosted.
     """
 
+    supports_images = True
+
     def __init__(
         self,
         endpoint: str,
@@ -94,7 +96,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=self.timeout, headers=self._headers, transport=self._transport)
 
-    def _payload(self, model: str, messages: List[Dict[str, str]], stream: bool, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def _payload(self, model: str, messages: List[Dict[str, Any]], stream: bool, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"model": model, "messages": messages, "stream": stream}
         # Always bound the answer: some servers default to a handful of tokens.
         payload["max_tokens"] = self.max_tokens
@@ -124,7 +126,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         # OpenAI shape is {"data": [...]}; older llama.cpp builds use {"models": [...]}.
         return body.get("data") or body.get("models") or []
 
-    async def _complete(self, model: str, messages: List[Dict[str, str]], **kwargs: Any) -> Dict[str, Any]:
+    async def _complete(self, model: str, messages: List[Dict[str, Any]], **kwargs: Any) -> Dict[str, Any]:
         payload = self._payload(model, messages, False, kwargs)
         start = time.perf_counter()
         async with self._client() as client:
@@ -146,7 +148,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
             },
         }
 
-    async def _complete_stream(self, model: str, messages: List[Dict[str, str]], **kwargs: Any) -> AsyncIterator[Dict[str, Any]]:
+    async def _complete_stream(self, model: str, messages: List[Dict[str, Any]], **kwargs: Any) -> AsyncIterator[Dict[str, Any]]:
         payload = self._payload(model, messages, True, kwargs)
         async with self._client() as client:
             async with client.stream("POST", f"{self.endpoint}/chat/completions", json=payload) as response:
@@ -202,7 +204,10 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         model: str,
         system_prompt: Optional[str] = None,
         history: Optional[List[Dict[str, str]]] = None,
+        images: Optional[List[str]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        messages = self.prompt_builder.create_rag_messages(query, chunks, system_prompt=system_prompt, history=history)
+        messages = self.prompt_builder.create_rag_messages(
+            query, chunks, system_prompt=system_prompt, history=history, images=images
+        )
         async for chunk in self._complete_stream(model, messages, temperature=0.7, top_p=0.9):
             yield chunk

@@ -12,7 +12,14 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from src.models.chat import AttachmentPartition, Conversation, ConversationAttachment, ConversationMessage, MessageFeedback
+from src.models.chat import (
+    AttachmentImage,
+    AttachmentPartition,
+    Conversation,
+    ConversationAttachment,
+    ConversationMessage,
+    MessageFeedback,
+)
 
 DELETE_BATCH = 500
 
@@ -137,6 +144,7 @@ class ConversationRepository:
             return 0
         message_ids = select(ConversationMessage.id).where(ConversationMessage.conversation_id.in_(ids))
         self.session.execute(delete(AttachmentPartition).where(AttachmentPartition.conversation_id.in_(ids)))
+        self.session.execute(delete(AttachmentImage).where(AttachmentImage.conversation_id.in_(ids)))
         self.session.execute(delete(ConversationAttachment).where(ConversationAttachment.conversation_id.in_(ids)))
         self.session.execute(delete(MessageFeedback).where(MessageFeedback.message_id.in_(message_ids)))
         self.session.execute(delete(ConversationMessage).where(ConversationMessage.conversation_id.in_(ids)))
@@ -186,9 +194,22 @@ class AttachmentRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def add(self, attachment: ConversationAttachment, chunk_count: Optional[int] = None) -> ConversationAttachment:
-        """Store an Attachment; ``chunk_count`` marks it as living in the private partition of the chunk index."""
+    def add(
+        self, attachment: ConversationAttachment, chunk_count: Optional[int] = None, image: Optional[tuple] = None
+    ) -> ConversationAttachment:
+        """Store an Attachment; ``chunk_count`` marks it as living in the private partition of the chunk index, and
+        ``image`` (media type, bytes) stores an image's bytes."""
         self.session.add(attachment)
+        if image is not None:
+            self.session.flush()
+            self.session.add(
+                AttachmentImage(
+                    attachment_id=attachment.id,
+                    conversation_id=attachment.conversation_id,
+                    media_type=image[0],
+                    data=image[1],
+                )
+            )
         if chunk_count is not None:
             self.session.flush()
             self.session.add(
@@ -219,7 +240,18 @@ class AttachmentRepository:
         stmt = select(AttachmentPartition.attachment_id).where(AttachmentPartition.conversation_id == conversation_id)
         return set(self.session.scalars(stmt))
 
+    def images(self, conversation_id: UUID) -> List[tuple]:
+        """The Conversation's images as ``(file name, media type, bytes)``, in the order they were attached."""
+        stmt = (
+            select(ConversationAttachment.filename, AttachmentImage.media_type, AttachmentImage.data)
+            .join(AttachmentImage, AttachmentImage.attachment_id == ConversationAttachment.id)
+            .where(ConversationAttachment.conversation_id == conversation_id)
+            .order_by(ConversationAttachment.created_at, ConversationAttachment.id)
+        )
+        return [tuple(row) for row in self.session.execute(stmt)]
+
     def remove(self, attachment: ConversationAttachment) -> None:
+        self.session.execute(delete(AttachmentImage).where(AttachmentImage.attachment_id == attachment.id))
         self.session.execute(delete(AttachmentPartition).where(AttachmentPartition.attachment_id == attachment.id))
         self.session.delete(attachment)
         self.session.commit()

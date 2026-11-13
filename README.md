@@ -480,6 +480,20 @@ with citations that open the source Document and passage.
   (so also by retention). Uploads and removals leave a `chat.attachment` audit event with
   metadata only (type, size, token count, a SHA-256 of the content), never the name or text.
   Assistants on the agentic strategy do not take attachments (`409`).
+- **Image Attachments.** Off by default. An operator with a **multimodal chat model** sets
+  `CHAT__IMAGES_ENABLED=true`; the chat then shows a 🖼 control and employees can attach PNG,
+  JPG or WEBP images (`CHAT__IMAGE_MAX_MB`, default 10 MB each) and ask about them. When it
+  is off the control is hidden (`GET /api/v1/chat/config` tells the UI) and the API refuses
+  images with `415` ("Image upload is not enabled on this deployment"). Types are verified by
+  content (a renamed file, or garbage behind an image header, is refused); images share the
+  per-message and per-Conversation limits above and are kept (as bytes) so follow-up questions
+  still see them. They are sent to the Application's chat model as **OpenAI-style
+  `image_url` content parts** on the final user message; there is no separate vision
+  pipeline and no capability detection, so a text-only model will simply fail or ignore them.
+  Only OpenAI-compatible endpoints (`LLM__PROVIDER=openai-compatible`, e.g. vLLM, llama.cpp,
+  Ollama's `/v1`) can take images; on the native Ollama client the send is refused with
+  `409`. Images follow the Conversation: owner-only, removed one by one, deleted with the
+  Conversation and by retention. Audit records carry type, size and a digest only.
 - **Per-user rate limits.** Each employee may send `CHAT__RATE_LIMIT_PER_MINUTE` messages
   a minute (default 30) and have `CHAT__MAX_CONCURRENT_GENERATIONS` answers being written
   at once (default 3); 0 turns a limit off. Beyond either, `POST .../messages` answers `429`

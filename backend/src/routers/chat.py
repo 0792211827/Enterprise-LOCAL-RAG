@@ -46,6 +46,7 @@ from src.schemas.api.chat import (
     AttachmentView,
     ChatApplication,
     ChatCitation,
+    ChatConfig,
     ChatDocument,
     ChatMessageRequest,
     ChatMessageView,
@@ -60,6 +61,8 @@ from src.services.applications import is_agentic, is_offered_to, prepare_stream,
 from src.services.audit import AuditContext, QueryAudit, audited_stream
 from src.services.audit.events import elapsed_ms, record_event
 from src.services.chat import (
+    IMAGE_KINDS,
+    IMAGE_MEDIA_TYPES,
     AttachmentError,
     AttachmentExcerpts,
     AttachmentText,
@@ -68,9 +71,12 @@ from src.services.chat import (
     extract_text,
     find_passages,
     history_for_prompt,
+    image_data_url,
     index_partition,
+    looks_like_image,
     question_with_attachments,
     retrieval_query,
+    sniff_image,
     sniff_kind,
     trace_chat_exchange,
 )
@@ -183,6 +189,17 @@ def _owned_conversation(repo: ConversationRepository, conversation_id: UUID, pri
     if conversation is None:
         raise HTTPException(status_code=404, detail=CONVERSATION_NOT_FOUND)
     return conversation
+
+
+@router.get("/config", response_model=ChatConfig)
+def chat_config(settings: SettingsDep):
+    """What the chat UI needs to know about this deployment: whether image upload is switched on, and the limits."""
+    chat = settings.chat
+    return ChatConfig(
+        images_enabled=chat.images_enabled,
+        image_max_mb=chat.image_max_mb,
+        attachments_per_message=chat.attachments_per_message,
+    )
 
 
 @router.get("/applications", response_model=List[ChatApplication])
@@ -341,15 +358,31 @@ async def upload_attachment(
             )
         )
     name = display_name(file.filename)
+    image: Optional[tuple] = None
     try:
-        kind = sniff_kind(file.filename, raw)
-        text = await extract_text(kind, raw, parser)
-        tokens = estimate_tokens(text)
-        in_full = sum(a.token_estimate for a in existing if a.id not in searched_before)
-        if in_full + tokens > chat.attachment_token_budget:
-            chunk_count = await index_partition(
-                opensearch, embeddings, settings.chunking, principal.subject, str(conversation.id), str(attachment_id), name, text
-            )
+        if looks_like_image(file.filename, raw):
+            if not chat.images_enabled:
+                raise AttachmentError(
+                    415,
+                    "images_disabled",
+                    "Image upload is not enabled on this deployment. Attach a document instead, or ask your administrator.",
+                )
+            if size > chat.image_max_mb * 1024 * 1024:
+                raise AttachmentError(
+                    413, "too_large", f"An image can be at most {chat.image_max_mb} MB (CHAT__IMAGE_MAX_MB)."
+                )
+            kind = sniff_image(file.filename, raw)
+            image = (IMAGE_MEDIA_TYPES[kind], raw)
+            text, tokens = "", 0  # an image has no text and costs nothing against the document token budget
+        else:
+            kind = sniff_kind(file.filename, raw)
+            text = await extract_text(kind, raw, parser)
+            tokens = estimate_tokens(text)
+            in_full = sum(a.token_estimate for a in existing if a.id not in searched_before)
+            if in_full + tokens > chat.attachment_token_budget:
+                chunk_count = await index_partition(
+                    opensearch, embeddings, settings.chunking, principal.subject, str(conversation.id), str(attachment_id), name, text
+                )
     except AttachmentError as error:
         refuse(error)
 
@@ -372,6 +405,7 @@ async def upload_attachment(
                 text="" if chunk_count is not None else text,  # a searched document's text lives only in its partition
             ),
             chunk_count=chunk_count,
+            image=image,
         )
     except Exception:
         if chunk_count is not None:
@@ -486,7 +520,7 @@ async def send_message(
     if attached and is_agentic(application):
         raise HTTPException(status_code=409, detail="This assistant does not take attachments. Remove them to continue.")
     searched = attachment_repo.partitioned_ids(conversation.id)
-    in_full = [a for a in attached if a.id not in searched]
+    in_full = [a for a in attached if a.id not in searched and a.kind not in IMAGE_KINDS]
     if sum(a.token_estimate for a in in_full) > settings.chat.attachment_token_budget:
         raise HTTPException(
             status_code=422, detail="The attached documents are too long to include in full. Remove one to continue."
@@ -506,8 +540,13 @@ async def send_message(
         except Exception as exc:  # noqa: BLE001
             logger.error("Searching a Conversation's partition failed: %s", type(exc).__name__)
             raise HTTPException(status_code=503, detail=PASSAGE_SEARCH_FAILED)
+    # Only while the operator keeps image upload on; images already stored are left out if it is switched off.
+    images = attachment_repo.images(conversation.id) if settings.chat.images_enabled else []
     model_query = question_with_attachments(
-        payload.query, [AttachmentText(a.filename, a.text) for a in in_full], _excerpts(found_passages)
+        payload.query,
+        [AttachmentText(a.filename, a.text) for a in in_full],
+        _excerpts(found_passages),
+        [filename for filename, _, _ in images],
     )
 
     try:
@@ -515,6 +554,12 @@ async def send_message(
     except ProviderConfigurationError as exc:
         logger.error("Chat application %s is misconfigured: %s", application.slug, exc)
         raise HTTPException(status_code=500, detail="This assistant is not available right now.")
+
+    if images and not getattr(provider, "supports_images", False):
+        raise HTTPException(
+            status_code=409,
+            detail="This assistant's model endpoint does not accept images. Remove the images to continue.",
+        )
 
     # Everything the generator needs is resolved to plain values: it runs after the request session closes.
     citations_enabled = application.citations_enabled
@@ -551,6 +596,7 @@ async def send_message(
             history=history,
             # Retrieval sees the question only: attached text is for the model, not for searching the knowledge bases.
             search_query=retrieval_query(payload.query, history) or payload.query,
+            images=[image_data_url(media_type, data) for _, media_type, data in images] or None,
         )
     except BaseException as exc:
         if slot is not None:

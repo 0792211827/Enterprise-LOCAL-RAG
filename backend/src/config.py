@@ -416,6 +416,12 @@ class ChatSettings(BaseConfigSettings):
     # chunk index only its Conversation can search, and each question gets this many of its best passages.
     attachment_passages: int = Field(default=6, ge=1)
 
+    # Image Attachments (PNG, JPG, WEBP) are sent to the Application's chat model as image content parts, so they only
+    # make sense with a multimodal model. This one switch turns the whole feature on; when off, the chat does not show
+    # the control and the API refuses images with a clear error.
+    images_enabled: bool = False
+    image_max_mb: int = Field(default=10, ge=1)
+
 
 class Settings(BaseConfigSettings):
     app_version: str = "0.1.0"
