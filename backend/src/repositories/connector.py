@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 from src.models.connector import Connector, ConnectorFileState, FileSyncStatus
 
@@ -40,14 +40,19 @@ class ConnectorRepository:
     def try_lock(self, connector: Connector, stale_after: timedelta, now: Optional[datetime] = None) -> bool:
         """Mark a run as started unless a recent one is still going; False means another run holds the lock."""
         now = now or datetime.now(timezone.utc)
-        started = connector.run_started_at
-        if started is not None:
-            started = started if started.tzinfo else started.replace(tzinfo=timezone.utc)
-            if now - started < stale_after:
-                return False
-        connector.run_started_at = now
+        # One conditional UPDATE, so two runs starting together cannot both take the lock.
+        claimed = self.session.execute(
+            update(Connector)
+            .where(
+                Connector.id == connector.id,
+                or_(Connector.run_started_at.is_(None), Connector.run_started_at < now - stale_after),
+            )
+            .values(run_started_at=now)
+            .execution_options(synchronize_session=False)
+        ).rowcount
         self.session.commit()
-        return True
+        self.session.refresh(connector)
+        return claimed == 1
 
     def finish(self, connector: Connector, status: str, summary: Dict[str, Any], now: Optional[datetime] = None) -> None:
         connector.run_started_at = None

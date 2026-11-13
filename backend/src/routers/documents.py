@@ -302,15 +302,20 @@ def replace_restrictions(
     entries = sorted({(e.principal_type, e.principal_value) for e in payload.restrictions})
     keys = [principal_key(t, v) for t, v in entries]
 
-    # The index first: if it cannot be updated nothing changes, and a restriction is never reported that is not in force.
+    # The database first, so an ingestion finishing right now re-reads the new restriction and fixes the chunks it just
+    # indexed; then the index. If the index cannot be updated the old restriction is put back, so a restriction is never
+    # reported that is not in force.
+    repo = RestrictionRepository(session)
+    previous = [(r.principal_type, r.principal_value) for r in repo.list_for_document(document.id)]
+    rows = repo.replace_for_document(document.id, entries, created_by=principal.subject)
     try:
         updated = opensearch.set_document_restrictions(str(document.id), keys)
     except Exception as exc:  # noqa: BLE001
         logger.error("Could not update the chunks of document %s: %s", document.id, exc)
+        repo.replace_for_document(document.id, previous, created_by=principal.subject)
         raise HTTPException(
             status_code=502, detail="The search index could not be updated, so the restriction was not changed. Try again."
         ) from exc
-    rows = RestrictionRepository(session).replace_for_document(document.id, entries, created_by=principal.subject)
     if cache:
         # Cached answers were built under the old restriction.
         cache.clear()

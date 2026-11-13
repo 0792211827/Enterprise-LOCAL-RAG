@@ -292,6 +292,7 @@ class TestSettingAndClearing:
         assert body["warnings"] == []
 
     def test_a_failed_index_update_changes_nothing_and_says_so(self, stack, index, world):
+        restrict(stack, stack.docs["secret"], ("group", "old"))
         stack.client.client = MagicMock()
         stack.client.client.update_by_query.side_effect = ConnectionError("down")
         stack.act_as(ADMIN)
@@ -303,7 +304,20 @@ class TestSettingAndClearing:
 
         assert response.status_code == 502
         with world.factory() as session:
-            assert RestrictionRepository(session).list_for_document(stack.docs["secret"]) == []
+            kept = RestrictionRepository(session).list_for_document(stack.docs["secret"])
+        assert [(r.principal_type, r.principal_value) for r in kept] == [("group", "old")]  # the old one is back
+
+    def test_chunks_left_behind_by_a_version_conflict_are_a_failure_not_a_success(self, stack, index):
+        stack.client.client = MagicMock()
+        stack.client.client.update_by_query.return_value = {"updated": 0, "failures": [], "version_conflicts": 1}
+        stack.act_as(ADMIN)
+
+        response = stack.http.put(
+            f"/api/v1/documents/{stack.docs['secret']}/restrictions",
+            json={"restrictions": [{"principal_type": "group", "principal_value": "x"}]},
+        )
+
+        assert response.status_code == 502
 
     def test_a_restriction_is_removed_with_its_document(self, stack, index, world):
         restrict(stack, stack.docs["secret"], ("group", "hr-leads"))

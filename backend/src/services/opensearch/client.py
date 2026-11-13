@@ -520,9 +520,9 @@ class OpenSearchClient:
                 "script": {"source": script, "lang": "painless", "params": {"keys": keys}},
             },
             refresh=True,
-            conflicts="proceed",
         )
-        if response.get("failures"):
+        # A version conflict (a chunk rewritten while this ran) would leave it with the old keys, so it is a failure.
+        if response.get("failures") or response.get("version_conflicts"):
             raise RuntimeError(f"restricting the chunks of document {document_id} failed: {response['failures'][:1]}")
         return response.get("updated", 0)
 

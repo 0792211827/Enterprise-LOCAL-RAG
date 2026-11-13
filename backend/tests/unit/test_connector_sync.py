@@ -715,3 +715,20 @@ def test_the_schedule_runs_rounds_waits_between_them_and_survives_a_failed_one(w
     world.opensearch.setup_indices = lambda: None
     connector_cli._schedule(world.sync, 15, allow_empty=False, sleep=waits.append, rounds=1)
     assert set(documents(world)) == {"leave.txt", "remote.txt"}
+
+
+async def test_an_unreadable_folder_fails_the_run_instead_of_looking_like_deleted_files(world):
+    if world.kind != "path":
+        pytest.skip("a folder concept")
+    write(world, "open/leave.txt")
+    write(world, "locked/board.txt", "board minutes")
+    await sync(world)
+    locked = world.share / "locked"
+    locked.chmod(0)
+    try:
+        with pytest.raises(ConnectorError, match="Could not read"):
+            await sync(world)
+    finally:
+        locked.chmod(0o755)
+
+    assert set(documents(world)) == {"open/leave.txt", "locked/board.txt"}

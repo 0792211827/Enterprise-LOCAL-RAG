@@ -64,7 +64,11 @@ class PathSource:
 
     def list_files(self) -> List[SourceFile]:
         files: List[SourceFile] = []
-        for directory, dirs, names in os.walk(self.real_root, followlinks=False):
+        def unreadable(error: OSError) -> None:
+            # A folder that cannot be read would make its files look deleted, and the sync would remove their Documents.
+            raise ConnectorError(f"Could not read {error.filename}: {error.strerror}")
+
+        for directory, dirs, names in os.walk(self.real_root, followlinks=False, onerror=unreadable):
             dirs[:] = sorted(d for d in dirs if not d.startswith("."))
             for name in sorted(names):
                 if name.startswith("."):
