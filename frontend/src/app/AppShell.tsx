@@ -1,21 +1,34 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
-import { AuthBanner } from "@/components/AuthStatus";
+import { ReactNode, useEffect } from "react";
+import {
+  ApiUnreachableScreen,
+  CheckingScreen,
+  NoAccessScreen,
+  SignedOutScreen,
+} from "@/components/AccessScreen";
+import { AdminShell } from "@/components/AdminShell";
 import { OidcSession } from "@/components/OidcSession";
-import { Sidebar } from "@/components/Sidebar";
-import { EmptyState, LoadingState } from "@/components/ui";
+import { UserShell } from "@/components/UserShell";
+import { ApiError } from "@/lib/api/client";
 import { authApi } from "@/lib/api/resources";
 import { AUTH_MODE } from "@/lib/auth";
 import { signIn, signOut } from "@/lib/oidc";
-import { homeFor, roleForPath } from "@/lib/surfaces";
+import { homeFor, roleForPath, surfaceForPath } from "@/lib/surfaces";
 
-// Keeps a signed-in user on the surface their roles reach: employees get chat, not the control plane.
-// The API enforces the same split; this stops the UI offering pages that would only answer 403.
-function RoleGate({ children }: { children: React.ReactNode }) {
+// Decides what a caller sees, from who the API says they are:
+//   not signed in           -> the sign-in screen
+//   API not answering       -> a screen that says so, with a retry
+//   signed in, no role      -> the no-access screen
+//   wrong surface for them  -> sent to the one they have (End users to chat, Admins to the Dashboard,
+//                              auditors to the Audit Log)
+//   otherwise               -> the User shell for chat, the Admin shell for everything else
+// The API enforces the same split; this keeps the UI from offering pages that would only answer 403.
+function Gate({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const oidc = AUTH_MODE === "oidc";
   const me = useQuery({ queryKey: ["auth", "me"], queryFn: authApi.me, retry: false });
 
   const roles = me.data?.roles;
@@ -27,32 +40,32 @@ function RoleGate({ children }: { children: React.ReactNode }) {
     if (!allowed && home) router.replace(home);
   }, [allowed, home, router]);
 
-  if (me.isLoading) return <LoadingState />;
-  if (allowed) return <>{children}</>;
-  if (home) return <LoadingState label="Taking you to your page…" />;
-  return (
-    <EmptyState
-      title="Your account has no access here"
-      description="Your account does not hold a role for any part of this application. Ask an administrator to grant you access."
-    />
-  );
+  // The OIDC callback page is handled by OidcSession; nothing here applies to it.
+  if (needed === null) return <>{children}</>;
+
+  if (me.isLoading) return <CheckingScreen />;
+  if (me.isError) {
+    if (me.error instanceof ApiError && me.error.status === 401) {
+      return <SignedOutScreen onSignIn={oidc ? () => signIn() : undefined} />;
+    }
+    return <ApiUnreachableScreen onRetry={() => me.refetch()} />;
+  }
+  if (!roles) return <CheckingScreen />;
+  if (!home) return <NoAccessScreen subject={me.data?.subject} onSignOut={oidc ? () => signOut() : undefined} />;
+  if (!allowed) return <CheckingScreen label="Taking you to your page…" />;
+
+  const shellProps = {
+    roles,
+    onSignIn: oidc ? () => signIn() : undefined,
+    onSignOut: oidc ? () => signOut() : undefined,
+  };
+  const surface = surfaceForPath(pathname);
+  if (surface === "bare") return <div className="mx-auto max-w-7xl px-6 py-8">{children}</div>;
+  if (surface === "user") return <UserShell {...shellProps}>{children}</UserShell>;
+  return <AdminShell {...shellProps}>{children}</AdminShell>;
 }
 
-// Layout chrome. A client component so auth state (banner, sign-in gate,
-// sign-out) can live alongside the sidebar; the root layout stays a server
-// component.
-export function AppShell({ children }: { children: React.ReactNode }) {
-  const oidc = AUTH_MODE === "oidc";
-  const shell = (
-    <>
-      <AuthBanner onSignIn={oidc ? () => signIn() : undefined} />
-      <Sidebar onSignOut={oidc ? () => signOut() : undefined} />
-      <main className="ml-64 min-h-screen">
-        <div className="mx-auto max-w-6xl px-8 py-8">
-          <RoleGate>{children}</RoleGate>
-        </div>
-      </main>
-    </>
-  );
-  return oidc ? <OidcSession>{shell}</OidcSession> : shell;
+export function AppShell({ children }: { children: ReactNode }) {
+  const gate = <Gate>{children}</Gate>;
+  return AUTH_MODE === "oidc" ? <OidcSession>{gate}</OidcSession> : gate;
 }

@@ -7,9 +7,14 @@ import type { Page, Route } from "@playwright/test";
 
 export const API_ORIGIN = "http://api.stub.test";
 
-export type CallerKind = "end-user" | "admin" | "auditor" | "no-role" | "signed-out";
+/** `anonymous` is the caller when the backend runs with authentication off: every role, no identity. */
+export type CallerKind = "end-user" | "admin" | "auditor" | "no-role" | "anonymous" | "signed-out";
 
-const PRINCIPALS: Record<Exclude<CallerKind, "signed-out">, { subject: string; roles: string[]; groups: string[] }> = {
+const PRINCIPALS: Record<
+  Exclude<CallerKind, "signed-out">,
+  { subject: string; roles: string[]; groups: string[]; auth_method?: string }
+> = {
+  anonymous: { subject: "anonymous", roles: ["admin", "querier", "auditor"], groups: [], auth_method: "disabled" },
   "end-user": { subject: "maria.santos@example.test", roles: ["querier"], groups: ["finance"] },
   admin: { subject: "sam.okafor@example.test", roles: ["admin"], groups: ["platform"] },
   auditor: { subject: "li.wei@example.test", roles: ["auditor"], groups: ["compliance"] },
@@ -62,6 +67,8 @@ export interface ApiStub {
   respond(method: string, path: string, body: unknown, status?: number): void;
   /** Answer an endpoint with JSON built from the request. */
   respondWith(method: string, path: string, build: Build, status?: number): void;
+  /** Drop the connection for an endpoint, as if the API were down. A later `respond` brings it back. */
+  abort(method: string, path: string): void;
   /** The answer streamed back for the next question asked in a conversation. */
   streamAnswer(answer: StreamedAnswer): void;
 }
@@ -104,6 +111,9 @@ export async function stubApi(page: Page, caller: CallerKind): Promise<ApiStub> 
         return json(route, build(url, { body: posted }), status);
       });
     },
+    abort(method, path) {
+      routes.set(`${method} ${path}`, (route) => route.abort("connectionrefused"));
+    },
     streamAnswer(answer) {
       routes.set("POST /api/v1/chat/conversations/:id/messages", (route) =>
         route.fulfill({
@@ -122,9 +132,11 @@ export async function stubApi(page: Page, caller: CallerKind): Promise<ApiStub> 
   } else {
     const p = PRINCIPALS[caller];
     stub.respond("GET", "/api/v1/auth/me", {
-      ...p,
+      subject: p.subject,
+      roles: p.roles,
+      groups: p.groups,
       raw_roles: p.roles,
-      auth_method: "jwt",
+      auth_method: p.auth_method ?? "jwt",
       api_key_id: null,
       application_id: null,
     });

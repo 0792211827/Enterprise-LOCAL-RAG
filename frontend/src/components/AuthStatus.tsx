@@ -1,47 +1,61 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
+import { LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
-import { AUTH_MODE, onAuthRequired } from "@/lib/auth";
+import { Chip, Icon } from "@/components/ui";
 import { authApi } from "@/lib/api/resources";
+import { AUTH_MODE, onAuthRequired } from "@/lib/auth";
 
-// Who the API thinks you are, from /auth/me. Shown at the foot of the sidebar
-// so an operator can see at a glance which roles their session carries.
-export function CallerBadge({ onSignOut }: { onSignOut?: () => void }) {
+/** Who the API thinks you are, from /auth/me, with sign-out when the app signs people in itself. */
+export function CallerBadge({
+  onSignOut,
+  collapsible = false,
+  showRoles = true,
+}: {
+  onSignOut?: () => void;
+  collapsible?: boolean;
+  showRoles?: boolean;
+}) {
   const me = useQuery({ queryKey: ["auth", "me"], queryFn: authApi.me, retry: false });
+  if (!me.data) return null;
 
-  if (me.isLoading) return null;
-  if (!me.data) {
-    return <div className="text-xs text-slate-400">Not signed in</div>;
-  }
-  if (me.data.auth_method === "disabled") {
-    return (
-      <div className="text-xs text-slate-400" title="Backend AUTH__MODE=disabled">
-        Authentication off
-      </div>
-    );
-  }
+  const off = me.data.auth_method === "disabled";
+  const label = off ? "Authentication off" : me.data.subject;
+  // In a collapsed sidebar only an initial and the sign-out icon fit; the text returns at wide widths.
+  const wide = collapsible ? "hidden lg:block" : "";
   return (
-    <div className="text-xs">
-      <div className="truncate font-medium text-slate-700" title={me.data.subject}>
-        {me.data.subject}
-      </div>
-      <div className="mt-1 flex flex-wrap gap-1">
-        {me.data.roles.map((role) => (
-          <span key={role} className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
-            {role}
-          </span>
-        ))}
+    <div className="flex items-center gap-2 text-xs">
+      {collapsible && (
+        <span
+          title={label}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-sm font-semibold text-accent-text lg:hidden"
+        >
+          {off ? "–" : label.charAt(0).toUpperCase()}
+        </span>
+      )}
+      <div className={`min-w-0 flex-1 ${wide}`}>
+        <div className="truncate font-medium text-fg" title={label}>
+          {label}
+        </div>
+        {!off && showRoles && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {me.data.roles.map((role) => (
+              <Chip key={role}>{role}</Chip>
+            ))}
+          </div>
+        )}
       </div>
       {onSignOut && (
-        <button className="mt-2 text-slate-500 underline hover:text-slate-700" onClick={onSignOut}>
-          Sign out
+        <button type="button" className="btn btn-ghost btn-sm shrink-0" onClick={onSignOut} aria-label="Sign out" title="Sign out">
+          <Icon icon={LogOut} size="sm" />
+          <span className={collapsible ? "hidden lg:inline" : ""}>Sign out</span>
         </button>
       )}
     </div>
   );
 }
 
-// Appears when any API call returns 401: the session is missing or expired.
+// Appears when an API call returns 401 after the page loaded: the session expired mid-use.
 export function AuthBanner({ onSignIn }: { onSignIn?: () => void }) {
   const [required, setRequired] = useState(false);
   useEffect(() => onAuthRequired(() => setRequired(true)), []);
@@ -49,17 +63,17 @@ export function AuthBanner({ onSignIn }: { onSignIn?: () => void }) {
 
   const action =
     AUTH_MODE === "oidc" && onSignIn ? (
-      <button className="btn btn-secondary" onClick={onSignIn}>
+      <button className="btn btn-secondary btn-sm" onClick={onSignIn}>
         Sign in again
       </button>
     ) : (
-      <button className="btn btn-secondary" onClick={() => window.location.reload()}>
+      <button className="btn btn-secondary btn-sm" onClick={() => window.location.reload()}>
         Reload
       </button>
     );
 
   return (
-    <div className="fixed inset-x-0 top-0 z-50 ml-64 flex items-center justify-between gap-4 border-b border-amber-200 bg-amber-50 px-8 py-3 text-sm text-amber-800">
+    <div role="alert" className="mb-4 flex items-center justify-between gap-4 rounded-panel border border-clay/30 bg-clay-soft px-4 py-3 text-sm text-fg">
       <span>
         {AUTH_MODE === "none"
           ? "The API requires authentication, but this UI was built with NEXT_PUBLIC_AUTH_MODE=none."

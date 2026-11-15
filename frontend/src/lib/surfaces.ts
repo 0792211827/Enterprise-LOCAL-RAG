@@ -12,6 +12,18 @@ export function roleForPath(pathname: string): Role | null {
   return "admin";
 }
 
+export type Surface = "user" | "admin" | "bare";
+
+/**
+ * Which shell a path is drawn in: chat is the User UI, everything else the Admin UI. The design
+ * specimen is shown without either, so it can set its own surfaces side by side.
+ */
+export function surfaceForPath(pathname: string): Surface {
+  if (pathname === "/chat" || pathname.startsWith("/chat/")) return "user";
+  if (pathname === "/design" || pathname.startsWith("/design/")) return "bare";
+  return "admin";
+}
+
 /** Where a signed-in user with these roles should land. */
 export function homeFor(roles: Role[]): string | null {
   if (roles.includes("admin")) return "/";
