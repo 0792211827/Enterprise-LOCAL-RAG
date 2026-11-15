@@ -98,7 +98,7 @@ function KnowledgeBaseDetail({ kb }: { kb: KnowledgeBase }) {
       <Tabs tabs={TABS} value={tab} onChange={setTab} />
       <div role="tabpanel" aria-labelledby={`tab-${tab}`}>
         {tab === "documents" && <DocumentsTab kbId={kb.id} onUpload={upload} uploading={uploading} failures={failures} onDismissFailures={dismissFailures} />}
-        {tab === "connectors" && <ConnectorsTab />}
+        {tab === "connectors" && <ConnectorsTab kbId={kb.id} />}
         {tab === "access" && (
           <div className="space-y-4">
             <Callout tone="info" title="This tab is being redesigned">

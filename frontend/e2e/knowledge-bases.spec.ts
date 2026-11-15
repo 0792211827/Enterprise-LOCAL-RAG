@@ -14,6 +14,7 @@ async function openAdmin(page: Page, path: string, setup?: (api: ApiStub) => voi
   api.respond("GET", "/api/v1/knowledge-bases/:id/documents", [doc()]);
   api.respond("GET", "/api/v1/knowledge-bases/:id/document-restrictions", {});
   api.respond("GET", "/api/v1/ingestion-jobs", [job()]);
+  api.respond("GET", "/api/v1/connectors", []);
   setup?.(api);
   await page.goto(path);
   return api;
@@ -77,7 +78,7 @@ test.describe("the Knowledge Bases list", () => {
 });
 
 test.describe("a Knowledge Base's detail page", () => {
-  test("has Documents, Connectors, Access and Settings tabs, with Connectors and Access in place", async ({ page }) => {
+  test("has Documents, Connectors, Access and Settings tabs, with Access in place", async ({ page }) => {
     await openAdmin(page, "/knowledge-bases/kb-hr", (a) => {
       a.respond("GET", "/api/v1/knowledge-bases/:id/grants", []);
       a.respond("GET", "/api/v1/system/security", { api_keys_enforced: true, auth_mode: "jwt", user_token_header: null });
@@ -88,7 +89,7 @@ test.describe("a Knowledge Base's detail page", () => {
     await captureAll(page, "knowledge-base-documents");
 
     await page.getByRole("tab", { name: "Connectors" }).click();
-    await expect(page.getByText("Connectors are coming to this tab")).toBeVisible();
+    await expect(page.getByText("No Connectors yet")).toBeVisible();
     await page.getByRole("tab", { name: "Access" }).click();
     await expect(page.getByText("This tab is being redesigned")).toBeVisible();
   });
