@@ -77,7 +77,13 @@ async def test_disabled_mode_keeps_every_route_open(client):
 
 async def test_security_status_reports_defaults(client):
     data = (await client.get("/api/v1/system/security")).json()
-    assert data == {"auth_mode": "disabled", "api_keys_enforced": False, "user_token_header": None}
+    assert data == {
+        "auth_mode": "disabled",
+        "api_keys_enforced": False,
+        "user_token_header": None,
+        "ungranted_kb_access": "deny",
+        "admin_bypass_retrieval": False,
+    }
 
 
 async def test_security_status_is_admin_only(client, as_caller):

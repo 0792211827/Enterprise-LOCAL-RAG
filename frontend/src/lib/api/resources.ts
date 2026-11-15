@@ -38,6 +38,7 @@ import type {
   ProviderCreate,
   ProviderModelsResponse,
   ProviderTestResult,
+  ProviderUpdate,
   RatingItem,
   RetrievalConfig,
   SharedExchange,
@@ -71,6 +72,9 @@ export const knowledgeBasesApi = {
 export const documentsApi = {
   listForKb: (kbId: string) =>
     apiGet<DocumentItem[]>(`/api/v1/knowledge-bases/${kbId}/documents`),
+  /** The API returns 100 unless asked for more. */
+  listForKbUpTo: (kbId: string, limit: number) =>
+    apiGet<DocumentItem[]>(`/api/v1/knowledge-bases/${kbId}/documents?limit=${limit}`),
   upload: (kbId: string, file: File, title?: string) => {
     const form = new FormData();
     form.append("file", file);
@@ -81,6 +85,7 @@ export const documentsApi = {
   reprocess: (id: string) =>
     apiSend<IngestionJob>(`/api/v1/documents/${id}/reprocess`, "POST"),
   jobs: () => apiGet<IngestionJob[]>("/api/v1/ingestion-jobs"),
+  jobsUpTo: (limit: number) => apiGet<IngestionJob[]>(`/api/v1/ingestion-jobs?limit=${limit}`),
   /** Restricted documents of a knowledge base, by document id; unrestricted ones are absent. */
   restrictionsForKb: (kbId: string) =>
     apiGet<Record<string, KnowledgeBaseGrantEntry[]>>(`/api/v1/knowledge-bases/${kbId}/document-restrictions`),
@@ -107,6 +112,8 @@ export const connectorsApi = {
 
 export const applicationsApi = {
   list: () => apiGet<Application[]>("/api/v1/applications"),
+  /** The API returns 100 unless asked for more. */
+  listUpTo: (limit: number) => apiGet<Application[]>(`/api/v1/applications?limit=${limit}`),
   get: (id: string) => apiGet<Application>(`/api/v1/applications/${id}`),
   create: (payload: ApplicationCreate) =>
     apiSend<Application>("/api/v1/applications", "POST", payload),
@@ -168,6 +175,7 @@ export const providersApi = {
     apiGet<Provider[]>(`/api/v1/providers${kind ? `?kind=${kind}` : ""}`),
   create: (payload: ProviderCreate) =>
     apiSend<Provider>("/api/v1/providers", "POST", payload),
+  update: (id: string, payload: ProviderUpdate) => apiSend<Provider>(`/api/v1/providers/${id}`, "PATCH", payload),
   remove: (id: string) => apiSend<void>(`/api/v1/providers/${id}`, "DELETE"),
   test: (id: string) =>
     apiSend<ProviderTestResult>(`/api/v1/providers/${id}/test`, "POST"),

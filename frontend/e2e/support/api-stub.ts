@@ -193,6 +193,9 @@ export async function stubApi(page: Page, caller: CallerKind): Promise<ApiStub> 
   });
   stub.respond("GET", "/api/v1/system/gpu", { available: false, cuda_version: null, driver_version: null, gpus: [], message: "No GPU" });
   stub.respond("GET", "/api/v1/ingestion-jobs", []);
+  stub.respond("GET", "/api/v1/connectors", []);
+  stub.respond("GET", "/api/v1/applications", []);
+  stub.respond("GET", "/api/v1/chat-admin/ratings/summary", []);
   stub.respond("GET", "/api/v1/audit/status", { level: "metadata", fail_mode: "log", retention_days: 90 });
   stub.respond("GET", "/api/v1/audit/events", { items: [], next_cursor: null });
 

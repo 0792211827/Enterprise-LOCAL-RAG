@@ -1,227 +1,145 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import {
-  EmptyState,
-  ErrorState,
-  LoadingState,
-  Modal,
-  PageHeader,
-  StatusBadge,
-  confirmDialog,
-} from "@/components/ui";
+import { Box, Cpu, Pencil, Plus, Trash2 } from "lucide-react";
+import { Fragment, useState } from "react";
+import { Callout, ConfirmModal, EmptyState, ErrorState, Icon, PageHeader, StatusBadge, TBody, Table, TableSkeleton, Td, Th, THead, Tr } from "@/components/ui";
 import { providersApi } from "@/lib/api/resources";
-import type { ProviderCreate, ProviderTestResult } from "@/lib/api/types";
+import type { Provider } from "@/lib/api/types";
+import { ModelsDrawer } from "./ModelsDrawer";
+import { KIND_LABELS, ProviderForm, TYPE_LABELS } from "./ProviderForm";
+import { describeTest, type TestState } from "./testResult";
 
 export default function ProvidersPage() {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<Record<string, ProviderTestResult>>({});
+  const [form, setForm] = useState<{ provider: Provider | null } | null>(null);
+  const [deleting, setDeleting] = useState<Provider | null>(null);
+  const [listing, setListing] = useState<Provider | null>(null);
+  const [tests, setTests] = useState<Record<string, TestState>>({});
   const list = useQuery({ queryKey: ["providers"], queryFn: () => providersApi.list() });
 
   const remove = useMutation({
-    mutationFn: providersApi.remove,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["providers"] }),
+    mutationFn: (id: string) => providersApi.remove(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["providers"] });
+      setDeleting(null);
+    },
   });
   const test = useMutation({
-    mutationFn: providersApi.test,
-    onSuccess: (data, id) => setResults((r) => ({ ...r, [id]: data })),
+    mutationFn: (id: string) => providersApi.test(id),
+    onSuccess: (result, id) => setTests((t) => ({ ...t, [id]: { result } })),
+    onError: (error, id) => setTests((t) => ({ ...t, [id]: { error: (error as Error).message } })),
   });
+
+  const add = (
+    <button type="button" className="btn btn-primary" onClick={() => setForm({ provider: null })}>
+      <Icon icon={Plus} size="sm" />
+      Add Inference endpoint
+    </button>
+  );
 
   return (
     <div>
       <PageHeader
         title="Models & Providers"
-        description="Register self-hosted LLM, embedding and vision providers."
-        action={
-          <button className="btn btn-primary" onClick={() => setOpen(true)}>
-            + Add Provider
-          </button>
-        }
+        description="The Inference endpoints that run language, embedding and vision models. Test one to confirm the address and key work, and list the models it serves."
+        action={add}
       />
-      {list.isLoading && <LoadingState />}
-      {list.isError && <ErrorState message={(list.error as Error).message} />}
+
+      {list.isLoading && <TableSkeleton columns={6} label="Loading Inference endpoints" />}
+      {list.isError && <ErrorState title="Could not load Inference endpoints" message={(list.error as Error).message} onRetry={() => list.refetch()} />}
       {list.data && list.data.length === 0 && (
         <EmptyState
-          title="No providers configured"
-          description="Add an Ollama, OpenAI-compatible or HuggingFace provider to power retrieval and generation."
+          icon={Cpu}
+          title="No Inference endpoints yet"
+          description="Add an Ollama, OpenAI-compatible or HuggingFace endpoint so Applications can generate answers and Knowledge Bases can embed Documents."
+          action={add}
         />
       )}
       {list.data && list.data.length > 0 && (
-        <div className="card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-400">
-              <tr>
-                <th className="px-5 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Kind</th>
-                <th className="px-4 py-3 font-medium">Type</th>
-                <th className="px-4 py-3 font-medium">Model</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {list.data.map((p) => {
-                const res = results[p.id];
-                return (
-                  <tr key={p.id} className="border-t border-slate-100 align-top">
-                    <td className="px-5 py-3">
-                      <div className="font-medium text-slate-700">{p.name}</div>
-                      {p.endpoint && (
-                        <div className="text-xs text-slate-400">{p.endpoint}</div>
-                      )}
-                      {res && (
-                        <div
-                          className={`mt-1 text-xs ${
-                            res.connected ? "text-emerald-600" : "text-red-600"
-                          }`}
-                        >
-                          {res.message}
-                          {res.latency_ms != null && ` · ${res.latency_ms}ms`}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">{p.kind}</td>
-                    <td className="px-4 py-3">{p.provider_type}</td>
-                    <td className="px-4 py-3">{p.model}</td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={p.enabled ? "ok" : "disabled"} />
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          className="btn btn-secondary"
-                          disabled={test.isPending && test.variables === p.id}
-                          onClick={() => test.mutate(p.id)}
-                        >
-                          {test.isPending && test.variables === p.id ? "Testing…" : "Test"}
+        <Table caption="Inference endpoints">
+          <THead>
+            <tr>
+              <Th>Endpoint</Th>
+              <Th>Does</Th>
+              <Th>Type</Th>
+              <Th>Model</Th>
+              <Th>Status</Th>
+              <Th />
+            </tr>
+          </THead>
+          <TBody>
+            {list.data.map((p) => {
+              const testing = test.isPending && test.variables === p.id;
+              const state = tests[p.id];
+              const outcome = state && describeTest(state, p);
+              return (
+                <Fragment key={p.id}>
+                  <Tr>
+                    <Td>
+                      <div className="min-w-[12rem]">
+                        <div className="font-medium">{p.name}</div>
+                        {p.endpoint && <div className="font-mono text-xs text-muted [overflow-wrap:anywhere]">{p.endpoint}</div>}
+                      </div>
+                    </Td>
+                    <Td>{KIND_LABELS[p.kind] ?? p.kind}</Td>
+                    <Td>{TYPE_LABELS[p.provider_type] ?? p.provider_type}</Td>
+                    <Td mono>{p.model}</Td>
+                    <Td>
+                      <StatusBadge status={p.enabled ? "Active" : "Disabled"} />
+                    </Td>
+                    <Td align="right">
+                      <div className="flex justify-end gap-1">
+                        <button type="button" className="btn btn-secondary btn-sm" aria-label={`Test ${p.name}`} disabled={testing} onClick={() => test.mutate(p.id)}>
+                          {testing ? "Testing…" : "Test"}
                         </button>
-                        <button
-                          className="btn btn-danger"
-                          onClick={() => {
-                            if (confirmDialog(`Delete "${p.name}"?`)) remove.mutate(p.id);
-                          }}
-                        >
-                          Delete
+                        {p.kind !== "embedding" && (
+                          <button type="button" className="btn btn-ghost btn-sm" aria-label={`List models on ${p.name}`} onClick={() => setListing(p)}>
+                            <Icon icon={Box} size="sm" />
+                          </button>
+                        )}
+                        <button type="button" className="btn btn-ghost btn-sm" aria-label={`Edit ${p.name}`} onClick={() => setForm({ provider: p })}>
+                          <Icon icon={Pencil} size="sm" />
+                        </button>
+                        <button type="button" className="btn btn-ghost btn-sm" aria-label={`Delete ${p.name}`} onClick={() => setDeleting(p)}>
+                          <Icon icon={Trash2} size="sm" />
                         </button>
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                    </Td>
+                  </Tr>
+                  {outcome && (
+                    <tr>
+                      <td colSpan={6} className="bg-sunken/40 px-4 py-3">
+                        <Callout tone={outcome.tone} title={outcome.title}>
+                          {outcome.detail && <span className="block font-mono text-xs [overflow-wrap:anywhere]">{outcome.detail}</span>}
+                          {outcome.tone === "danger" && <span className="mt-1 block">Check the address and key, then test again.</span>}
+                          {outcome.facts.length > 0 && <span className="mt-1 block text-xs">{outcome.facts.join(" · ")}</span>}
+                        </Callout>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </TBody>
+        </Table>
       )}
-      <CreateProviderModal open={open} onClose={() => setOpen(false)} />
-    </div>
-  );
-}
 
-const EMPTY_PROVIDER: ProviderCreate = {
-  name: "",
-  kind: "llm",
-  provider_type: "ollama",
-  endpoint: "http://ollama:11434",
-  model: "",
-  enabled: true,
-};
+      {form && <ProviderForm provider={form.provider} onClose={() => setForm(null)} />}
+      {listing && <ModelsDrawer provider={listing} onClose={() => setListing(null)} />}
 
-function CreateProviderModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const qc = useQueryClient();
-  const [form, setForm] = useState<ProviderCreate>(EMPTY_PROVIDER);
-  const create = useMutation({
-    mutationFn: providersApi.create,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["providers"] });
-      // Reset, or reopening the modal shows the provider just created and a
-      // second Save silently duplicates it.
-      setForm(EMPTY_PROVIDER);
-      onClose();
-    },
-  });
-
-  return (
-    <Modal open={open} onClose={onClose} title="Add Provider">
-      <form
-        className="space-y-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          create.mutate(form);
-        }}
+      <ConfirmModal
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title={deleting ? `Delete ${deleting.name}?` : "Delete Inference endpoint"}
+        confirmLabel="Delete endpoint"
+        pending={remove.isPending}
+        error={remove.isError ? (remove.error as Error).message : null}
+        onConfirm={() => deleting && remove.mutate(deleting.id)}
       >
-        <div>
-          <label className="label">Name</label>
-          <input
-            className="input"
-            required
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="label">Kind</label>
-            <select
-              className="input"
-              value={form.kind}
-              onChange={(e) =>
-                setForm({ ...form, kind: e.target.value as ProviderCreate["kind"] })
-              }
-            >
-              <option value="llm">LLM</option>
-              <option value="embedding">Embedding</option>
-              <option value="vlm">Vision (VLM)</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Type</label>
-            <select
-              className="input"
-              value={form.provider_type}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  provider_type: e.target.value as ProviderCreate["provider_type"],
-                })
-              }
-            >
-              <option value="ollama">Ollama</option>
-              <option value="openai-compatible">OpenAI-compatible</option>
-              <option value="huggingface">HuggingFace</option>
-            </select>
-          </div>
-        </div>
-        <div>
-          <label className="label">Endpoint</label>
-          <input
-            className="input"
-            value={form.endpoint ?? ""}
-            onChange={(e) => setForm({ ...form, endpoint: e.target.value })}
-          />
-        </div>
-        <div>
-          <label className="label">Model</label>
-          <input
-            className="input"
-            required
-            value={form.model}
-            onChange={(e) => setForm({ ...form, model: e.target.value })}
-            placeholder="llama3.2:1b"
-          />
-        </div>
-        {create.isError && (
-          <p className="text-sm text-red-600">{(create.error as Error).message}</p>
-        )}
-        <div className="flex justify-end gap-2 pt-2">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>
-            Cancel
-          </button>
-          <button type="submit" className="btn btn-primary" disabled={create.isPending}>
-            {create.isPending ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </form>
-    </Modal>
+        <p>
+          <strong className="text-fg">{deleting?.name}</strong> will be removed from this list. The model server itself is untouched.
+        </p>
+      </ConfirmModal>
+    </div>
   );
 }

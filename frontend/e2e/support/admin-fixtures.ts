@@ -118,3 +118,50 @@ export const connector = (over: Record<string, unknown> = {}) => ({
   created_at: NOW,
   ...over,
 });
+
+export const grant = (type: string, value: string, over: Record<string, unknown> = {}) => ({
+  id: `grant-${type}-${value}`,
+  principal_type: type,
+  principal_value: value,
+  permission: "read",
+  created_at: NOW,
+  created_by: "sam.okafor@example.test",
+  ...over,
+});
+
+export const security = (over: Record<string, unknown> = {}) => ({
+  auth_mode: "jwt",
+  api_keys_enforced: true,
+  user_token_header: null,
+  ungranted_kb_access: "deny",
+  admin_bypass_retrieval: false,
+  ...over,
+});
+
+export const provider = (over: Record<string, unknown> = {}) => ({
+  id: "prov-1",
+  name: "Local Ollama",
+  kind: "llm",
+  provider_type: "ollama",
+  endpoint: "http://ollama:11434",
+  model: "llama3.2:1b",
+  api_key_ref: null,
+  dimension: null,
+  capabilities: null,
+  enabled: true,
+  created_at: NOW,
+  updated_at: NOW,
+  ...over,
+});
+
+export const retrievalProfile = (over: Record<string, unknown> = {}) => ({
+  id: "rc-1",
+  name: "Careful search",
+  mode: "hybrid",
+  top_k: 8,
+  hybrid_size_multiplier: 2,
+  rrf_rank_constant: 60,
+  score_threshold: null,
+  filters: null,
+  ...over,
+});

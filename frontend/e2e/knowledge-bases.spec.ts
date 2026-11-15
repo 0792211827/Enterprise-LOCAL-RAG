@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { document as doc, job, kb } from "./support/admin-fixtures";
+import { document as doc, job, kb, security } from "./support/admin-fixtures";
 import { stubApi, type ApiStub } from "./support/api-stub";
 import { captureAll, VIEWPORTS } from "./support/screenshots";
 
@@ -81,7 +81,7 @@ test.describe("a Knowledge Base's detail page", () => {
   test("has Documents, Connectors, Access and Settings tabs, with Access in place", async ({ page }) => {
     await openAdmin(page, "/knowledge-bases/kb-hr", (a) => {
       a.respond("GET", "/api/v1/knowledge-bases/:id/grants", []);
-      a.respond("GET", "/api/v1/system/security", { api_keys_enforced: true, auth_mode: "jwt", user_token_header: null });
+      a.respond("GET", "/api/v1/system/security", security());
     });
     await expect(page.getByRole("heading", { name: "HR handbook" })).toBeVisible();
     for (const name of ["Documents", "Connectors", "Access", "Settings"]) await expect(page.getByRole("tab", { name })).toBeVisible();
@@ -91,7 +91,7 @@ test.describe("a Knowledge Base's detail page", () => {
     await page.getByRole("tab", { name: "Connectors" }).click();
     await expect(page.getByText("No Connectors yet")).toBeVisible();
     await page.getByRole("tab", { name: "Access" }).click();
-    await expect(page.getByText("This tab is being redesigned")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Check what a Principal can read" })).toBeVisible();
   });
 
   test("edits settings and saves them", async ({ page }) => {

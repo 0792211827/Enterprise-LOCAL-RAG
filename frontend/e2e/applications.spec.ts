@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiKey, application, kb } from "./support/admin-fixtures";
+import { apiKey, application, kb, security } from "./support/admin-fixtures";
 import { stubApi, type ApiStub } from "./support/api-stub";
 import { captureAll } from "./support/screenshots";
 
@@ -12,7 +12,7 @@ async function openAdmin(page: Page, path: string, setup?: (api: ApiStub) => voi
   api.respond("GET", "/api/v1/applications/:id/api-keys", [apiKey()]);
   api.respond("GET", "/api/v1/knowledge-bases", [kb(), kb({ id: "kb-fin", name: "Finance rules", slug: "finance-rules", document_count: 5, chunk_count: 210 })]);
   api.respond("GET", "/api/v1/providers", []);
-  api.respond("GET", "/api/v1/system/security", { api_keys_enforced: true, auth_mode: "jwt", user_token_header: null });
+  api.respond("GET", "/api/v1/system/security", security());
   setup?.(api);
   await page.goto(path);
   return api;

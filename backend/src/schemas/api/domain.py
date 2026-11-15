@@ -451,6 +451,8 @@ class SecurityStatus(BaseModel):
     user_token_header: Optional[str] = Field(
         None, description="Header a host app may use to forward its end user's identity (jwt mode)"
     )
+    ungranted_kb_access: Literal["deny", "allow"] = Field("deny", description="Whether a Knowledge Base with no Grants is readable")
+    admin_bypass_retrieval: bool = Field(False, description="Whether Admins may retrieve from every Knowledge Base")
 
 
 class DashboardStats(BaseModel):

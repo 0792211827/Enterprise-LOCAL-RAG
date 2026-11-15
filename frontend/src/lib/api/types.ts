@@ -126,6 +126,8 @@ export interface ProviderCreate {
   enabled?: boolean;
 }
 
+export type ProviderUpdate = Partial<Pick<ProviderCreate, "name" | "endpoint" | "model" | "api_key_ref" | "dimension" | "enabled">>;
+
 export interface ProviderTestResult {
   connected: boolean;
   model_available: boolean | null;
@@ -422,6 +424,9 @@ export interface SecurityStatus {
   auth_mode: "disabled" | "jwt" | "trusted_header";
   api_keys_enforced: boolean;
   user_token_header: string | null;
+  /** Whether a Knowledge Base with no Grants is readable by everyone ("allow") or by no one ("deny"). */
+  ungranted_kb_access: "deny" | "allow";
+  admin_bypass_retrieval: boolean;
 }
 
 export interface GPUResponse {

@@ -176,6 +176,8 @@ def security_status(settings: SettingsDep):
         auth_mode=settings.auth.mode,
         api_keys_enforced=settings.api_keys.enforce,
         user_token_header=settings.auth.user_token_header if settings.auth.mode == "jwt" else None,
+        ungranted_kb_access=settings.auth.ungranted_kb_access,
+        admin_bypass_retrieval=settings.auth.admin_bypass_retrieval,
     )
 
 

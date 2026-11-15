@@ -4,11 +4,11 @@ import { Upload } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { Suspense, useRef, useState } from "react";
-import { Callout, ErrorState, Icon, MetricCard, PageHeader, Skeleton, Tabs } from "@/components/ui";
+import { ErrorState, Icon, MetricCard, PageHeader, Skeleton, Tabs } from "@/components/ui";
 import { knowledgeBasesApi } from "@/lib/api/resources";
 import type { KnowledgeBase } from "@/lib/api/types";
 import { timeAgo } from "@/lib/format";
-import { AccessPanel } from "./AccessPanel";
+import { AccessTab } from "./AccessTab";
 import { ConnectorsTab } from "./ConnectorsTab";
 import { ACCEPT, DocumentsTab } from "./DocumentsTab";
 import { SettingsTab } from "./SettingsTab";
@@ -99,14 +99,7 @@ function KnowledgeBaseDetail({ kb }: { kb: KnowledgeBase }) {
       <div role="tabpanel" aria-labelledby={`tab-${tab}`}>
         {tab === "documents" && <DocumentsTab kbId={kb.id} onUpload={upload} uploading={uploading} failures={failures} onDismissFailures={dismissFailures} />}
         {tab === "connectors" && <ConnectorsTab kbId={kb.id} />}
-        {tab === "access" && (
-          <div className="space-y-4">
-            <Callout tone="info" title="This tab is being redesigned">
-              Grants work as they did. The layout of this tab is rebuilt in a later update.
-            </Callout>
-            <AccessPanel kbId={kb.id} />
-          </div>
-        )}
+        {tab === "access" && <AccessTab kbId={kb.id} />}
         {tab === "settings" && <SettingsTab kb={kb} />}
       </div>
     </div>
