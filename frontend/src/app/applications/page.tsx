@@ -1,95 +1,106 @@
 "use client";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { AppWindow, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 import {
+  Chip,
   EmptyState,
   ErrorState,
-  LoadingState,
+  Icon,
   PageHeader,
   StatusBadge,
-  confirmDialog,
+  TBody,
+  Table,
+  TableSkeleton,
+  Td,
+  Th,
+  THead,
+  Tr,
 } from "@/components/ui";
 import { applicationsApi } from "@/lib/api/resources";
+import type { Application } from "@/lib/api/types";
+import { DeleteApplicationModal, applicationStatus } from "./DeleteApplication";
 
 export default function ApplicationsPage() {
-  const qc = useQueryClient();
   const list = useQuery({ queryKey: ["apps"], queryFn: applicationsApi.list });
-  const remove = useMutation({
-    mutationFn: applicationsApi.remove,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["apps"] }),
-  });
+  const [deleting, setDeleting] = useState<Application | null>(null);
+
+  const create = (
+    <Link href="/applications/new" className="btn btn-primary">
+      <Icon icon={Plus} size="sm" />
+      New Application
+    </Link>
+  );
 
   return (
     <div>
       <PageHeader
-        title="Assistants"
-        description="Each assistant is a callable, OpenAI-compatible endpoint over your documents."
-        action={
-          <Link href="/applications/new" className="btn btn-primary">
-            + New Assistant
-          </Link>
-        }
+        title="Applications"
+        description="Each Application answers from the Knowledge Bases you attach, in the chat and through an OpenAI-compatible endpoint."
+        action={create}
       />
-      {list.isLoading && <LoadingState />}
-      {list.isError && <ErrorState message={(list.error as Error).message} />}
+
+      {list.isLoading && <TableSkeleton columns={5} label="Loading Applications" />}
+      {list.isError && <ErrorState title="Could not load Applications" message={(list.error as Error).message} onRetry={() => list.refetch()} />}
       {list.data && list.data.length === 0 && (
         <EmptyState
-          title="No assistants yet"
-          description="Create an assistant to expose your documents through a chat interface and an API endpoint."
-          action={
-            <Link href="/applications/new" className="btn btn-primary">
-              New Assistant
-            </Link>
-          }
+          icon={AppWindow}
+          title="No Applications yet"
+          description="Create an Application to let people ask questions of your Knowledge Bases, in the chat or from their own software."
+          action={create}
         />
       )}
       {list.data && list.data.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {list.data.map((app) => (
-            <div key={app.id} className="card p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <Link
-                    href={`/applications/${app.id}`}
-                    className="text-lg font-semibold text-brand-700 hover:underline"
-                  >
-                    {app.name}
-                  </Link>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {app.description || "No description"}
-                  </p>
-                </div>
-                <StatusBadge status={app.rag_strategy} />
-              </div>
-              <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-500">
-                <span className="rounded bg-slate-100 px-2 py-1">
-                  {app.model_configuration?.llm_model ?? "no model"}
-                </span>
-                <span className="rounded bg-slate-100 px-2 py-1">
-                  {app.retrieval_configuration?.mode ?? "hybrid"} · top-k{" "}
-                  {app.retrieval_configuration?.top_k ?? "?"}
-                </span>
-                <span className="rounded bg-slate-100 px-2 py-1">
-                  {app.knowledge_bases.length} KB
-                </span>
-              </div>
-              <div className="mt-4 flex gap-2">
-                <Link href={`/applications/${app.id}`} className="btn btn-secondary">
-                  Open Playground
-                </Link>
-                <button
-                  className="btn btn-danger"
-                  onClick={() => {
-                    if (confirmDialog(`Delete "${app.name}"?`)) remove.mutate(app.id);
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+        <Table caption="Applications">
+          <THead>
+            <tr>
+              <Th>Name</Th>
+              <Th>Knowledge Bases</Th>
+              <Th>Model</Th>
+              <Th>Status</Th>
+              <Th />
+            </tr>
+          </THead>
+          <TBody>
+            {list.data.map((app) => {
+              const status = applicationStatus(app);
+              return (
+                <Tr key={app.id}>
+                  <Td>
+                    <Link href={`/applications/${app.id}`} className="font-medium text-accent-text hover:underline">
+                      {app.name}
+                    </Link>
+                    <div className="font-mono text-xs text-subtle">{app.slug}</div>
+                  </Td>
+                  <Td>
+                    {app.knowledge_bases.length === 0 ? (
+                      <span className="text-muted">None attached</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {app.knowledge_bases.map((kb) => (
+                          <Chip key={kb.id}>{kb.name}</Chip>
+                        ))}
+                      </div>
+                    )}
+                  </Td>
+                  <Td mono>{app.model_configuration?.llm_model ?? "—"}</Td>
+                  <Td>
+                    <StatusBadge status={status.label} tone={status.tone} />
+                  </Td>
+                  <Td align="right">
+                    <button type="button" className="btn btn-ghost btn-sm" aria-label={`Delete ${app.name}`} onClick={() => setDeleting(app)}>
+                      <Icon icon={Trash2} size="sm" />
+                    </button>
+                  </Td>
+                </Tr>
+              );
+            })}
+          </TBody>
+        </Table>
       )}
+
+      <DeleteApplicationModal app={deleting} onClose={() => setDeleting(null)} />
     </div>
   );
 }

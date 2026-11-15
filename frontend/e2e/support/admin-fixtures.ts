@@ -1,0 +1,120 @@
+// Fixtures for the Admin screens: shaped like the API's responses, with only the fields a test cares about overridden.
+
+const NOW = "2026-11-14T09:30:00Z";
+
+export const kb = (over: Record<string, unknown> = {}) => ({
+  id: "kb-hr",
+  name: "HR handbook",
+  slug: "hr-handbook",
+  description: "Policies and procedures.",
+  index_name: "rag-hr-handbook",
+  embedding_provider: "ollama",
+  embedding_model: "nomic-embed-text",
+  embedding_dimension: 768,
+  retrieval_mode: "hybrid",
+  default_top_k: 8,
+  document_count: 3,
+  chunk_count: 120,
+  created_at: NOW,
+  updated_at: NOW,
+  ...over,
+});
+
+export const application = (over: Record<string, unknown> = {}) => ({
+  id: "app-policies",
+  name: "HR policies",
+  slug: "hr-policies",
+  description: "Leave, expenses and conduct.",
+  system_prompt: null,
+  rag_strategy: "traditional",
+  streaming_enabled: true,
+  citations_enabled: true,
+  knowledge_bases: [kb()],
+  model_configuration: {
+    id: "mc-1",
+    llm_provider: "ollama",
+    llm_endpoint: null,
+    llm_api_key_ref: null,
+    llm_model: "llama3.2:1b",
+    embedding_provider: "ollama",
+    embedding_model: "nomic-embed-text",
+    vlm_enabled: false,
+    vlm_provider: null,
+    vlm_model: null,
+    generation_params: { temperature: 0, max_tokens: 1024 },
+  },
+  retrieval_configuration: {
+    id: "rc-1",
+    name: "app-policies",
+    mode: "hybrid",
+    top_k: 8,
+    hybrid_size_multiplier: 2,
+    rrf_rank_constant: 60,
+    score_threshold: null,
+    filters: null,
+  },
+  created_at: NOW,
+  updated_at: NOW,
+  ...over,
+});
+
+export const apiKey = (over: Record<string, unknown> = {}) => ({
+  id: "key-1",
+  application_id: "app-policies",
+  name: "Intranet",
+  key_prefix: "rag_live_ab",
+  key_last4: "9f2c",
+  is_active: true,
+  created_at: NOW,
+  last_used_at: null,
+  revoked_at: null,
+  ...over,
+});
+
+export const document = (over: Record<string, unknown> = {}) => ({
+  id: "doc-leave",
+  knowledge_base_id: "kb-hr",
+  title: "Leave policy.pdf",
+  source_uri: null,
+  content_type: "application/pdf",
+  file_size_bytes: 52_000,
+  status: "completed",
+  error: null,
+  chunk_count: 40,
+  parser_used: "docling",
+  processed_at: NOW,
+  created_at: NOW,
+  updated_at: NOW,
+  ...over,
+});
+
+export const job = (over: Record<string, unknown> = {}) => ({
+  id: "job-1",
+  document_id: "doc-leave",
+  knowledge_base_id: "kb-hr",
+  status: "completed",
+  stage: "index",
+  error: null,
+  stats: null,
+  started_at: NOW,
+  finished_at: NOW,
+  created_at: NOW,
+  ...over,
+});
+
+export const connector = (over: Record<string, unknown> = {}) => ({
+  id: "conn-1",
+  name: "policies-share",
+  knowledge_base_id: "kb-hr",
+  source_type: "path",
+  source: { path: "/mnt/sources/hr" },
+  enabled: true,
+  running: false,
+  last_run_at: NOW,
+  last_run_status: "ok",
+  last_run_summary: null,
+  files_synced: 12,
+  files_failed: 0,
+  created_at: NOW,
+  ...over,
+});

@@ -18,6 +18,25 @@ export function SkeletonText({ lines = 3, className = "" }: { lines?: number; cl
   );
 }
 
+/** Rows shaped like a table that is loading, so the page does not jump when the data lands. */
+export function TableSkeleton({ rows = 4, columns = 4, label = "Loading…" }: { rows?: number; columns?: number; label?: string }) {
+  return (
+    <div role="status" className="overflow-hidden rounded-panel border border-line bg-surface">
+      <span className="sr-only">{label}</span>
+      <div className="border-b border-line bg-sunken/50 px-4 py-3">
+        <Skeleton className="h-3 w-1/4" />
+      </div>
+      {Array.from({ length: rows }, (_, r) => (
+        <div key={r} className="flex gap-6 border-b border-line px-4 py-3.5 last:border-0">
+          {Array.from({ length: columns }, (_, c) => (
+            <Skeleton key={c} className={`h-4 ${c === 0 ? "w-1/4" : "flex-1"}`} />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function LoadingState({ label = "Loading…" }: { label?: string }) {
   return (
     <div role="status" className="py-8">

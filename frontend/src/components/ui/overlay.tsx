@@ -204,6 +204,46 @@ export function Sheet({
   );
 }
 
+/** A destructive action, named: says exactly what will be removed before the person agrees. */
+export function ConfirmModal({
+  open,
+  onClose,
+  onConfirm,
+  title,
+  children,
+  confirmLabel = "Delete",
+  pending = false,
+  error,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  title: string;
+  children: ReactNode;
+  confirmLabel?: string;
+  pending?: boolean;
+  error?: string | null;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title={title}>
+      <div className="space-y-4 text-sm text-muted">{children}</div>
+      {error && (
+        <p role="alert" className="mt-4 text-sm text-danger">
+          {error}
+        </p>
+      )}
+      <div className="mt-6 flex justify-end gap-2">
+        <button type="button" className="btn btn-secondary" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="btn btn-danger" onClick={onConfirm} disabled={pending}>
+          {pending ? "Working…" : confirmLabel}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 export function confirmDialog(message: string): boolean {
   if (typeof window === "undefined") return false;
   return window.confirm(message);
