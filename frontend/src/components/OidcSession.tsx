@@ -55,7 +55,12 @@ export function OidcSession({ children }: { children: React.ReactNode }) {
           setStatus("error");
         });
     } else {
-      um.getUser().then(apply);
+      um.getUser()
+        .then(apply)
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : String(err));
+          setStatus("error");
+        });
     }
 
     return () => {

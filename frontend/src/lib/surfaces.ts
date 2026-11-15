@@ -4,11 +4,13 @@
 
 export type Role = "admin" | "querier" | "auditor";
 
+const under = (pathname: string, base: string) => pathname === base || pathname.startsWith(`${base}/`);
+
 /** The role a path needs. Admin pages are the default so a new page is never shown to employees by accident. */
 export function roleForPath(pathname: string): Role | null {
   if (pathname.startsWith("/auth/")) return null; // the OIDC callback
-  if (pathname === "/chat" || pathname.startsWith("/chat/")) return "querier";
-  if (pathname === "/audit" || pathname.startsWith("/audit/")) return "auditor";
+  if (under(pathname, "/chat")) return "querier";
+  if (under(pathname, "/audit")) return "auditor";
   return "admin";
 }
 
@@ -19,8 +21,8 @@ export type Surface = "user" | "admin" | "bare";
  * specimen is shown without either, so it can set its own surfaces side by side.
  */
 export function surfaceForPath(pathname: string): Surface {
-  if (pathname === "/chat" || pathname.startsWith("/chat/")) return "user";
-  if (pathname === "/design" || pathname.startsWith("/design/")) return "bare";
+  if (under(pathname, "/chat")) return "user";
+  if (under(pathname, "/design")) return "bare";
   return "admin";
 }
 

@@ -4,7 +4,7 @@ import { LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Chip, Icon } from "@/components/ui";
 import { authApi } from "@/lib/api/resources";
-import { AUTH_MODE, onAuthRequired } from "@/lib/auth";
+import { AUTH_MODE, onApiReachability, onAuthRequired } from "@/lib/auth";
 
 /** Who the API thinks you are, from /auth/me, with sign-out when the app signs people in itself. */
 export function CallerBadge({
@@ -58,7 +58,19 @@ export function CallerBadge({
 // Appears when an API call returns 401 after the page loaded: the session expired mid-use.
 export function AuthBanner({ onSignIn }: { onSignIn?: () => void }) {
   const [required, setRequired] = useState(false);
+  const [unreachable, setUnreachable] = useState(false);
   useEffect(() => onAuthRequired(() => setRequired(true)), []);
+  useEffect(() => onApiReachability((reachable) => setUnreachable(!reachable)), []);
+  if (unreachable) {
+    return (
+      <div role="alert" className="mb-4 flex items-center justify-between gap-4 rounded-panel border border-clay/30 bg-clay-soft px-4 py-3 text-sm text-fg">
+        <span>The API is not answering, so some of this page may be out of date or missing.</span>
+        <button className="btn btn-secondary btn-sm" onClick={() => window.location.reload()}>
+          Reload
+        </button>
+      </div>
+    );
+  }
   if (!required) return null;
 
   const action =

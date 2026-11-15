@@ -101,6 +101,14 @@ test.describe("the Admin shell", () => {
   });
 });
 
+test("an Admin is told when the API stops answering part-way through", async ({ page }) => {
+  const api = await stubApi(page, "admin");
+  api.abort("GET", "/api/v1/system/health");
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "not answering" })).toBeVisible();
+});
+
 test.describe("with authentication off", () => {
   test("the anonymous caller gets the Admin shell and the Dashboard", async ({ page }) => {
     await stubApi(page, "anonymous");

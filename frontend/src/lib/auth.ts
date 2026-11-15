@@ -43,3 +43,17 @@ export function onAuthRequired(listener: () => void): () => void {
 export function notifyAuthRequired() {
   authRequiredListeners.forEach((listener) => listener());
 }
+
+// The API not answering at all (as opposed to refusing) is reported the same way, so the shell can
+// say so on whatever page the person is on. It clears when a request next succeeds.
+type Reachability = (reachable: boolean) => void;
+const reachabilityListeners = new Set<Reachability>();
+
+export function onApiReachability(listener: Reachability): () => void {
+  reachabilityListeners.add(listener);
+  return () => reachabilityListeners.delete(listener);
+}
+
+export function notifyApiReachability(reachable: boolean) {
+  reachabilityListeners.forEach((listener) => listener(reachable));
+}
