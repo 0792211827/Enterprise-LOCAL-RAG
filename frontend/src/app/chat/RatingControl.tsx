@@ -1,7 +1,7 @@
 "use client";
-import { ThumbsDown, ThumbsUp } from "lucide-react";
+import { Share2, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
-import { Icon } from "@/components/ui";
+import { Icon, Toggle } from "@/components/ui";
 import { chatApi } from "@/lib/api/resources";
 import type { MessageFeedback } from "@/lib/api/types";
 
@@ -65,32 +65,46 @@ export function RatingControl({
   );
 
   return (
-    <div>
+    <div role="group" aria-label="Rate this answer">
       <div className="flex items-center gap-1 text-xs text-subtle">
         {thumb("up", "Good answer", ThumbsUp)}
         {thumb("down", "Bad answer", ThumbsDown)}
-        {feedback?.share_with_admins && <span className="ml-1">Shared with admins</span>}
+        {feedback?.share_with_admins && (
+          <span className="ml-1 inline-flex items-center gap-1 text-accent-text">
+            <Icon icon={Share2} size="sm" />
+            Shared with Admins
+          </span>
+        )}
       </div>
       {editing && (
-        <div className="mt-2 max-w-md space-y-2 font-sans">
+        <form
+          className="mt-2 max-w-md space-y-3 rounded-panel border border-line bg-surface p-3 font-sans"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
           <textarea
             className="input h-16 w-full"
-            placeholder="Add a comment (optional): admins will see it"
+            placeholder="Add a comment (optional)"
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             maxLength={2000}
             aria-label="Comment"
           />
-          <label className="flex items-start gap-2 text-xs text-muted">
-            <input type="checkbox" className="mt-0.5" checked={share} onChange={(e) => setShare(e.target.checked)} />
-            <span>
-              Share this exchange with admins. They will see this question and answer, and nothing else from your
-              conversations.
-            </span>
-          </label>
-          {error && <div className="text-xs text-danger">{error}</div>}
-          <div className="flex gap-2">
-            <button type="button" className="btn btn-primary btn-sm" onClick={save}>
+          <Toggle
+            checked={share}
+            onChange={setShare}
+            label="Share this exchange with Admins"
+            description="Admins will see only this question and its answer, not the rest of your Conversation."
+          />
+          {error && (
+            <div role="alert" className="text-xs text-danger">
+              {error}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className="btn btn-primary btn-sm">
               Save rating
             </button>
             {feedback && (
@@ -102,7 +116,7 @@ export function RatingControl({
               Cancel
             </button>
           </div>
-        </div>
+        </form>
       )}
     </div>
   );
