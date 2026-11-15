@@ -1,205 +1,122 @@
 "use client";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { Upload } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { Fragment, useRef, useState } from "react";
-import {
-  EmptyState,
-  ErrorState,
-  LoadingState,
-  MetricCard,
-  PageHeader,
-  StatusBadge,
-  confirmDialog,
-} from "@/components/ui";
-import { documentsApi, knowledgeBasesApi } from "@/lib/api/resources";
+import { useParams, useSearchParams } from "next/navigation";
+import { Suspense, useRef, useState } from "react";
+import { Callout, ErrorState, Icon, MetricCard, PageHeader, Skeleton, Tabs } from "@/components/ui";
+import { knowledgeBasesApi } from "@/lib/api/resources";
+import type { KnowledgeBase } from "@/lib/api/types";
+import { timeAgo } from "@/lib/format";
 import { AccessPanel } from "./AccessPanel";
-import { RestrictionEditor } from "./RestrictionEditor";
+import { ConnectorsTab } from "./ConnectorsTab";
+import { ACCEPT, DocumentsTab } from "./DocumentsTab";
+import { SettingsTab } from "./SettingsTab";
+import { useUpload } from "./useUpload";
 
-export default function KnowledgeBaseDetailPage() {
+const TABS = [
+  { id: "documents", label: "Documents" },
+  { id: "connectors", label: "Connectors" },
+  { id: "access", label: "Access" },
+  { id: "settings", label: "Settings" },
+];
+
+function DetailSkeleton() {
+  return (
+    <div role="status" className="space-y-4">
+      <span className="sr-only">Loading Knowledge Base</span>
+      <Skeleton className="h-8 w-1/3" />
+      <Skeleton className="h-4 w-1/2" />
+      <Skeleton className="mt-6 h-9 w-full" />
+      <Skeleton className="h-40 w-full" />
+    </div>
+  );
+}
+
+function Detail() {
   const { id } = useParams<{ id: string }>();
-  const qc = useQueryClient();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [restrictingId, setRestrictingId] = useState<string | null>(null);
+  // Ingestion finishes after the upload response, so the counters change with no request to hang an invalidation off.
+  const kb = useQuery({ queryKey: ["kb", id], queryFn: () => knowledgeBasesApi.get(id), refetchInterval: 10_000 });
 
-  // Both poll: ingestion runs in a background task that finishes *after* the
-  // upload response, so the KB counters change with no request to hang an
-  // invalidation off. Without the poll they stay stale until a hard reload.
-  const kb = useQuery({
-    queryKey: ["kb", id],
-    queryFn: () => knowledgeBasesApi.get(id),
-    refetchInterval: 5_000,
-  });
-  const docs = useQuery({
-    queryKey: ["docs", id],
-    queryFn: () => documentsApi.listForKb(id),
-    refetchInterval: 5_000,
-  });
+  if (kb.isLoading) return <DetailSkeleton />;
+  if (kb.isError) {
+    return (
+      <div>
+        <Link href="/knowledge-bases" className="text-sm text-accent-text underline">
+          Back to Knowledge Bases
+        </Link>
+        <div className="mt-4">
+          <ErrorState title="Could not load this Knowledge Base" message={(kb.error as Error).message} onRetry={() => kb.refetch()} />
+        </div>
+      </div>
+    );
+  }
+  return <KnowledgeBaseDetail kb={kb.data!} />;
+}
 
-  const restricted = useQuery({
-    queryKey: ["doc-restriction-map", id],
-    queryFn: () => documentsApi.restrictionsForKb(id),
-  });
-
-  const upload = useMutation({
-    mutationFn: (file: File) => documentsApi.upload(id, file),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["docs", id] });
-      qc.invalidateQueries({ queryKey: ["kb", id] });
-    },
-    onError: (e) => setError((e as Error).message),
-  });
-
-  const removeDoc = useMutation({
-    mutationFn: documentsApi.remove,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["docs", id] });
-      qc.invalidateQueries({ queryKey: ["kb", id] });
-    },
-    onError: (e) => setError((e as Error).message),
-  });
-  const reprocess = useMutation({
-    mutationFn: documentsApi.reprocess,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["docs", id] });
-      qc.invalidateQueries({ queryKey: ["kb", id] });
-    },
-    onError: (e) => setError((e as Error).message),
-  });
-
-  if (kb.isLoading) return <LoadingState />;
-  if (kb.isError) return <ErrorState message={(kb.error as Error).message} />;
+function KnowledgeBaseDetail({ kb }: { kb: KnowledgeBase }) {
+  const requested = useSearchParams().get("tab");
+  const [tab, setTab] = useState(TABS.some((t) => t.id === requested) ? requested! : "documents");
+  const picker = useRef<HTMLInputElement>(null);
+  const { upload, uploading, failures, dismissFailures } = useUpload(kb.id);
 
   return (
     <div>
-      <Link href="/knowledge-bases" className="text-sm text-brand-600">
-        ← Knowledge Bases
-      </Link>
       <PageHeader
-        title={kb.data!.name}
-        description={kb.data!.description || "No description"}
+        title={kb.name}
+        description={kb.description || undefined}
         action={
           <>
             <input
-              ref={fileRef}
+              ref={picker}
               type="file"
-              className="hidden"
+              multiple
+              accept={ACCEPT}
+              className="sr-only"
+              aria-label="Upload Documents"
+              tabIndex={-1}
               onChange={(e) => {
-                setError(null);
-                const f = e.target.files?.[0];
-                if (f) upload.mutate(f);
+                setTab("documents");
+                upload(Array.from(e.target.files ?? []));
                 e.target.value = "";
               }}
             />
-            <button
-              className="btn btn-primary"
-              disabled={upload.isPending}
-              onClick={() => fileRef.current?.click()}
-            >
-              {upload.isPending ? "Uploading…" : "+ Upload Document"}
+            <button type="button" className="btn btn-primary" disabled={!!uploading} onClick={() => picker.current?.click()}>
+              <Icon icon={Upload} size="sm" />
+              {uploading ? "Uploading…" : "Upload Documents"}
             </button>
           </>
         }
       />
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <MetricCard label="Documents" value={kb.data!.document_count} />
-        <MetricCard label="Chunks" value={kb.data!.chunk_count} />
-        <MetricCard label="Retrieval" value={kb.data!.retrieval_mode} />
-        <MetricCard label="Embedding Dim" value={kb.data!.embedding_dimension} />
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <MetricCard label="Documents" value={kb.document_count} />
+        <MetricCard label="Size" value={`${kb.chunk_count.toLocaleString()} chunks`} />
+        <MetricCard label="Last updated" value={timeAgo(kb.updated_at ?? kb.created_at)} />
       </div>
 
-      {error && (
-        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
-
-      <section className="card mt-6">
-        <div className="border-b border-slate-100 px-5 py-4 text-sm font-semibold text-slate-700">
-          Documents
-        </div>
-        {docs.isLoading && <LoadingState />}
-        {docs.data && docs.data.length === 0 && (
-          <EmptyState
-            title="No documents"
-            description="Upload PDF, TXT or Markdown files to ingest them into this knowledge base."
-          />
+      <Tabs tabs={TABS} value={tab} onChange={setTab} />
+      <div role="tabpanel" aria-labelledby={`tab-${tab}`}>
+        {tab === "documents" && <DocumentsTab kbId={kb.id} onUpload={upload} uploading={uploading} failures={failures} onDismissFailures={dismissFailures} />}
+        {tab === "connectors" && <ConnectorsTab />}
+        {tab === "access" && (
+          <div className="space-y-4">
+            <Callout tone="info" title="This tab is being redesigned">
+              Grants work as they did. The layout of this tab is rebuilt in a later update.
+            </Callout>
+            <AccessPanel kbId={kb.id} />
+          </div>
         )}
-        {docs.data && docs.data.length > 0 && (
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-400">
-              <tr>
-                <th className="px-5 py-3 font-medium">Title</th>
-                <th className="px-4 py-3 font-medium">Type</th>
-                <th className="px-4 py-3 font-medium">Chunks</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {docs.data.map((d) => (
-                <Fragment key={d.id}>
-                <tr className="border-t border-slate-100">
-                  <td className="px-5 py-3">
-                    <div className="font-medium text-slate-700">
-                      {d.title}
-                      {restricted.data?.[d.id] && (
-                        <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-800">
-                          Restricted · {restricted.data[d.id].length}
-                        </span>
-                      )}
-                    </div>
-                    {d.error && <div className="text-xs text-red-500">{d.error}</div>}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-slate-500">
-                    {d.content_type ?? "—"}
-                  </td>
-                  <td className="px-4 py-3">{d.chunk_count}</td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={d.status} />
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button
-                        className="btn btn-secondary"
-                        onClick={() => setRestrictingId(restrictingId === d.id ? null : d.id)}
-                      >
-                        {restrictingId === d.id ? "Close" : "Restrict"}
-                      </button>
-                      <button
-                        className="btn btn-secondary"
-                        onClick={() => reprocess.mutate(d.id)}
-                      >
-                        Reprocess
-                      </button>
-                      <button
-                        className="btn btn-danger"
-                        onClick={() => {
-                          if (confirmDialog(`Delete "${d.title}"?`)) removeDoc.mutate(d.id);
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-                {restrictingId === d.id && (
-                  <tr className="border-t border-slate-100 bg-slate-50">
-                    <td colSpan={5} className="px-5 py-4">
-                      <RestrictionEditor kbId={id} documentId={d.id} />
-                    </td>
-                  </tr>
-                )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <AccessPanel kbId={id} />
+        {tab === "settings" && <SettingsTab kb={kb} />}
+      </div>
     </div>
+  );
+}
+
+export default function KnowledgeBaseDetailPage() {
+  return (
+    <Suspense fallback={<DetailSkeleton />}>
+      <Detail />
+    </Suspense>
   );
 }

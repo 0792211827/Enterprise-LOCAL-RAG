@@ -32,6 +32,44 @@ export interface KnowledgeBaseCreate {
   default_top_k?: number;
 }
 
+export type KnowledgeBaseUpdate = Partial<Pick<KnowledgeBaseCreate, "name" | "description" | "retrieval_mode" | "default_top_k">>;
+
+export type ConnectorSourceType = "path" | "s3";
+
+/** One folder or bucket mirrored into a Knowledge Base. Credentials appear in `source` only as `env:NAME` references. */
+export interface Connector {
+  id: string;
+  name: string;
+  knowledge_base_id: string;
+  source_type: ConnectorSourceType;
+  source: Record<string, string>;
+  enabled: boolean;
+  running: boolean;
+  last_run_at: string | null;
+  /** ok | partial | error; null until the first run. */
+  last_run_status: string | null;
+  last_run_summary: Record<string, unknown> | null;
+  files_synced: number;
+  files_failed: number;
+  created_at: string | null;
+}
+
+export interface ConnectorCreate {
+  name: string;
+  knowledge_base_id: string;
+  source_type: ConnectorSourceType;
+  enabled?: boolean;
+  path?: string;
+  endpoint_url?: string;
+  bucket?: string;
+  prefix?: string;
+  region?: string;
+  access_key_ref?: string;
+  secret_key_ref?: string;
+}
+
+export type ConnectorUpdate = Partial<Omit<ConnectorCreate, "name" | "knowledge_base_id" | "source_type">>;
+
 export interface DocumentItem {
   id: string;
   knowledge_base_id: string;

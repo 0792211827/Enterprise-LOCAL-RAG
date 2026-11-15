@@ -1,0 +1,218 @@
+"use client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { FileText, Lock, RotateCw, ShieldCheck, Trash2, Upload, X } from "lucide-react";
+import { Fragment, useRef, useState } from "react";
+import {
+  Callout,
+  Chip,
+  ConfirmModal,
+  EmptyState,
+  ErrorState,
+  Icon,
+  StatusBadge,
+  TBody,
+  Table,
+  TableSkeleton,
+  Td,
+  Th,
+  THead,
+  Tr,
+} from "@/components/ui";
+import { documentsApi } from "@/lib/api/resources";
+import type { DocumentItem } from "@/lib/api/types";
+import { formatBytes, timeAgo } from "@/lib/format";
+import { IngestionStage, titleCase, useLatestJobs } from "../ingestion";
+import { RestrictionEditor } from "./RestrictionEditor";
+import type { UploadFailure } from "./useUpload";
+
+export const ACCEPT = ".pdf,.txt,.md,text/plain,text/markdown,application/pdf";
+
+export function DocumentsTab({
+  kbId,
+  onUpload,
+  uploading,
+  failures,
+  onDismissFailures,
+}: {
+  kbId: string;
+  onUpload: (files: File[]) => void;
+  uploading: string | null;
+  failures: UploadFailure[];
+  onDismissFailures: () => void;
+}) {
+  const qc = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [restrictingId, setRestrictingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<DocumentItem | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // Ingestion finishes after the upload response, so the list polls while anything is unfinished.
+  const docs = useQuery({
+    queryKey: ["docs", kbId],
+    queryFn: () => documentsApi.listForKb(kbId),
+    refetchInterval: (q) => (q.state.data?.some((d) => !["completed", "failed"].includes(d.status.toLowerCase())) ? 2_000 : 15_000),
+  });
+  const jobs = useLatestJobs(docs.data);
+  const restricted = useQuery({ queryKey: ["doc-restriction-map", kbId], queryFn: () => documentsApi.restrictionsForKb(kbId) });
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["docs", kbId] });
+    qc.invalidateQueries({ queryKey: ["kb", kbId] });
+    qc.invalidateQueries({ queryKey: ["jobs"] });
+  };
+  const remove = useMutation({
+    mutationFn: (id: string) => documentsApi.remove(id),
+    onSuccess: () => {
+      setDeleting(null);
+      refresh();
+    },
+  });
+  const reprocess = useMutation({
+    mutationFn: (id: string) => documentsApi.reprocess(id),
+    onSuccess: refresh,
+    onError: (e) => setActionError((e as Error).message),
+  });
+
+  return (
+    <div className="space-y-4">
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          onUpload(Array.from(e.dataTransfer.files));
+        }}
+        className={`flex flex-col items-center gap-2 rounded-panel border-2 border-dashed px-6 py-7 text-center transition-colors duration-fast ${
+          dragging ? "border-accent bg-accent-soft" : "border-line-strong bg-surface"
+        }`}
+      >
+        <Icon icon={Upload} size="lg" className="text-subtle" />
+        <p className="text-sm font-medium text-fg">Drop files here to add them to this Knowledge Base</p>
+        <p className="text-xs text-muted">PDF, plain text or Markdown. They are parsed, split and indexed in turn.</p>
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          accept={ACCEPT}
+          className="sr-only"
+          aria-label="Choose Documents to upload"
+          tabIndex={-1}
+          onChange={(e) => {
+            onUpload(Array.from(e.target.files ?? []));
+            e.target.value = "";
+          }}
+        />
+        <button type="button" className="btn btn-secondary mt-1" disabled={!!uploading} onClick={() => fileRef.current?.click()}>
+          {uploading ? `Uploading ${uploading}…` : "Choose files"}
+        </button>
+      </div>
+
+      {failures.length > 0 && (
+        <Callout tone="danger" title={failures.length === 1 ? "A file was not added" : `${failures.length} files were not added`}>
+          <ul className="mt-1 space-y-1">
+            {failures.map((f) => (
+              <li key={f.file}>
+                <strong className="text-fg">{f.file}</strong>: {f.message}
+              </li>
+            ))}
+          </ul>
+          <button type="button" className="btn btn-ghost btn-sm mt-2" onClick={onDismissFailures}>
+            <Icon icon={X} size="sm" />
+            Dismiss
+          </button>
+        </Callout>
+      )}
+      {actionError && <ErrorState title="That did not work" message={actionError} />}
+
+      {docs.isLoading && <TableSkeleton columns={5} label="Loading Documents" />}
+      {docs.isError && <ErrorState title="Could not load Documents" message={(docs.error as Error).message} onRetry={() => docs.refetch()} />}
+      {docs.data && docs.data.length === 0 && (
+        <EmptyState icon={FileText} title="No Documents yet" description="Upload files above, or connect a folder on the Connectors tab to keep this Knowledge Base in sync." />
+      )}
+      {docs.data && docs.data.length > 0 && (
+        <Table caption="Documents">
+          <THead>
+            <tr>
+              <Th>Document</Th>
+              <Th>Ingestion stage</Th>
+              <Th>Status</Th>
+              <Th align="right">Chunks</Th>
+              <Th align="right">Size</Th>
+              <Th>Updated</Th>
+              <Th />
+            </tr>
+          </THead>
+          <TBody>
+            {docs.data.map((d) => (
+              <Fragment key={d.id}>
+                <Tr>
+                  <Td>
+                    <div className="flex items-center gap-2 font-medium">
+                      {d.title}
+                      {restricted.data?.[d.id] && (
+                        <Chip tone="clay" icon={Lock}>
+                          Restricted · {restricted.data[d.id].length}
+                        </Chip>
+                      )}
+                    </div>
+                  </Td>
+                  <Td>
+                    <IngestionStage doc={d} job={jobs.data?.get(d.id)} />
+                  </Td>
+                  <Td>
+                    <StatusBadge status={titleCase(d.status)} />
+                    {(d.error || jobs.data?.get(d.id)?.error) && d.status.toLowerCase() === "failed" && (
+                      <p className="mt-1 max-w-xs text-xs text-danger [overflow-wrap:anywhere]">{d.error || jobs.data?.get(d.id)?.error}</p>
+                    )}
+                  </Td>
+                  <Td align="right">{d.chunk_count}</Td>
+                  <Td align="right">{formatBytes(d.file_size_bytes)}</Td>
+                  <Td>{timeAgo(d.updated_at ?? d.created_at)}</Td>
+                  <Td align="right">
+                    <div className="flex justify-end gap-1">
+                      <button type="button" className="btn btn-ghost btn-sm" aria-label={`Restrict ${d.title}`} aria-expanded={restrictingId === d.id} onClick={() => setRestrictingId(restrictingId === d.id ? null : d.id)}>
+                        <Icon icon={ShieldCheck} size="sm" />
+                      </button>
+                      <button type="button" className="btn btn-ghost btn-sm" aria-label={`Reprocess ${d.title}`} onClick={() => reprocess.mutate(d.id)}>
+                        <Icon icon={RotateCw} size="sm" />
+                      </button>
+                      <button type="button" className="btn btn-ghost btn-sm" aria-label={`Delete ${d.title}`} onClick={() => setDeleting(d)}>
+                        <Icon icon={Trash2} size="sm" />
+                      </button>
+                    </div>
+                  </Td>
+                </Tr>
+                {restrictingId === d.id && (
+                  <tr className="bg-sunken/40">
+                    <td colSpan={7} className="px-5 py-4">
+                      <RestrictionEditor kbId={kbId} documentId={d.id} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </TBody>
+        </Table>
+      )}
+
+      <ConfirmModal
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title={deleting ? `Delete ${deleting.title}?` : "Delete Document"}
+        confirmLabel="Delete Document"
+        pending={remove.isPending}
+        error={remove.isError ? (remove.error as Error).message : null}
+        onConfirm={() => deleting && remove.mutate(deleting.id)}
+      >
+        <p>
+          <strong className="text-fg">{deleting?.title}</strong> and its indexed passages will be removed. Answers will no longer cite it.
+        </p>
+      </ConfirmModal>
+    </div>
+  );
+}

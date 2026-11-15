@@ -29,6 +29,10 @@ import type {
   IngestionJob,
   KnowledgeBase,
   KnowledgeBaseCreate,
+  KnowledgeBaseUpdate,
+  Connector,
+  ConnectorCreate,
+  ConnectorUpdate,
   MessageFeedback,
   Provider,
   ProviderCreate,
@@ -50,6 +54,8 @@ export const knowledgeBasesApi = {
   get: (id: string) => apiGet<KnowledgeBase>(`/api/v1/knowledge-bases/${id}`),
   create: (payload: KnowledgeBaseCreate) =>
     apiSend<KnowledgeBase>("/api/v1/knowledge-bases", "POST", payload),
+  update: (id: string, payload: KnowledgeBaseUpdate) =>
+    apiSend<KnowledgeBase>(`/api/v1/knowledge-bases/${id}`, "PATCH", payload),
   remove: (id: string) => apiSend<void>(`/api/v1/knowledge-bases/${id}`, "DELETE"),
   grants: (id: string) => apiGet<KnowledgeBaseGrant[]>(`/api/v1/knowledge-bases/${id}/grants`),
   replaceGrants: (id: string, grants: KnowledgeBaseGrantEntry[]) =>
@@ -90,6 +96,13 @@ export const documentsApi = {
   /** Latest ingestion job for a document — drives per-file stage display. */
   job: (documentId: string) =>
     apiGet<IngestionJob>(`/api/v1/documents/${documentId}/ingestion-job`),
+};
+
+export const connectorsApi = {
+  list: () => apiGet<Connector[]>("/api/v1/connectors"),
+  create: (payload: ConnectorCreate) => apiSend<Connector>("/api/v1/connectors", "POST", payload),
+  update: (id: string, payload: ConnectorUpdate) => apiSend<Connector>(`/api/v1/connectors/${id}`, "PATCH", payload),
+  remove: (id: string) => apiSend<void>(`/api/v1/connectors/${id}`, "DELETE"),
 };
 
 export const applicationsApi = {

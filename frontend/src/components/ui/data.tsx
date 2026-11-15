@@ -157,7 +157,7 @@ export const Td = ({
   align?: "left" | "right";
   mono?: boolean;
 }) => (
-  <td className={`px-4 py-2.5 text-fg ${align === "right" ? "text-right tabular-nums" : ""} ${mono ? "font-mono text-xs" : ""}`}>
+  <td className={`px-4 py-2.5 text-fg ${align === "right" ? "whitespace-nowrap text-right tabular-nums" : ""} ${mono ? "font-mono text-xs" : ""}`}>
     {children}
   </td>
 );

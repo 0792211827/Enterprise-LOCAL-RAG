@@ -1,190 +1,153 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Library, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
+  ConfirmModal,
   EmptyState,
   ErrorState,
-  LoadingState,
+  Icon,
   Modal,
   PageHeader,
-  StatusBadge,
-  confirmDialog,
+  TBody,
+  Table,
+  TableSkeleton,
+  Td,
+  Th,
+  THead,
+  Tr,
 } from "@/components/ui";
 import { knowledgeBasesApi } from "@/lib/api/resources";
-import type { KnowledgeBaseCreate } from "@/lib/api/types";
+import type { KnowledgeBase } from "@/lib/api/types";
+import { timeAgo } from "@/lib/format";
+import { KnowledgeBaseFields, INITIAL_KB_FORM, type KnowledgeBaseForm } from "./KnowledgeBaseFields";
 
 export default function KnowledgeBasesPage() {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<KnowledgeBase | null>(null);
   const list = useQuery({ queryKey: ["kbs"], queryFn: knowledgeBasesApi.list });
 
   const remove = useMutation({
-    mutationFn: knowledgeBasesApi.remove,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["kbs"] }),
+    mutationFn: (id: string) => knowledgeBasesApi.remove(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["kbs"] });
+      setDeleting(null);
+    },
   });
+
+  const create = (
+    <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
+      <Icon icon={Plus} size="sm" />
+      New Knowledge Base
+    </button>
+  );
 
   return (
     <div>
-      <PageHeader
-        title="Knowledge Bases"
-        description="Collections of enterprise documents with isolated indexes."
-        action={
-          <button className="btn btn-primary" onClick={() => setOpen(true)}>
-            + Create Knowledge Base
-          </button>
-        }
-      />
+      <PageHeader title="Knowledge Bases" description="Collections of Documents. Each is indexed on its own, and each Application draws on the ones you attach." action={create} />
 
-      {list.isLoading && <LoadingState />}
-      {list.isError && <ErrorState message={(list.error as Error).message} />}
+      {list.isLoading && <TableSkeleton columns={5} label="Loading Knowledge Bases" />}
+      {list.isError && <ErrorState title="Could not load Knowledge Bases" message={(list.error as Error).message} onRetry={() => list.refetch()} />}
       {list.data && list.data.length === 0 && (
         <EmptyState
-          title="No knowledge bases yet"
-          description="Create your first knowledge base to start ingesting documents."
-          action={
-            <button className="btn btn-primary" onClick={() => setOpen(true)}>
-              Create Knowledge Base
-            </button>
-          }
+          icon={Library}
+          title="No Knowledge Bases yet"
+          description="Create a Knowledge Base, then upload Documents into it or connect a folder to keep it in sync."
+          action={create}
         />
       )}
-
       {list.data && list.data.length > 0 && (
-        <div className="card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-400">
-              <tr>
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Documents</th>
-                <th className="px-4 py-3 font-medium">Chunks</th>
-                <th className="px-4 py-3 font-medium">Retrieval</th>
-                <th className="px-4 py-3 font-medium">Embedding</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {list.data.map((kb) => (
-                <tr key={kb.id} className="border-t border-slate-100 hover:bg-slate-50">
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/knowledge-bases/${kb.id}`}
-                      className="font-medium text-brand-700 hover:underline"
-                    >
-                      {kb.name}
-                    </Link>
-                    <div className="text-xs text-slate-400">{kb.slug}</div>
-                  </td>
-                  <td className="px-4 py-3">{kb.document_count}</td>
-                  <td className="px-4 py-3">{kb.chunk_count}</td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={kb.retrieval_mode} />
-                  </td>
-                  <td className="px-4 py-3 text-xs text-slate-500">{kb.embedding_model}</td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      className="btn btn-danger"
-                      onClick={() => {
-                        if (confirmDialog(`Delete "${kb.name}"? This removes its documents.`))
-                          remove.mutate(kb.id);
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table caption="Knowledge Bases">
+          <THead>
+            <tr>
+              <Th>Name</Th>
+              <Th align="right">Documents</Th>
+              <Th align="right">Size</Th>
+              <Th>Last updated</Th>
+              <Th />
+            </tr>
+          </THead>
+          <TBody>
+            {list.data.map((kb) => (
+              <Tr key={kb.id}>
+                <Td>
+                  <Link href={`/knowledge-bases/${kb.id}`} className="font-medium text-accent-text hover:underline">
+                    {kb.name}
+                  </Link>
+                  <div className="font-mono text-xs text-subtle">{kb.slug}</div>
+                </Td>
+                <Td align="right">{kb.document_count}</Td>
+                <Td align="right">{kb.chunk_count.toLocaleString()} chunks</Td>
+                <Td>{timeAgo(kb.updated_at ?? kb.created_at)}</Td>
+                <Td align="right">
+                  <button type="button" className="btn btn-ghost btn-sm" aria-label={`Delete ${kb.name}`} onClick={() => setDeleting(kb)}>
+                    <Icon icon={Trash2} size="sm" />
+                  </button>
+                </Td>
+              </Tr>
+            ))}
+          </TBody>
+        </Table>
       )}
 
-      <CreateKbModal open={open} onClose={() => setOpen(false)} />
+      <CreateKnowledgeBase open={creating} onClose={() => setCreating(false)} />
+
+      <ConfirmModal
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title={deleting ? `Delete ${deleting.name}?` : "Delete Knowledge Base"}
+        confirmLabel="Delete Knowledge Base"
+        pending={remove.isPending}
+        error={remove.isError ? (remove.error as Error).message : null}
+        onConfirm={() => deleting && remove.mutate(deleting.id)}
+      >
+        <p>
+          <strong className="text-fg">{deleting?.name}</strong> and its {deleting?.document_count} Document{deleting?.document_count === 1 ? "" : "s"} will be removed. Applications that use it will no longer
+          be able to answer from it.
+        </p>
+      </ConfirmModal>
     </div>
   );
 }
 
-function CreateKbModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function CreateKnowledgeBase({ open, onClose }: { open: boolean; onClose: () => void }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState<KnowledgeBaseCreate>({
-    name: "",
-    description: "",
-    retrieval_mode: "hybrid",
-    default_top_k: 8,
-  });
+  const router = useRouter();
+  const [form, setForm] = useState<KnowledgeBaseForm>(INITIAL_KB_FORM);
   const create = useMutation({
-    mutationFn: knowledgeBasesApi.create,
-    onSuccess: () => {
+    mutationFn: () => knowledgeBasesApi.create({ ...form, name: form.name.trim() }),
+    onSuccess: (kb) => {
       qc.invalidateQueries({ queryKey: ["kbs"] });
-      setForm({ name: "", description: "", retrieval_mode: "hybrid", default_top_k: 8 });
+      setForm(INITIAL_KB_FORM);
       onClose();
+      router.push(`/knowledge-bases/${kb.id}`);
     },
   });
 
   return (
-    <Modal open={open} onClose={onClose} title="Create Knowledge Base">
+    <Modal open={open} onClose={onClose} title="New Knowledge Base">
       <form
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          create.mutate(form);
+          create.mutate();
         }}
       >
-        <div>
-          <label className="label">Name</label>
-          <input
-            className="input"
-            required
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            placeholder="HR Policies"
-          />
-        </div>
-        <div>
-          <label className="label">Description</label>
-          <textarea
-            className="input"
-            rows={2}
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="label">Retrieval Mode</label>
-            <select
-              className="input"
-              value={form.retrieval_mode}
-              onChange={(e) =>
-                setForm({ ...form, retrieval_mode: e.target.value as KnowledgeBaseCreate["retrieval_mode"] })
-              }
-            >
-              <option value="hybrid">Hybrid (BM25 + Vector)</option>
-              <option value="bm25">BM25</option>
-              <option value="vector">Vector</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Default Top K</label>
-            <input
-              type="number"
-              min={1}
-              max={100}
-              className="input"
-              value={form.default_top_k}
-              onChange={(e) => setForm({ ...form, default_top_k: Number(e.target.value) })}
-            />
-          </div>
-        </div>
+        <KnowledgeBaseFields value={form} onChange={(p) => setForm((f) => ({ ...f, ...p }))} autoFocus />
         {create.isError && (
-          <p className="text-sm text-red-600">{(create.error as Error).message}</p>
+          <p role="alert" className="text-sm text-danger">
+            {(create.error as Error).message}
+          </p>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className="btn btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="btn btn-primary" disabled={create.isPending}>
-            {create.isPending ? "Creating…" : "Create"}
+          <button type="submit" className="btn btn-primary" disabled={create.isPending || !form.name.trim()}>
+            {create.isPending ? "Creating…" : "Create Knowledge Base"}
           </button>
         </div>
       </form>
