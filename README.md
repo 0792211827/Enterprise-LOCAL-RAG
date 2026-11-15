@@ -169,6 +169,8 @@ npm run build        # production build + type check
 
 The browser calls the API at `http://localhost:8000` (configurable via the
 `NEXT_PUBLIC_API_URL` build arg in `compose.yml`). The backend enables CORS for
+npx playwright install chromium   # once: the browser the UI tests drive
+npm run test:e2e     # builds the app (auth off and OIDC) and runs the browser tests, offline
 `localhost:3000/3001` out of the box.
 
 ## ⚙️ Configuration
