@@ -45,12 +45,15 @@ export function ConnectorsTab({ kbId }: { kbId: string }) {
       {failed.length > 0 && (
         <Callout tone="danger" title={failed.length === 1 ? `${failed[0].name} failed on its last run` : `${failed.length} Connectors failed on their last run`}>
           <ul className="mt-1 space-y-1">
-            {failed.map((c) => (
-              <li key={c.id}>
-                <strong className="text-fg">{c.name}</strong>
-                {lastError(c) ? `: ${lastError(c)!.replace(/\.$/, "")}.` : ": see the Connector job's log for the reason."} Its Documents have not been refreshed since {c.last_run_at ? timeAgo(c.last_run_at) : "it was created"}.
-              </li>
-            ))}
+            {failed.map((c) => {
+              const reason = lastError(c)?.replace(/\.$/, "");
+              return (
+                <li key={c.id}>
+                  <strong className="text-fg">{c.name}</strong>
+                  {reason ? `: ${reason}.` : ": see the Connector job's log for the reason."} Its Documents have not been refreshed since {c.last_run_at ? timeAgo(c.last_run_at) : "it was created"}.
+                </li>
+              );
+            })}
           </ul>
         </Callout>
       )}

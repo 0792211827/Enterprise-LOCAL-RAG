@@ -7,7 +7,7 @@ export type Health = { label: string; tone: "ok" | "warn" | "danger" | "info" | 
 
 /** How a Connector is doing, from its last run. `failed` marks the ones that need an Admin's attention. */
 export function connectorHealth(c: Connector): Health {
-  if (c.running) return { label: "Running", tone: "info", failed: false };
+  if (c.running) return { label: "Running", tone: "info", failed: c.last_run_status === "error" };
   if (c.last_run_status === "error") return { label: "Failed", tone: "danger", failed: true };
   if (c.last_run_status === "partial") return { label: "Some files failed", tone: "warn", failed: false };
   if (c.last_run_status === "ok") return { label: "Healthy", tone: "ok", failed: false };
