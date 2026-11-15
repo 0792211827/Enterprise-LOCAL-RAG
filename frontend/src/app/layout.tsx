@@ -1,4 +1,10 @@
 import type { Metadata } from "next";
+// Fonts are bundled with the app (no CDN): serif for the wordmark and reading text, sans for the
+// interface, mono for identifiers and code.
+import "@fontsource-variable/newsreader/wght.css";
+import "@fontsource-variable/newsreader/wght-italic.css";
+import "@fontsource-variable/instrument-sans";
+import "@fontsource-variable/jetbrains-mono";
 import "./globals.css";
 import { AppShell } from "./AppShell";
 import { Providers } from "./providers";

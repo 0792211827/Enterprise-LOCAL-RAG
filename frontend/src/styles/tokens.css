@@ -1,0 +1,173 @@
+/*
+ * Design tokens: the only source of colour, type, spacing, radius, shadow and motion.
+ *
+ * Colours are stored as space-separated RGB channels so Tailwind can apply opacity
+ * (`bg-accent/10`). Three layers:
+ *   1. Palette   raw named scales (ink green, clay, paper, cool grey, status). Never used directly in UI.
+ *   2. Semantic  what a colour is *for* (canvas, surface, line, fg, accent ...), set per surface.
+ *   3. Tailwind  tailwind.config.ts maps the semantic layer to utilities.
+ *
+ * A dark theme later is one more block overriding the semantic layer, e.g. [data-theme="dark"].
+ * Nothing below the semantic layer needs to change for it, and nor does any component.
+ */
+
+:root {
+  /* ---- 1. Palette ------------------------------------------------------------------------- */
+
+  /* Ink green: the accent. Deep and slightly blue-black so it reads as ink, not as "success". */
+  --ink-50: 233 241 236;
+  --ink-100: 211 228 218;
+  --ink-200: 168 201 183;
+  --ink-500: 53 120 92;
+  --ink-600: 31 92 71;
+  --ink-700: 23 70 54;
+  --ink-800: 17 52 41;
+  --ink-900: 12 36 28;
+
+  /* Clay: the secondary. Warnings, highlights and the cited passage; never a primary action. */
+  --clay-50: 249 237 231;
+  --clay-100: 240 212 199;
+  --clay-500: 184 86 52;
+  --clay-600: 158 63 34;
+  --clay-700: 125 48 25;
+
+  /* Paper: warm neutrals for the User surface. */
+  --paper-50: 251 250 246;
+  --paper-100: 244 242 236;
+  --paper-200: 231 228 219;
+  --paper-300: 211 207 195;
+  --paper-600: 94 98 91;
+  --paper-700: 64 69 64;
+  --paper-900: 27 32 29;
+
+  /* Cool: grey neutrals for the Admin surface. */
+  --cool-50: 247 249 250;
+  --cool-100: 239 242 244;
+  --cool-200: 223 228 232;
+  --cool-300: 197 205 211;
+  --cool-600: 82 95 105;
+  --cool-700: 55 66 74;
+  --cool-900: 22 29 34;
+
+  /* Status: reserved for state (health, outcome). Never decorative. */
+  --ok: 30 116 74;
+  --ok-soft: 229 243 235;
+  --warn: 146 84 0;
+  --warn-soft: 252 240 214;
+  --danger: 176 36 30;
+  --danger-soft: 252 232 230;
+  --info: 41 88 134;
+  --info-soft: 228 238 247;
+
+  /* ---- Type ------------------------------------------------------------------------------- */
+
+  --font-serif: "Newsreader Variable", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --text-xs: 0.75rem;
+  --text-xs-lh: 1.05rem;
+  --text-sm: 0.875rem;
+  --text-sm-lh: 1.3rem;
+  --text-base: 1rem;
+  --text-base-lh: 1.55rem;
+  --text-md: 1.125rem; /* reading text in the User surface */
+  --text-md-lh: 1.95rem;
+  --text-lg: 1.25rem;
+  --text-lg-lh: 1.8rem;
+  --text-xl: 1.5rem;
+  --text-xl-lh: 1.95rem;
+  --text-2xl: 1.875rem;
+  --text-2xl-lh: 2.25rem;
+  --text-3xl: 2.375rem;
+  --text-3xl-lh: 2.7rem;
+  --text-4xl: 3.125rem;
+  --text-4xl-lh: 3.3rem;
+
+  /* ---- Space, shape, depth, motion -------------------------------------------------------- */
+
+  --space-unit: 0.25rem; /* every spacing utility is a multiple of this */
+
+  --radius-full: 9999px;
+
+  /* Shadows are tinted with the ink colour, never neutral black. */
+  --shadow-color: 12 36 28;
+  --shadow-raised: 0 1px 2px rgb(var(--shadow-color) / 0.08), 0 0 0 1px rgb(var(--shadow-color) / 0.02);
+  --shadow-overlay: 0 24px 48px -12px rgb(var(--shadow-color) / 0.28), 0 4px 12px rgb(var(--shadow-color) / 0.1);
+
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  --focus-width: 2px;
+  --focus-offset: 2px;
+}
+
+/* ---- 2. Semantic: Admin surface (cool grey). The default, so every existing page uses it. ----- */
+
+:root,
+[data-surface="admin"] {
+  --canvas: var(--cool-100);
+  --surface: 255 255 255;
+  --sunken: var(--cool-200);
+  --line: var(--cool-200);
+  --line-strong: var(--cool-300);
+  --fg: var(--cool-900);
+  --muted: var(--cool-700);
+  --subtle: var(--cool-600);
+
+  --accent: var(--ink-600);
+  --accent-hover: var(--ink-700);
+  --accent-fg: 255 255 255;
+  --accent-soft: var(--ink-50);
+  --accent-text: var(--ink-700); /* accent-coloured text on canvas or surface */
+
+  --clay: var(--clay-600);
+  --clay-soft: var(--clay-50);
+  --clay-text: var(--clay-700);
+
+  --ring: var(--ink-600);
+  --overlay: 22 29 34; /* used as bg-overlay/45 */
+
+  --code-bg: var(--ink-900);
+  --code-fg: var(--paper-100);
+
+  --font-display: var(--font-sans); /* page titles: sans in the Admin surface, serif in the User one */
+
+  --radius-control: 0.25rem;
+  --radius-panel: 0.375rem;
+}
+
+/* ---- 2. Semantic: User surface (warm paper) ---------------------------------------------------- */
+
+[data-surface="user"] {
+  --canvas: var(--paper-100);
+  --surface: var(--paper-50);
+  --sunken: var(--paper-200);
+  --line: var(--paper-200);
+  --line-strong: var(--paper-300);
+  --fg: var(--paper-900);
+  --muted: var(--paper-700);
+  --subtle: var(--paper-600);
+
+  --overlay: 27 32 29;
+
+  --font-display: var(--font-serif);
+
+  --radius-control: 0.5rem;
+  --radius-panel: 0.875rem;
+}
+
+/* ---- Motion preference: respected once, for everything ------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

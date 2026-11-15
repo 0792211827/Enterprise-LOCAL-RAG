@@ -1,23 +1,93 @@
+@import "../styles/tokens.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: light; }
+@layer base {
+  :root {
+    color-scheme: light;
+  }
 
-html, body {
-  @apply bg-slate-50 text-slate-800 antialiased;
+  html {
+    @apply bg-canvas text-fg antialiased;
+    font-family: var(--font-sans);
+    font-optical-sizing: auto;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-canvas text-fg;
+  }
+
+  /* One focus treatment for everything keyboard-reachable. Offset so it never merges with a filled control. */
+  :focus-visible {
+    outline: var(--focus-width) solid rgb(var(--ring));
+    outline-offset: var(--focus-offset);
+  }
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background: rgb(var(--ink-200));
+    color: rgb(var(--ink-900));
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+  }
 }
 
-.card {
-  @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+@layer components {
+  .card {
+    @apply rounded-panel border border-line bg-surface shadow-raised;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-control px-3.5 py-2 text-sm font-medium transition-colors duration-fast disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1 text-xs;
+  }
+  .btn-primary {
+    @apply bg-accent text-accent-fg hover:bg-accent-hover;
+  }
+  .btn-secondary {
+    @apply border border-line-strong bg-surface text-fg hover:bg-sunken;
+  }
+  .btn-ghost {
+    @apply text-muted hover:bg-sunken hover:text-fg;
+  }
+  .btn-danger {
+    @apply border border-danger/30 bg-surface text-danger hover:bg-danger-soft;
+  }
+
+  .skeleton {
+    @apply animate-shimmer rounded-control;
+    background-image: linear-gradient(90deg, rgb(var(--sunken)) 30%, rgb(var(--line)) 50%, rgb(var(--sunken)) 70%);
+    background-size: 200% 100%;
+  }
+
+  .input {
+    @apply w-full rounded-control border border-line-strong bg-surface px-3 py-2 text-sm text-fg placeholder:text-subtle focus:border-accent;
+  }
+  .label {
+    @apply mb-1 block text-sm font-medium text-fg;
+  }
+
+  /* Reading text for the User surface: serif, generous leading, a comfortable measure. */
+  .reading {
+    @apply font-serif text-md text-fg;
+    max-width: 66ch;
+    font-variation-settings: "opsz" 18;
+  }
+
+  /* A Citation marker inside answer text: a small superscript numeral in a square tab. */
+  .cite {
+    @apply ml-0.5 mr-px inline-flex min-w-[1.25rem] -translate-y-[0.35em] items-center justify-center rounded-sm bg-accent-soft px-1 font-sans text-xs font-semibold leading-5 text-accent-text no-underline transition-colors duration-fast hover:bg-accent hover:text-accent-fg;
+  }
 }
-.btn {
-  @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
-}
-.btn-primary { @apply bg-brand-600 text-white hover:bg-brand-700; }
-.btn-secondary { @apply border border-slate-300 bg-white text-slate-700 hover:bg-slate-50; }
-.btn-danger { @apply border border-red-200 bg-white text-red-600 hover:bg-red-50; }
-.input {
-  @apply w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100;
-}
-.label { @apply mb-1 block text-sm font-medium text-slate-700; }
