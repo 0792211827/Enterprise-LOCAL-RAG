@@ -41,7 +41,9 @@ export function MessageStream({
     following.current = true;
   }, [resetKey]);
   useLayoutEffect(() => {
-    if (turns.length !== count.current) following.current = true; // a new message: show it
+    const last = turns[turns.length - 1];
+    // A new message, or an answer starting over after a retry: show it.
+    if (turns.length !== count.current || (last?.streaming && !last.text)) following.current = true;
     count.current = turns.length;
     const el = scroller.current;
     if (el && following.current) el.scrollTop = el.scrollHeight;
@@ -208,7 +210,7 @@ function CitationList({
               {c.index}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="font-medium text-fg [overflow-wrap:anywhere]">{c.title || "Source"}</span>
+              <span className="font-medium text-fg [overflow-wrap:anywhere]">{c.title || "Untitled document"}</span>
               {c.attachment_id ? (
                 <span className="ml-2 inline-flex items-center gap-1 rounded-sm bg-clay-soft px-1.5 py-0.5 text-xs font-medium text-clay-text">
                   <Icon icon={FileText} size="sm" />

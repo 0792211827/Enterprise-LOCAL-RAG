@@ -52,7 +52,7 @@ async function askWithCitations(page: Page, citations: Citation[], setup?: (s: A
   return api;
 }
 
-const panel = (page: Page) => page.getByRole("complementary", { name: "Cited source" });
+const panel = (page: Page) => page.getByRole("complementary", { name: "Citation" });
 
 test.describe("Citations on a wide screen", () => {
   test("lists the Citations under the answer with Document title and section", async ({ page }) => {
@@ -132,7 +132,7 @@ test.describe("Citations on a phone", () => {
     await askWithCitations(page, [SAMPLE_CITATION, SECOND]);
     await page.getByRole("button", { name: "Open citation 1" }).click();
 
-    const sheet = page.getByRole("dialog", { name: "Cited source" });
+    const sheet = page.getByRole("dialog", { name: "Citation" });
     await expect(sheet).toBeVisible();
     await expect(sheet.locator("mark")).toHaveText(SAMPLE_CITATION.passage);
     const box = await sheet.boundingBox();

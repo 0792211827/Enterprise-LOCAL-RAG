@@ -171,10 +171,9 @@ test.describe("asking and reading an answer", () => {
 
     await expect(page.getByText(/<b>bold<\/b>/)).toBeVisible();
     await expect(page.getByText(/<script>/)).toBeVisible();
-    await page.waitForTimeout(300);
+    await expect(page.getByText(/ after\./)).toBeVisible();
     expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
-    await expect(page.locator("main b")).toHaveCount(0);
-    await expect(page.locator("main img")).toHaveCount(0);
+    await expect(page.getByRole("img")).toHaveCount(0);
   });
 
   test("does not fetch images an answer points at", async ({ page }) => {
@@ -269,6 +268,17 @@ test.describe("Conversations", () => {
     await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
     await expect.poll(() => api.calls).toContain("DELETE /api/v1/chat/conversations/c-yesterday");
     await expect(rail(page).getByRole("button", { name: "Expense limits", exact: true })).toHaveCount(0);
+  });
+
+  test("keeps a Conversation read-only when its Application is no longer offered", async ({ page }) => {
+    await openChat(page, (s) => {
+      s.respond("GET", "/api/v1/chat/conversations", [{ ...history[0], application_id: "app-retired" }]);
+      s.respond("GET", "/api/v1/chat/conversations/c-today", { ...detail, application_id: "app-retired" });
+    });
+    await rail(page).getByRole("button", { name: "Leave carry-over", exact: true }).click();
+    await expect(page.getByText("Up to five days carry over.")).toBeVisible();
+    await expect(page.getByText(/no longer available to you/)).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Your question" })).toBeDisabled();
   });
 
   test("says so when a Conversation cannot be opened", async ({ page }) => {

@@ -141,7 +141,7 @@ export function ConversationList({
           </button>
           <button
             type="button"
-            className="btn btn-primary !bg-danger hover:!bg-danger/90"
+            className="btn btn-danger"
             onClick={() => {
               if (deleting) onDelete(deleting);
               setDeleting(null);

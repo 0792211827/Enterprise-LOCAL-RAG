@@ -38,7 +38,7 @@ const Centred = ({ children }: { children: React.ReactNode }) => (
   <div className="mx-auto w-full max-w-[42rem] px-6 py-10">{children}</div>
 );
 
-/** The End user's chat: Conversations on the left, the reading column in the middle, a cited source on the right. */
+/** The End user's chat: Conversations on the left, the reading column in the middle, a Citation on the right. */
 export default function ChatPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -62,9 +62,9 @@ export default function ChatPage() {
   const chat = useConversation({ application, config: config.data, onHistoryChanged: refreshHistory });
   const { startNew } = chat;
 
-  // Start from the Application used last, or the first offered; keep the choice while it is still offered.
+  // Start from the Application used last, or the first offered.
   useEffect(() => {
-    if (!apps.data || apps.data.some((a) => a.id === appId)) return;
+    if (!apps.data || appId) return;
     const last = readLastApplication();
     setAppId(apps.data.find((a) => a.id === last)?.id ?? apps.data[0]?.id ?? "");
   }, [apps.data, appId]);
@@ -100,7 +100,8 @@ export default function ChatPage() {
     const owner = await chat.open(summary);
     if (owner) {
       setAppId(owner);
-      rememberApplication(owner);
+      // An Application the End user can no longer use is shown as such, not swapped for another.
+      if (apps.data?.some((a) => a.id === owner)) rememberApplication(owner);
     }
   };
 

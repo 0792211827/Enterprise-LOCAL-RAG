@@ -202,6 +202,7 @@ export function useConversation({
       if (!files.length || !application || uploading) return;
       setAttachErrors([]);
       setUploading(true);
+      const mine = generation.current;
       const errors: string[] = [];
       let count = pendingCount.current;
       try {
@@ -215,11 +216,13 @@ export function useConversation({
             let id = currentId.current;
             if (!id) {
               id = (await chatApi.startConversation(application.id)).id;
+              if (generation.current !== mine) return;
               currentId.current = id;
               setConversationId(id);
               onHistoryChanged();
             }
             const added = await chatApi.attach(id, file);
+            if (generation.current !== mine) return;
             setPending((all) => [...all, added]);
             count += 1;
           } catch (err) {
@@ -227,7 +230,7 @@ export function useConversation({
           }
         }
       } finally {
-        setAttachErrors(errors);
+        if (generation.current === mine) setAttachErrors(errors);
         setUploading(false);
       }
     },

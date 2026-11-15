@@ -7,7 +7,7 @@ import { ApiError } from "@/lib/api/client";
 import { chatApi } from "@/lib/api/resources";
 import type { ChatCitation } from "@/lib/api/types";
 
-const LABEL = "Cited source";
+const LABEL = "Citation";
 
 /**
  * The source of one Citation beside the answer on a wide screen, or rising from the bottom on a phone.
@@ -61,14 +61,14 @@ export function CitationPanel({
   const body = (
     <div ref={root}>
       {citations.length > 1 && (
-        <div role="tablist" aria-label="Switch source" className="mb-4 flex flex-wrap gap-1.5">
+        <div role="tablist" aria-label="Switch Citation" className="mb-4 flex flex-wrap gap-1.5">
           {citations.map((c, i) => (
             <button
               key={c.index}
               type="button"
               role="tab"
               aria-selected={i === selected}
-              aria-label={`Source ${c.index}: ${c.title || "Source"}`}
+              aria-label={`Citation ${c.index}: ${c.title || "Untitled document"}`}
               onClick={() => onSelect(i)}
               className={`h-7 min-w-[1.75rem] rounded-sm px-2 text-xs font-semibold transition-colors duration-fast ${
                 i === selected ? "bg-accent text-accent-fg" : "bg-accent-soft text-accent-text hover:bg-accent/20"
@@ -120,7 +120,7 @@ function Source({ citation }: { citation: ChatCitation }) {
   return (
     <article>
       <h3 className="font-display text-lg font-semibold leading-snug text-fg [overflow-wrap:anywhere]">
-        {citation.title || "Source"}
+        {citation.title || "Untitled document"}
       </h3>
       {own ? (
         <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-sm bg-clay-soft px-2 py-0.5 text-xs font-medium text-clay-text">
@@ -137,7 +137,7 @@ function Source({ citation }: { citation: ChatCitation }) {
             <Passage text={citation.passage} />
           </Excerpt>
         )}
-        {!own && doc.isLoading && <LoadingState label="Opening the source…" />}
+        {!own && doc.isLoading && <LoadingState label="Opening the Document…" />}
         {!own && limited && (
           <>
             <div className="mb-4 flex items-start gap-2.5 rounded-control border border-line-strong bg-sunken/60 px-3 py-2.5 text-sm text-fg">
@@ -152,7 +152,7 @@ function Source({ citation }: { citation: ChatCitation }) {
         )}
         {!own && doc.isError && !limited && (
           <>
-            <p className="mb-4 text-sm text-danger">The source couldn&apos;t be opened just now. {(doc.error as Error).message}</p>
+            <p className="mb-4 text-sm text-danger">The Document couldn&apos;t be opened just now. {(doc.error as Error).message}</p>
             <blockquote className="border-l-2 border-line-strong pl-4 text-sm text-muted">{citation.passage}</blockquote>
           </>
         )}

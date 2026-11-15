@@ -51,6 +51,15 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
   }, [draft]);
 
+  // Sending or stopping swaps the button that had focus away; put focus back where typing happens.
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (wasBusy.current && !busy && (!document.activeElement || document.activeElement === document.body)) {
+      field.current?.focus();
+    }
+    wasBusy.current = busy;
+  }, [busy]);
+
   const submit = () => {
     const text = draft.trim();
     if (!text || busy || disabled) return;
