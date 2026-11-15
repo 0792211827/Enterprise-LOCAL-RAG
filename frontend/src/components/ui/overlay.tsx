@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import { ReactNode, useEffect, useId, useRef } from "react";
 import { Icon } from "./Icon";
 
-type Placement = "center" | "right" | "bottom";
+type Placement = "center" | "left" | "right" | "bottom";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), textarea, input:not([disabled]), select, [tabindex]:not([tabindex="-1"])';
 
@@ -11,6 +11,10 @@ const PLACEMENT: Record<Placement, { wrap: string; panel: string }> = {
   center: {
     wrap: "items-center justify-center p-4",
     panel: "w-full rounded-panel animate-rise-in",
+  },
+  left: {
+    wrap: "items-stretch justify-start",
+    panel: "h-full w-full rounded-r-panel animate-slide-in-left",
   },
   right: {
     wrap: "items-stretch justify-end",
@@ -39,6 +43,7 @@ function Overlay({
   children,
   placement,
   width,
+  flush = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -46,6 +51,8 @@ function Overlay({
   children: ReactNode;
   placement: Placement;
   width: string;
+  /** Drop the body padding, for content that lays itself out edge to edge. */
+  flush?: boolean;
 }) {
   const titleId = useId();
   const panel = useRef<HTMLDivElement>(null);
@@ -117,7 +124,7 @@ function Overlay({
             <Icon icon={X} />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div>
+        <div className={`min-h-0 flex-1 overflow-y-auto ${flush ? "" : "px-6 py-5"}`}>{children}</div>
       </div>
     </div>
   );
@@ -151,15 +158,26 @@ export function Drawer({
   title,
   children,
   size = "md",
+  side = "right",
+  flush,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
   size?: "md" | "lg";
+  side?: "left" | "right";
+  flush?: boolean;
 }) {
   return (
-    <Overlay open={open} onClose={onClose} title={title} placement="right" width={size === "lg" ? "max-w-2xl" : "max-w-md"}>
+    <Overlay
+      open={open}
+      onClose={onClose}
+      title={title}
+      placement={side}
+      width={size === "lg" ? "max-w-2xl" : "max-w-md"}
+      flush={flush}
+    >
       {children}
     </Overlay>
   );
@@ -171,14 +189,16 @@ export function Sheet({
   onClose,
   title,
   children,
+  flush,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
+  flush?: boolean;
 }) {
   return (
-    <Overlay open={open} onClose={onClose} title={title} placement="bottom" width="max-w-none">
+    <Overlay open={open} onClose={onClose} title={title} placement="bottom" width="max-w-none" flush={flush}>
       {children}
     </Overlay>
   );

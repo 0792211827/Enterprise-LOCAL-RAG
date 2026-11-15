@@ -19,8 +19,8 @@ export function UserShell({
   children: ReactNode;
 }) {
   return (
-    <div data-surface="user" className="min-h-screen bg-canvas text-fg">
-      <header className="flex h-12 items-center justify-between gap-4 border-b border-line px-4 sm:px-6">
+    <div data-surface="user" className="flex h-dvh flex-col bg-canvas text-fg">
+      <header className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-line px-4 sm:px-6">
         <Link href="/chat" aria-label="Enterprise Local RAG chat">
           <Wordmark className="text-base" />
         </Link>
@@ -33,8 +33,10 @@ export function UserShell({
           <CallerBadge onSignOut={onSignOut} showRoles={false} />
         </div>
       </header>
-      <main className="px-4 py-2 sm:px-6">
-        <AuthBanner onSignIn={onSignIn} />
+      <main className="flex min-h-0 flex-1 flex-col">
+        <div className="px-4 pt-3 empty:hidden sm:px-6">
+          <AuthBanner onSignIn={onSignIn} />
+        </div>
         {children}
       </main>
     </div>

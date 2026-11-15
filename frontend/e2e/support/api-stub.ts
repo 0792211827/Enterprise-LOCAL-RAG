@@ -38,6 +38,14 @@ export interface StreamedAnswer {
   citations?: Citation[];
   /** Sent instead of a clean finish: the stream carries an error event. */
   error?: string;
+  /** The answer is held back until this settles, so a test can act while it is still being awaited. */
+  until?: Promise<unknown>;
+}
+
+/** The API refuses the question outright instead of streaming. */
+export interface RefusedAnswer {
+  status: number;
+  detail: string;
 }
 
 export const APPLICATIONS = [
@@ -69,8 +77,12 @@ export interface ApiStub {
   respondWith(method: string, path: string, build: Build, status?: number): void;
   /** Drop the connection for an endpoint, as if the API were down. A later `respond` brings it back. */
   abort(method: string, path: string): void;
-  /** The answer streamed back for the next question asked in a conversation. */
-  streamAnswer(answer: StreamedAnswer): void;
+  /** Answer an endpoint with a handler of your own, for responses `respond` cannot express. */
+  intercept(method: string, path: string, handler: (route: Route, url: URL) => unknown | Promise<unknown>): void;
+  /** The answer streamed back for every question asked in a conversation. */
+  streamAnswer(answer: StreamedAnswer | RefusedAnswer): void;
+  /** Answers served in order, one per question; the last one repeats. */
+  streamAnswers(answers: (StreamedAnswer | RefusedAnswer)[]): void;
 }
 
 const json = (route: Route, body: unknown, status = 200) =>
@@ -114,15 +126,25 @@ export async function stubApi(page: Page, caller: CallerKind): Promise<ApiStub> 
     abort(method, path) {
       routes.set(`${method} ${path}`, (route) => route.abort("connectionrefused"));
     },
+    intercept(method, path, handler) {
+      routes.set(`${method} ${path}`, handler);
+    },
     streamAnswer(answer) {
-      routes.set("POST /api/v1/chat/conversations/:id/messages", (route) =>
-        route.fulfill({
+      stub.streamAnswers([answer]);
+    },
+    streamAnswers(answers) {
+      let asked = 0;
+      routes.set("POST /api/v1/chat/conversations/:id/messages", async (route) => {
+        const answer = answers[Math.min(asked++, answers.length - 1)];
+        if ("status" in answer) return json(route, { detail: answer.detail }, answer.status);
+        await answer.until;
+        return route.fulfill({
           status: 200,
           contentType: "text/event-stream",
           headers: { "access-control-allow-origin": "*" },
           body: sse(answer),
-        }),
-      );
+        });
+      });
     },
   };
 

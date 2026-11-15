@@ -60,10 +60,13 @@ export function CopyButton({
   value,
   label = "Copy",
   className = "",
+  quiet = false,
 }: {
   value: string;
   label?: string;
   className?: string;
+  /** A small borderless button, for an action that sits inside content. */
+  quiet?: boolean;
 }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
 
@@ -90,7 +93,7 @@ export function CopyButton({
   };
 
   return (
-    <button type="button" onClick={copy} className={`btn btn-secondary ${className}`}>
+    <button type="button" onClick={copy} className={`btn ${quiet ? "btn-ghost btn-sm" : "btn-secondary"} ${className}`}>
       <Icon icon={state === "copied" ? Check : Copy} size="sm" />
       <span aria-live="polite">{state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : label}</span>
     </button>

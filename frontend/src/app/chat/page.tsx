@@ -1,655 +1,249 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
-import { EmptyState, ErrorState, LoadingState, Modal, PageHeader, confirmDialog } from "@/components/ui";
-import { ApiError } from "@/lib/api/client";
+import { MessagesSquare, Plus } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Drawer, EmptyState, ErrorState, Icon, LoadingState, useToast } from "@/components/ui";
 import { chatApi } from "@/lib/api/resources";
-import type { ChatAttachment, ChatCitation, ConversationSummary, MessageFeedback } from "@/lib/api/types";
+import type { ChatCitation, ConversationSummary } from "@/lib/api/types";
+import { useMediaQuery } from "@/lib/useMediaQuery";
+import { ApplicationSwitcher } from "./ApplicationSwitcher";
+import { CitationPanel } from "./CitationPanel";
+import { Composer } from "./Composer";
+import { ConversationList } from "./ConversationList";
+import { MessageStream } from "./MessageStream";
+import { useConversation } from "./useConversation";
 
-interface Turn {
-  id?: string; // the saved message's id; known once an answer is complete
-  role: "user" | "assistant";
-  text: string;
+const LAST_APPLICATION = "chat.lastApplication";
+const readLastApplication = () => {
+  try {
+    return window.localStorage.getItem(LAST_APPLICATION);
+  } catch {
+    return null;
+  }
+};
+const rememberApplication = (id: string) => {
+  try {
+    window.localStorage.setItem(LAST_APPLICATION, id);
+  } catch {
+    /* a browser that will not remember is no reason to stop chatting */
+  }
+};
+
+interface CitedAnswer {
   citations: ChatCitation[];
-  feedback?: MessageFeedback | null;
-  attachments?: ChatAttachment[];
-  error?: string;
-  streaming?: boolean;
+  selected: number;
 }
 
-const ACCEPTED = ".pdf,.docx,.pptx,.xlsx,.txt,.md,.markdown,.csv";
-const ACCEPTED_IMAGES = ".png,.jpg,.jpeg,.webp";
-const IMAGE_KINDS = ["png", "jpg", "webp"];
+const Centred = ({ children }: { children: React.ReactNode }) => (
+  <div className="mx-auto w-full max-w-[42rem] px-6 py-10">{children}</div>
+);
 
-const formatSize = (bytes: number) =>
-  bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
-
+/** The End user's chat: Conversations on the left, the reading column in the middle, a cited source on the right. */
 export default function ChatPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const apps = useQuery({ queryKey: ["chat", "applications"], queryFn: chatApi.applications });
   const history = useQuery({ queryKey: ["chat", "conversations"], queryFn: chatApi.conversations });
-  // The image control is shown only when the operator has switched image upload on.
+  // The image control is offered only when the operator has switched image upload on.
   const config = useQuery({ queryKey: ["chat", "config"], queryFn: chatApi.config, staleTime: 5 * 60_000 });
-  const imagesEnabled = config.data?.images_enabled === true;
-  const [appId, setAppId] = useState<string>("");
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [turns, setTurns] = useState<Turn[]>([]);
-  const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [cited, setCited] = useState<ChatCitation | null>(null);
-  const [openError, setOpenError] = useState<string | null>(null);
-  const [pending, setPending] = useState<ChatAttachment[]>([]);
-  const [attachError, setAttachError] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const fileInput = useRef<HTMLInputElement | null>(null);
-  const imageInput = useRef<HTMLInputElement | null>(null);
-  const abort = useRef<AbortController | null>(null);
-  const bottom = useRef<HTMLDivElement | null>(null);
-  const currentId = useRef<string | null>(null);
+  const railInline = useMediaQuery("(min-width: 768px)");
+  const panelBeside = useMediaQuery("(min-width: 1100px)");
 
-  // Default to the first Application offered; keep the choice while it is still offered.
+  const [appId, setAppId] = useState("");
+  const [railOpen, setRailOpen] = useState(false);
+  const [cited, setCited] = useState<CitedAnswer | null>(null);
+  const [opener, setOpener] = useState<HTMLElement | null>(null);
+
+  const refreshHistory = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ["chat", "conversations"] }),
+    [queryClient],
+  );
+  const application = apps.data?.find((a) => a.id === appId);
+  const chat = useConversation({ application, config: config.data, onHistoryChanged: refreshHistory });
+  const { startNew } = chat;
+
+  // Start from the Application used last, or the first offered; keep the choice while it is still offered.
   useEffect(() => {
-    if (apps.data && !apps.data.some((a) => a.id === appId)) setAppId(apps.data[0]?.id ?? "");
+    if (!apps.data || apps.data.some((a) => a.id === appId)) return;
+    const last = readLastApplication();
+    setAppId(apps.data.find((a) => a.id === last)?.id ?? apps.data[0]?.id ?? "");
   }, [apps.data, appId]);
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [turns]);
-  useEffect(() => {
-    return () => abort.current?.abort();
-  }, []);
-  useEffect(() => {
-    currentId.current = conversationId;
-  }, [conversationId]);
 
-  const refreshHistory = () => queryClient.invalidateQueries({ queryKey: ["chat", "conversations"] });
+  // A source belongs to the Conversation it was opened in.
+  useEffect(() => {
+    setCited(null);
+  }, [chat.view]);
 
   const rename = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) => chatApi.renameConversation(id, title),
     onSuccess: refreshHistory,
+    onError: (err: Error) => toast({ tone: "danger", title: "Couldn't rename the conversation", description: err.message }),
   });
   const remove = useMutation({
     mutationFn: (id: string) => chatApi.deleteConversation(id),
     onSuccess: (_, id) => {
-      if (id === conversationId) startNew();
+      if (id === chat.conversationId) startNew();
       refreshHistory();
     },
+    onError: (err: Error) => toast({ tone: "danger", title: "Couldn't delete the conversation", description: err.message }),
   });
 
-  if (apps.isLoading || history.isLoading) return <LoadingState />;
-  if (apps.isError) return <ErrorState message={(apps.error as Error).message} />;
+  const choose = (id: string) => {
+    if (id === appId) return;
+    startNew();
+    setAppId(id);
+    rememberApplication(id);
+  };
+
+  const openConversation = async (summary: ConversationSummary) => {
+    setRailOpen(false);
+    const owner = await chat.open(summary);
+    if (owner) {
+      setAppId(owner);
+      rememberApplication(owner);
+    }
+  };
+
+  const newChat = () => {
+    setRailOpen(false);
+    startNew();
+  };
+
+  const openSource = useCallback((citations: ChatCitation[], index: number, from: HTMLElement) => {
+    setOpener(from);
+    setCited({ citations, selected: Math.max(0, citations.findIndex((c) => c.index === index)) });
+  }, []);
+  const closeSource = useCallback(() => {
+    setCited(null);
+    // The panel beside the answer does not hand focus back by itself, as a sheet does.
+    if (opener?.isConnected) requestAnimationFrame(() => opener.focus());
+  }, [opener]);
+  const selectSource = useCallback((position: number) => setCited((c) => c && { ...c, selected: position }), []);
+
+  if (apps.isLoading || history.isLoading) {
+    return (
+      <Centred>
+        <LoadingState label="Opening chat…" />
+      </Centred>
+    );
+  }
+  if (apps.isError) {
+    return (
+      <Centred>
+        <ErrorState message={(apps.error as Error).message} onRetry={() => apps.refetch()} />
+      </Centred>
+    );
+  }
   if (!apps.data?.length) {
     return (
-      <div>
-        <PageHeader title="Chat" />
+      <Centred>
         <EmptyState
-          title="No assistants available to you yet"
-          description="You can use an assistant once you have been given access to all the knowledge it answers from. Ask an administrator."
+          icon={MessagesSquare}
+          title="Nothing has been made available to you yet"
+          description="You can chat once you have been given access to something to ask. Ask an administrator of this platform to grant it to you."
         />
-      </div>
+      </Centred>
     );
   }
 
-  const application = apps.data.find((a) => a.id === appId);
-  const patchLast = (change: (turn: Turn) => Turn) =>
-    setTurns((all) => all.map((turn, i) => (i === all.length - 1 ? change(turn) : turn)));
-
-  function startNew() {
-    abort.current?.abort();
-    setConversationId(null);
-    setTurns([]);
-    setBusy(false);
-    setOpenError(null);
-    setPending([]);
-    setAttachError(null);
-  }
-
-  const choose = (id: string) => {
-    startNew();
-    setAppId(id);
-  };
-
-  const open = async (summary: ConversationSummary) => {
-    abort.current?.abort();
-    setBusy(false);
-    setOpenError(null);
-    try {
-      const detail = await chatApi.conversation(summary.id);
-      setConversationId(detail.id);
-      setAppId(detail.application_id);
-      setTurns(
-        detail.messages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          text: m.content,
-          citations: m.citations,
-          feedback: m.feedback,
-          attachments: m.attachments,
-        })),
-      );
-      setPending(detail.pending_attachments);
-      setAttachError(null);
-    } catch (err) {
-      setOpenError((err as Error).message);
-    }
-  };
-
-  const send = async (e: FormEvent) => {
-    e.preventDefault();
-    const query = draft.trim();
-    if (!query || !application || busy) return;
-    const sending = pending;
-    setDraft("");
-    setPending([]);
-    setAttachError(null);
-    setBusy(true);
-    setTurns((all) => [
-      ...all,
-      { role: "user", text: query, citations: [], attachments: sending },
-      { role: "assistant", text: "", citations: [], streaming: true },
-    ]);
-    const controller = new AbortController();
-    abort.current = controller;
-    try {
-      let id = conversationId;
-      if (!id) {
-        id = (await chatApi.startConversation(application.id)).id;
-        setConversationId(id);
-      }
-      await chatApi.ask(
-        id,
-        query,
-        (event) => {
-          if (event.type === "delta") patchLast((t) => ({ ...t, text: t.text + event.content }));
-          if (event.type === "citations") patchLast((t) => ({ ...t, citations: event.citations }));
-          if (event.type === "error") patchLast((t) => ({ ...t, error: event.message }));
-          if (event.type === "done") patchLast((t) => ({ ...t, id: event.message_id ?? undefined }));
-        },
-        controller.signal,
-      );
-    } catch (err) {
-      if ((err as Error).name !== "AbortError") {
-        const message =
-          err instanceof ApiError && err.status === 404
-            ? "This assistant is no longer available to you."
-            : (err as Error).message;
-        patchLast((t) => ({ ...t, error: message }));
-      }
-    } finally {
-      patchLast((t) => ({ ...t, streaming: false }));
-      setBusy(false);
-      refreshHistory();
-      // Whatever the server did not send with this message is still waiting to be sent.
-      const id = currentId.current;
-      if (id) {
-        chatApi
-          .attachments(id)
-          .then((all) => setPending(all.filter((a) => !a.attached_to)))
-          .catch(() => {});
-      }
-    }
-  };
-
-  const attach = async (files: FileList | null) => {
-    if (!files?.length || !application || uploading) return;
-    setAttachError(null);
-    setUploading(true);
-    try {
-      let id = conversationId;
-      if (!id) {
-        id = (await chatApi.startConversation(application.id)).id;
-        setConversationId(id);
-        refreshHistory();
-      }
-      for (const file of Array.from(files)) {
-        const added = await chatApi.attach(id, file);
-        setPending((all) => [...all, added]);
-      }
-    } catch (err) {
-      setAttachError((err as Error).message);
-    } finally {
-      setUploading(false);
-      if (fileInput.current) fileInput.current.value = "";
-      if (imageInput.current) imageInput.current.value = "";
-    }
-  };
-
-  const detach = async (attachment: ChatAttachment) => {
-    if (!conversationId) return;
-    setAttachError(null);
-    try {
-      await chatApi.removeAttachment(conversationId, attachment.id);
-      setPending((all) => all.filter((a) => a.id !== attachment.id));
-      setTurns((all) =>
-        all.map((t) => (t.attachments ? { ...t, attachments: t.attachments.filter((a) => a.id !== attachment.id) } : t)),
-      );
-    } catch (err) {
-      setAttachError((err as Error).message);
-    }
-  };
-
-  const onRename = (c: ConversationSummary) => {
-    const title = window.prompt("Rename this conversation", c.title || "Untitled");
-    if (title && title.trim() && title.trim() !== c.title) rename.mutate({ id: c.id, title: title.trim() });
-  };
-  const onDelete = (c: ConversationSummary) => {
-    if (confirmDialog(`Delete "${c.title || "Untitled"}"? This removes its messages for good.`)) remove.mutate(c.id);
-  };
+  const conversations = (
+    <ConversationList
+      conversations={history.data ?? []}
+      failed={history.isError}
+      activeId={chat.conversationId}
+      onNew={newChat}
+      onOpen={openConversation}
+      onRename={(c, title) => rename.mutate({ id: c.id, title })}
+      onDelete={(c) => remove.mutate(c.id)}
+      onRetry={() => history.refetch()}
+    />
+  );
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] gap-4">
-      <aside className="card flex w-64 shrink-0 flex-col overflow-hidden" aria-label="Conversation history">
-        <div className="border-b border-slate-200 p-3">
-          <button className="btn btn-primary w-full" onClick={startNew}>
-            New chat
-          </button>
-        </div>
-        <ul className="flex-1 overflow-y-auto p-2">
-          {history.data?.length === 0 && (
-            <li className="px-2 py-6 text-center text-xs text-slate-400">Your conversations will appear here.</li>
-          )}
-          {history.data?.map((c) => (
-            <li
-              key={c.id}
-              className={`group mb-1 flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm ${
-                c.id === conversationId ? "bg-brand-50 text-brand-700" : "text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              <button className="min-w-0 flex-1 truncate text-left" onClick={() => open(c)} title={c.title}>
-                {c.title || "Untitled"}
-              </button>
-              <button
-                className="hidden text-xs text-slate-400 hover:text-slate-700 group-hover:block"
-                onClick={() => onRename(c)}
-                aria-label={`Rename ${c.title || "conversation"}`}
-              >
-                ✎
-              </button>
-              <button
-                className="hidden text-xs text-slate-400 hover:text-red-600 group-hover:block"
-                onClick={() => onDelete(c)}
-                aria-label={`Delete ${c.title || "conversation"}`}
-              >
-                🗑
-              </button>
-            </li>
-          ))}
-        </ul>
-        <p className="border-t border-slate-200 p-3 text-xs text-slate-400">
-          Only you can read your conversations. They are deleted automatically after a retention period.
-        </p>
-      </aside>
+    <div className="flex min-h-0 flex-1">
+      {railInline ? (
+        <aside aria-label="Conversation history" className="w-64 shrink-0 border-r border-line bg-canvas">
+          {conversations}
+        </aside>
+      ) : (
+        <Drawer open={railOpen} onClose={() => setRailOpen(false)} title="Conversations" side="left" flush>
+          {conversations}
+        </Drawer>
+      )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <PageHeader
-          title="Chat"
-          description="Ask a question and get an answer from your company's documents."
-          action={
-            <select
-              className="input w-64"
-              value={appId}
-              onChange={(e) => choose(e.target.value)}
-              disabled={!!conversationId}
-              title={conversationId ? "Start a new chat to use a different assistant" : undefined}
-              aria-label="Assistant"
-            >
-              {apps.data.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          }
-        />
-        {application?.description && <p className="-mt-3 mb-4 text-sm text-slate-500">{application.description}</p>}
-        {openError && <p className="mb-3 text-sm text-red-600">{openError}</p>}
-        {conversationId && !application && (
-          <p className="mb-3 text-sm text-amber-700">
-            You can read this conversation, but its assistant is no longer available to you.
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-4 py-3 sm:px-6">
+          <div className="flex min-w-0 items-start gap-3">
+            {!railInline && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm mt-0.5 shrink-0"
+                onClick={() => setRailOpen(true)}
+                aria-label="Conversations"
+              >
+                <Icon icon={MessagesSquare} size="sm" />
+                <span className="hidden sm:inline">Conversations</span>
+              </button>
+            )}
+            <ApplicationSwitcher applications={apps.data} selected={application} onSelect={choose} />
+          </div>
+          {!railInline && chat.turns.length > 0 && (
+            <button type="button" className="btn btn-secondary btn-sm mt-0.5 shrink-0" onClick={newChat} aria-label="New chat">
+              <Icon icon={Plus} size="sm" />
+              <span className="hidden sm:inline">New chat</span>
+            </button>
+          )}
+        </header>
+
+        {chat.openError && (
+          <p role="alert" className="border-b border-danger/30 bg-danger-soft px-4 py-2 text-sm text-fg sm:px-6">
+            {chat.openError}
+          </p>
+        )}
+        {chat.conversationId && !application && (
+          <p className="border-b border-clay/30 bg-clay-soft px-4 py-2 text-sm text-fg sm:px-6">
+            You can read this conversation, but the application it was with is no longer available to you.
           </p>
         )}
 
-        <div className="card flex-1 space-y-4 overflow-y-auto p-5">
-          {turns.length === 0 && (
-            <p className="py-10 text-center text-sm text-slate-400">
-              Ask {application?.name ?? "the assistant"} a question to get started.
-            </p>
-          )}
-          {turns.map((turn, i) => (
-            <Bubble
-              key={turn.id ?? i}
-              turn={turn}
-              onCite={setCited}
-              conversationId={conversationId}
-              onDetach={detach}
-              onRated={(feedback) =>
-                setTurns((all) => all.map((t) => (t.id && t.id === turn.id ? { ...t, feedback } : t)))
-              }
+        <div className="flex min-h-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <MessageStream
+              turns={chat.turns}
+              conversationId={chat.conversationId}
+              busy={chat.busy}
+              application={application}
+              resetKey={chat.view}
+              onCite={openSource}
+              onRetry={chat.retry}
+              onDetach={chat.detach}
+              onRated={chat.setFeedback}
             />
-          ))}
-          <div ref={bottom} />
-        </div>
-
-        {(pending.length > 0 || attachError) && (
-          <div className="mt-3">
-            {pending.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2">
-                {pending.map((a) => (
-                  <AttachmentChip key={a.id} attachment={a} onRemove={() => detach(a)} />
-                ))}
-              </div>
-            )}
-            {attachError && <p className="mt-1 text-xs text-red-600">{attachError}</p>}
+            <Composer
+              placeholder={application ? `Ask ${application.name} a question…` : "Ask a question…"}
+              disabled={!application}
+              busy={chat.busy}
+              imagesEnabled={config.data?.images_enabled === true}
+              pending={chat.pending}
+              uploading={chat.uploading}
+              errors={chat.attachErrors}
+              onSend={chat.send}
+              onStop={chat.stop}
+              onAttach={chat.attach}
+              onDetach={chat.detach}
+            />
           </div>
-        )}
-        <form onSubmit={send} className="mt-3 flex gap-3">
-          <input
-            ref={fileInput}
-            type="file"
-            accept={ACCEPTED}
-            multiple
-            className="hidden"
-            onChange={(e) => attach(e.target.files)}
-            aria-label="Attach documents"
-          />
-          <button
-            type="button"
-            className="btn"
-            onClick={() => fileInput.current?.click()}
-            disabled={busy || uploading || !application}
-            title="Attach documents (PDF, DOCX, PPTX, XLSX, TXT, MD, CSV) to ask about them. Only you can see them, and they are deleted with this conversation."
-            aria-label="Attach a document"
-          >
-            {uploading ? "Reading…" : "📎"}
-          </button>
-          {imagesEnabled && (
-            <>
-              <input
-                ref={imageInput}
-                type="file"
-                accept={ACCEPTED_IMAGES}
-                multiple
-                className="hidden"
-                onChange={(e) => attach(e.target.files)}
-                aria-label="Attach images"
-              />
-              <button
-                type="button"
-                className="btn"
-                onClick={() => imageInput.current?.click()}
-                disabled={busy || uploading || !application}
-                title={`Attach images (PNG, JPG, WEBP, up to ${config.data?.image_max_mb} MB each) to ask about them. Only you can see them, and they are deleted with this conversation.`}
-                aria-label="Attach an image"
-              >
-                🖼
-              </button>
-            </>
-          )}
-          <input
-            className="input flex-1"
-            placeholder="Ask a question…"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            maxLength={4000}
-            disabled={busy || !application}
-            aria-label="Your question"
-          />
-          <button className="btn btn-primary" disabled={busy || !draft.trim() || !application}>
-            {busy ? "Answering…" : "Send"}
-          </button>
-        </form>
-      </div>
-
-      <SourceModal citation={cited} onClose={() => setCited(null)} />
-    </div>
-  );
-}
-
-function AttachmentChip({
-  attachment,
-  onRemove,
-  onDark = false,
-}: {
-  attachment: ChatAttachment;
-  onRemove?: () => void;
-  onDark?: boolean;
-}) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ring-1 ${
-        onDark ? "bg-brand-700 text-white ring-brand-500" : "bg-white text-slate-700 ring-slate-200"
-      }`}
-      title={`${attachment.filename} (${attachment.kind.toUpperCase()}, ${formatSize(attachment.size_bytes)})${
-        attachment.searched ? " — too long to send in full, so it is searched for each question" : ""
-      }`}
-    >
-      {IMAGE_KINDS.includes(attachment.kind) ? "🖼" : "📄"}{" "}
-      <span className="max-w-[12rem] truncate">{attachment.filename}</span>
-      <span className="opacity-60">{formatSize(attachment.size_bytes)}</span>
-      {attachment.searched && <span className="rounded bg-black/10 px-1 text-[10px] uppercase">searched</span>}
-      {onRemove && (
-        <button
-          type="button"
-          className="ml-1 opacity-70 hover:opacity-100"
-          onClick={onRemove}
-          aria-label={`Remove ${attachment.filename}`}
-        >
-          ✕
-        </button>
-      )}
-    </span>
-  );
-}
-
-function Bubble({
-  turn,
-  onCite,
-  conversationId,
-  onDetach,
-  onRated,
-}: {
-  turn: Turn;
-  onCite: (c: ChatCitation) => void;
-  onDetach: (a: ChatAttachment) => void;
-  conversationId: string | null;
-  onRated: (feedback: MessageFeedback | null) => void;
-}) {
-  const mine = turn.role === "user";
-  return (
-    <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm ${
-          mine ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-800"
-        }`}
-      >
-        <div className="whitespace-pre-wrap">
-          {turn.text || (turn.streaming && !turn.error ? <span className="text-slate-400">Thinking…</span> : null)}
-        </div>
-        {mine && !!turn.attachments?.length && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {turn.attachments.map((a) => (
-              <AttachmentChip key={a.id} attachment={a} onRemove={conversationId ? () => onDetach(a) : undefined} onDark />
-            ))}
-          </div>
-        )}
-        {turn.error && <div className="mt-2 text-xs text-red-600">{turn.error}</div>}
-        {turn.citations.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-200 pt-2">
-            {turn.citations.map((c) => (
-              <button
-                key={c.index}
-                onClick={() => onCite(c)}
-                className="rounded-md bg-white px-2 py-1 text-xs text-brand-700 ring-1 ring-slate-200 hover:bg-brand-50"
-                title={c.passage}
-              >
-                [{c.index}] {c.attachment_id ? "📄 " : ""}
-                {c.title || "Source"}
-              </button>
-            ))}
-          </div>
-        )}
-        {!mine && turn.id && !turn.streaming && conversationId && (
-          <FeedbackBar conversationId={conversationId} messageId={turn.id} feedback={turn.feedback ?? null} onRated={onRated} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Thumbs, an optional comment, and the explicit choice to share this one exchange with admins. */
-function FeedbackBar({
-  conversationId,
-  messageId,
-  feedback,
-  onRated,
-}: {
-  conversationId: string;
-  messageId: string;
-  feedback: MessageFeedback | null;
-  onRated: (feedback: MessageFeedback | null) => void;
-}) {
-  const [editing, setEditing] = useState<"up" | "down" | null>(null);
-  const [comment, setComment] = useState(feedback?.comment ?? "");
-  const [share, setShare] = useState(feedback?.share_with_admins ?? false);
-  const [error, setError] = useState<string | null>(null);
-
-  const begin = (rating: "up" | "down") => {
-    setComment(feedback?.comment ?? "");
-    setShare(feedback?.share_with_admins ?? false);
-    setError(null);
-    setEditing(rating);
-  };
-  const save = async () => {
-    if (!editing) return;
-    try {
-      const saved = await chatApi.rate(conversationId, messageId, {
-        rating: editing,
-        comment: comment.trim() || null,
-        share_with_admins: share,
-      });
-      onRated(saved);
-      setEditing(null);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-  const withdraw = async () => {
-    try {
-      await chatApi.withdrawRating(conversationId, messageId);
-      onRated(null);
-      setEditing(null);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-
-  const thumb = (rating: "up" | "down", label: string, icon: string) => (
-    <button
-      onClick={() => begin(rating)}
-      aria-label={label}
-      aria-pressed={feedback?.rating === rating}
-      className={`rounded-md px-2 py-0.5 text-sm ring-1 ring-slate-200 hover:bg-white ${
-        feedback?.rating === rating ? "bg-white font-semibold text-brand-700" : "text-slate-500"
-      }`}
-    >
-      {icon}
-    </button>
-  );
-
-  return (
-    <div className="mt-3 border-t border-slate-200 pt-2">
-      <div className="flex items-center gap-2 text-xs text-slate-400">
-        {thumb("up", "Good answer", "👍")}
-        {thumb("down", "Bad answer", "👎")}
-        {feedback?.share_with_admins && <span>Shared with admins</span>}
-      </div>
-      {editing && (
-        <div className="mt-2 space-y-2">
-          <textarea
-            className="input h-16 w-full"
-            placeholder="Add a comment (optional) — admins will see it"
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            maxLength={2000}
-            aria-label="Comment"
-          />
-          <label className="flex items-start gap-2 text-xs text-slate-600">
-            <input type="checkbox" className="mt-0.5" checked={share} onChange={(e) => setShare(e.target.checked)} />
-            <span>
-              Share this exchange with admins. They will see this question and answer, and nothing else from your
-              conversations.
-            </span>
-          </label>
-          {error && <div className="text-xs text-red-600">{error}</div>}
-          <div className="flex gap-2">
-            <button className="btn btn-primary" onClick={save}>
-              Save {editing === "up" ? "👍" : "👎"}
-            </button>
-            {feedback && (
-              <button className="btn btn-secondary" onClick={withdraw}>
-                Remove rating
-              </button>
-            )}
-            <button className="btn btn-secondary" onClick={() => setEditing(null)}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Opens the cited Document and shows the cited passage in it. */
-function SourceModal({ citation, onClose }: { citation: ChatCitation | null; onClose: () => void }) {
-  const doc = useQuery({
-    queryKey: ["chat", "document", citation?.document_id],
-    queryFn: () => chatApi.document(citation!.document_id!),
-    enabled: !!citation?.document_id,
-    retry: false,
-  });
-  return (
-    <Modal open={!!citation} onClose={onClose} title={citation?.title || "Source"} size="xl">
-      {citation && (
-        <div className="space-y-4 text-sm">
-          <div>
-            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              {citation.attachment_id
-                ? "Passage from your attachment"
-                : `Cited passage${citation.section_title ? ` — ${citation.section_title}` : ""}`}
-            </div>
-            <blockquote className="rounded-lg border-l-4 border-brand-500 bg-brand-50 p-3 text-slate-700">
-              {citation.passage}
-            </blockquote>
-          </div>
-          {!citation.attachment_id && (
-          <div>
-            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Document</div>
-            {doc.isLoading && <LoadingState />}
-            {doc.isError && (
-              <p className="text-slate-500">The full document is not available to you.</p>
-            )}
-            {doc.data && (
-              <div className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-lg border border-slate-200 p-3 text-slate-600">
-                {highlight(doc.data.text, citation.passage)}
-              </div>
-            )}
-          </div>
+          {cited && (
+            <CitationPanel
+              citations={cited.citations}
+              selected={cited.selected}
+              sheet={!panelBeside}
+              onSelect={selectSource}
+              onClose={closeSource}
+            />
           )}
         </div>
-      )}
-    </Modal>
-  );
-}
-
-/** The document text with the cited passage marked; if it cannot be found verbatim, the text as is. */
-function highlight(text: string, passage: string): ReactNode {
-  const at = passage ? text.indexOf(passage) : -1;
-  if (at < 0) return text;
-  return (
-    <>
-      {text.slice(0, at)}
-      <mark className="rounded bg-amber-200 px-0.5">{passage}</mark>
-      {text.slice(at + passage.length)}
-    </>
+      </div>
+    </div>
   );
 }
