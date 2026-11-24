@@ -64,6 +64,7 @@ def client(factory):
 
     opensearch = MagicMock()
     opensearch.search_unified = MagicMock(return_value={"hits": []})
+    opensearch.count_chunks = MagicMock(return_value=0)
     llm = AsyncMock()
     llm.generate_rag_answer = AsyncMock(return_value={"answer": "a"})
     app.dependency_overrides[get_db_session] = _session

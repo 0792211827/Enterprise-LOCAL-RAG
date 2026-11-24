@@ -6,7 +6,7 @@ returns a typed model rather than an arbitrary dictionary.
 """
 
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -142,6 +142,10 @@ class DocumentResponse(BaseModel):
     processed_at: Optional[datetime]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
+    # A replacement being ingested (state queued/processing) or that failed (state failed, with its error); the
+    # Document itself keeps answering from its current content either way.
+    replacement: Optional[Dict[str, Optional[str]]] = None
+    warnings: List[str] = Field(default_factory=list)
 
 
 class DocumentRestrictionEntry(KnowledgeBaseGrantEntry):

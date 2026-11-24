@@ -73,6 +73,9 @@ def app(session_factory):
             session.close()
 
     application.dependency_overrides[get_db_session] = _override_session
+    index = MagicMock()
+    index.count_chunks.return_value = 0  # a deleted Knowledge Base is verified empty in the index
+    application.dependency_overrides[get_opensearch_client] = lambda: index
     return application
 
 
@@ -757,6 +760,7 @@ def uploads(client, app, session_factory, tmp_path):
     database.get_session.return_value.__enter__ = lambda *a: session_factory()
     database.get_session.return_value.__exit__ = lambda *a: None
     opensearch = MagicMock()
+    opensearch.count_chunks.return_value = 0
     app.dependency_overrides[get_ingestion_service] = lambda: ingestion
     app.dependency_overrides[get_database] = lambda: database
     app.dependency_overrides[get_opensearch_client] = lambda: opensearch

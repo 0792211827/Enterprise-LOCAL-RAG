@@ -52,6 +52,20 @@ class Document(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
+
+    @property
+    def replacement(self):
+        """A replacement waiting or failed, as the admin UI shows it; never the stored file's location or text."""
+        pending = (self.extra_metadata or {}).get("replacement")
+        if not pending:
+            return None
+        return {"state": pending.get("state"), "filename": pending.get("filename"), "error": pending.get("error")}
+
+    @property
+    def warnings(self):
+        """Things that did not stop ingestion but the admin should know (for example images that could not be described)."""
+        return list((self.extra_metadata or {}).get("warnings") or [])
+
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
 
 

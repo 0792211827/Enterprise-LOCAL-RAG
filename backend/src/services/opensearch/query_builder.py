@@ -8,6 +8,11 @@ logger = logging.getLogger(__name__)
 NOT_IN_A_PARTITION: Dict[str, Any] = {"exists": {"field": "conversation_id"}}
 
 
+# A chunk of a replacement that is not ready yet carries ``staged: true`` and is hidden from every search until its
+# revision becomes the Document's current one (``OpenSearchClient.activate_revision``); the old revision answers meanwhile.
+NOT_STAGED: Dict[str, Any] = {"term": {"staged": True}}
+
+
 # A Document restriction is stored on every chunk of the Document as the keywords of its Principals
 # (``group:finance``). A chunk with none is unrestricted; this field is absent from chunks indexed before restrictions.
 RESTRICTION_FIELD = "restriction_principals"
@@ -137,8 +142,7 @@ class QueryBuilder:
         if filter_clauses:
             bool_query["filter"] = filter_clauses
 
-        if self.partition is None:
-            bool_query["must_not"] = [NOT_IN_A_PARTITION]
+        bool_query["must_not"] = [NOT_STAGED] if self.partition is not None else [NOT_STAGED, NOT_IN_A_PARTITION]
 
         return {"bool": bool_query}
 

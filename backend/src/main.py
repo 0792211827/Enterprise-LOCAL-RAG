@@ -35,6 +35,8 @@ from src.services.audit import AUDIT_UNAVAILABLE_MESSAGE, AuditWriteError, make_
 from src.services.cache.factory import make_cache_client
 from src.services.chat import make_chat_limiter, run_daily
 from src.services.embeddings.factory import make_embeddings_service
+from src.services.ingestion.factory import make_ingestion_service
+from src.services.ingestion.runner import resume_interrupted
 from src.services.langfuse.factory import make_langfuse_tracer
 from src.services.ollama.factory import make_ollama_client
 from src.services.opensearch.dimension_guard import check_index_dimension
@@ -50,6 +52,15 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+async def _resume_ingestion(app: FastAPI, settings) -> None:
+    """Queue again the Documents a restart interrupted; trouble here never keeps the API from serving."""
+    try:
+        service = make_ingestion_service(app.state.opensearch_client, app.state.embeddings_service, app.state.pdf_parser, settings)
+        await resume_interrupted(app.state.database, service, settings.ingestion.concurrency)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not resume the ingestion interrupted by the last shutdown")
 
 
 @asynccontextmanager
@@ -129,10 +140,19 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Chat retention: Conversations are kept forever (CHAT__RETENTION_DAYS=0)")
 
+    resume_task = None
+    # Only with a reachable index that agrees with configuration: resuming purges and rebuilds what a restart interrupted.
+    if hasattr(app.state, "ingestion_guard") and app.state.ingestion_guard is None:
+        resume_task = asyncio.create_task(_resume_ingestion(app, settings))
+
     logger.info("API ready")
     yield
 
     # Cleanup
+    if resume_task is not None:
+        resume_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await resume_task
     if purge_task is not None:
         purge_task.cancel()
         with suppress(asyncio.CancelledError):

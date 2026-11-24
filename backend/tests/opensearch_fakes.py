@@ -247,11 +247,16 @@ class FilteringIndex:
         hits = self._hits(body["query"])
         for hit in hits:
             source = self.docs[hit["_id"]]
-            if "remove" in script["source"]:
+            if "'staged'" in script["source"]:
+                source.pop("staged", None)
+            elif "remove" in script["source"]:
                 source.pop("restriction_principals", None)
             else:
                 source["restriction_principals"] = list(script["params"]["keys"])
         return {"updated": len(hits), "failures": []}
+
+    def count(self, index=None, body=None, **_):
+        return {"count": len(self._hits(body["query"]))}
 
     def delete_by_query(self, index=None, body=None, refresh=None, **_):
         if self.fail_deletes:

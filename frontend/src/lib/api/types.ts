@@ -84,6 +84,10 @@ export interface DocumentItem {
   processed_at: string | null;
   created_at: string | null;
   updated_at: string | null;
+  /** A replacement being ingested (queued, processing) or that failed; the Document keeps answering from its current content. */
+  replacement?: { state: "queued" | "processing" | "failed"; filename: string | null; error: string | null } | null;
+  /** Things that did not stop ingestion but are worth knowing. */
+  warnings?: string[];
 }
 
 export interface IngestionJob {

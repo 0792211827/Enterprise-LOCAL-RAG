@@ -14,11 +14,28 @@ const STAGE_LABEL: Record<string, string> = {
 
 export const isSettled = (status: string) => ["completed", "failed"].includes(status.toLowerCase());
 
+/** Still being ingested: the Document itself, or a replacement for it. */
+export const isBusy = (d: DocumentItem) => !isSettled(d.status) || d.replacement?.state === "queued" || d.replacement?.state === "processing";
+
 export const titleCase = (status: string) => status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+
+const TYPE_LABELS: [RegExp, string][] = [
+  [/pdf/, "PDF"],
+  [/wordprocessingml/, "DOCX"],
+  [/presentationml/, "PPTX"],
+  [/spreadsheetml/, "XLSX"],
+  [/csv/, "CSV"],
+  [/html/, "HTML"],
+  [/markdown/, "MD"],
+  [/^text\/plain/, "TXT"],
+];
+
+/** What kind of source a Document came from, in the words an admin uses. */
+export const sourceType = (contentType: string | null) => TYPE_LABELS.find(([pattern]) => pattern.test(contentType ?? ""))?.[1] ?? "File";
 
 /** The newest ingestion job of each Document, polled while anything is still being ingested. */
 export function useLatestJobs(documents: DocumentItem[] | undefined) {
-  const busy = documents?.some((d) => !isSettled(d.status)) ?? false;
+  const busy = documents?.some(isBusy) ?? false;
   return useQuery({
     queryKey: ["jobs"],
     queryFn: async () => {

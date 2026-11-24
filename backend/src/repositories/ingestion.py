@@ -1,7 +1,7 @@
 from typing import List, Optional
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from src.models.ingestion import IngestionJob
 
@@ -43,3 +43,9 @@ class IngestionJobRepository:
         self.session.commit()
         self.session.refresh(job)
         return job
+
+    def delete_for_document(self, document_id: UUID) -> None:
+        self.session.execute(delete(IngestionJob).where(IngestionJob.document_id == document_id))
+
+    def delete_for_knowledge_base(self, knowledge_base_id: UUID) -> None:
+        self.session.execute(delete(IngestionJob).where(IngestionJob.knowledge_base_id == knowledge_base_id))

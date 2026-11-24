@@ -1,5 +1,7 @@
 """Knowledge-base grants: admin API and the readable-KB query."""
 
+from unittest.mock import MagicMock
+
 import pytest
 import src.models  # noqa: F401  (register models on Base.metadata)
 from fastapi import FastAPI
@@ -8,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from src.db.interfaces.postgresql import Base
-from src.dependencies import get_db_session
+from src.dependencies import get_db_session, get_opensearch_client
 from src.models import KnowledgeBaseGrant
 from src.repositories import GrantRepository
 from src.routers import knowledge_bases
@@ -33,7 +35,10 @@ def client(session_factory):
         finally:
             session.close()
 
+    index = MagicMock()
+    index.count_chunks.return_value = 0  # a deleted Knowledge Base is verified empty in the index
     app.dependency_overrides[get_db_session] = _session
+    app.dependency_overrides[get_opensearch_client] = lambda: index
     return TestClient(app)
 
 

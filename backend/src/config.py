@@ -122,6 +122,10 @@ class IngestionSettings(BaseConfigSettings):
     # Age after which `make uploads-cleanup` removes stale files; 0 = off.
     # Nothing is ever removed automatically.
     upload_retention_days: int = Field(default=0, ge=0)
+    # How many Documents are ingested at the same time in this process; the rest wait their turn as queued.
+    concurrency: int = Field(default=2, ge=1)
+    # A Document still being ingested after this long becomes a failed Document with that reason; 0 = no limit.
+    document_timeout_seconds: int = Field(default=900, ge=0)
 
 
 class ConnectorSettings(BaseConfigSettings):

@@ -8,7 +8,7 @@ from opensearchpy import OpenSearch
 from src.config import Settings
 
 from .index_config_hybrid import ADDITIVE_FIELDS, HYBRID_RRF_PIPELINE, KNN_ENGINE, build_chunks_mapping
-from .query_builder import NOT_IN_A_PARTITION, RESTRICTION_FIELD, QueryBuilder, partition_filters, restriction_filter
+from .query_builder import NOT_IN_A_PARTITION, NOT_STAGED, RESTRICTION_FIELD, QueryBuilder, partition_filters, restriction_filter
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +259,7 @@ class OpenSearchClient:
 
             search_body = {
                 "size": size,
-                "query": self._knn_query(query_embedding, size, filter_clause, [NOT_IN_A_PARTITION]),
+                "query": self._knn_query(query_embedding, size, filter_clause, [NOT_STAGED, NOT_IN_A_PARTITION]),
                 "_source": {"excludes": ["embedding"]},
             }
 
@@ -418,7 +418,7 @@ class OpenSearchClient:
         if partition is not None:
             knn_query = self._knn_query(query_embedding, size * 2, partition_filters(*partition), [])
         else:
-            knn_query = self._knn_query(query_embedding, size * 2, kb_filter, [NOT_IN_A_PARTITION])
+            knn_query = self._knn_query(query_embedding, size * 2, kb_filter, [NOT_STAGED, NOT_IN_A_PARTITION])
 
         hybrid_query = {"hybrid": {"queries": [bm25_query, knn_query]}}
 
@@ -613,6 +613,50 @@ class OpenSearchClient:
             index=self.index_name, body={"query": {"term": {"document_id": document_id}}}, refresh=True
         )
         return response.get("deleted", 0)
+
+    def purge_knowledge_base_chunks(self, knowledge_base_id: str) -> int:
+        """Remove every chunk of a Knowledge Base from the index; a failure is raised (see ``purge_document_chunks``)."""
+        response = self.client.delete_by_query(
+            index=self.index_name, body={"query": {"term": {"knowledge_base_id": knowledge_base_id}}}, refresh=True
+        )
+        return response.get("deleted", 0)
+
+    def purge_revision_chunks(self, document_id: str, revision: str) -> int:
+        """Remove the chunks of one revision of a Document (a replacement that failed or was interrupted)."""
+        response = self.client.delete_by_query(
+            index=self.index_name,
+            body={"query": {"bool": {"filter": [{"term": {"document_id": document_id}}, {"term": {"revision": revision}}]}}},
+            refresh=True,
+        )
+        return response.get("deleted", 0)
+
+    def activate_revision(self, document_id: str, revision: str) -> None:
+        """Make ``revision`` visible to search by clearing ``staged`` on its chunks. A failure is raised."""
+        response = self.client.update_by_query(
+            index=self.index_name,
+            body={
+                "query": {"bool": {"filter": [{"term": {"document_id": document_id}}, {"term": {"revision": revision}}]}},
+                "script": {"source": "ctx._source.remove('staged')", "lang": "painless"},
+            },
+            refresh=True,
+        )
+        if response.get("failures") or response.get("version_conflicts"):
+            raise RuntimeError(f"activating revision {revision} of document {document_id} failed: {response['failures'][:1]}")
+
+    def purge_superseded(self, document_id: str, revision: str) -> int:
+        """Remove every chunk of the Document that is not of ``revision`` (those indexed before revisions have none)."""
+        response = self.client.delete_by_query(
+            index=self.index_name,
+            body={"query": {"bool": {"filter": [{"term": {"document_id": document_id}}], "must_not": [{"term": {"revision": revision}}]}}},
+            refresh=True,
+        )
+        return response.get("deleted", 0)
+
+    def count_chunks(self, *, document_id: Optional[str] = None, knowledge_base_id: Optional[str] = None) -> int:
+        """How many chunks of a Document or Knowledge Base the index holds, staged ones included (used to verify a delete)."""
+        field, value = ("document_id", document_id) if document_id else ("knowledge_base_id", knowledge_base_id)
+        response = self.client.count(index=self.index_name, body={"query": {"term": {field: value}}})
+        return response.get("count", 0)
 
     def get_chunks_by_document(self, document_id: str) -> List[Dict[str, Any]]:
         """Get all chunks for a specific document.

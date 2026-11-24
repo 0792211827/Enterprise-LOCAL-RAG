@@ -5,10 +5,11 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from src.auth import Principal, Role
 from src.config import split_csv
 from src.dependencies import (
+    AuditDep,
     CacheDep,
     DatabaseDep,
     IngestionServiceDep,
@@ -18,6 +19,7 @@ from src.dependencies import (
     SettingsDep,
     require_ingestion_ready,
 )
+from src.models import AuditAction, AuditOutcome
 from src.models.access import GrantPrincipalType, principal_key
 from src.models.document import Document
 from src.models.enums import IngestionStatus
@@ -38,6 +40,10 @@ from src.schemas.api.domain import (
     IngestionJobResponse,
 )
 from src.services.access import resolve_scope
+from src.services.audit import AuditContext, record_event
+from src.services.ingestion.lifecycle import IndexNotUpdated, stage_replacement
+from src.services.ingestion.lifecycle import delete_document as remove_document
+from src.services.ingestion.runner import pending_replacement, run_ingestion
 from src.services.ingestion.types import UnsupportedDocument, sniff_document_type, store_file
 from src.services.ingestion.uploads import display_name, read_capped
 
@@ -45,34 +51,28 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["documents"])
 
-async def _run_ingestion(
-    database,
-    ingestion_service,
-    document_id: UUID,
-    job_id: UUID,
-    knowledge_base_id: UUID,
-) -> None:
-    """Background task: run the ingestion pipeline in its own DB session."""
-    with database.get_session() as session:
-        doc_repo = DocumentRepository(session)
-        job_repo = IngestionJobRepository(session)
-        kb_repo = KnowledgeBaseRepository(session)
-        document = doc_repo.get_by_id(document_id)
-        job = job_repo.get_by_id(job_id)
-        kb = kb_repo.get_by_id(knowledge_base_id)
-        if not document or not job or not kb:
-            return
-        await ingestion_service.ingest_document(
-            document=document,
-            job=job,
-            document_repo=doc_repo,
-            ingestion_repo=job_repo,
-            knowledge_base=kb,
-        )
-        # Refresh knowledge-base counters.
-        kb.document_count = doc_repo.count(kb.id)
-        kb.chunk_count = doc_repo.count_chunks(kb.id)
-        kb_repo.update(kb, {})
+def _queue(background_tasks, database, ingestion_service, settings, document, job, replacement: bool = False) -> None:
+    background_tasks.add_task(
+        run_ingestion,
+        database,
+        ingestion_service,
+        document.id,
+        job.id,
+        document.knowledge_base_id,
+        settings.ingestion.concurrency,
+        replacement,
+    )
+
+
+def _audit(request: Request, principal, recorder, operation: str, document_id: UUID, knowledge_base_id: UUID, outcome: str = AuditOutcome.OK.value, **details) -> None:
+    """Add, replace and delete leave an event of metadata only: ids, file name, type, size and a digest -- never text."""
+    record_event(
+        recorder,
+        AuditContext.capture(request, principal),
+        action=AuditAction.DOCUMENT_CHANGE.value,
+        outcome=outcome,
+        details={"operation": operation, "document_id": str(document_id), "knowledge_base_id": str(knowledge_base_id), **details},
+    )
 
 
 @router.get("/knowledge-bases/{kb_id}/documents", response_model=List[DocumentResponse])
@@ -110,6 +110,9 @@ async def upload_document(
     ingestion_service: IngestionServiceDep,
     settings: SettingsDep,
     background_tasks: BackgroundTasks,
+    request: Request,
+    principal: PrincipalDep,
+    audit: AuditDep,
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
 ):
@@ -132,6 +135,15 @@ async def upload_document(
     except UnsupportedDocument as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     name = display_name(file.filename)
+    same_name = doc_repo.get_by_source_name(kb_id, name) if file.filename else None
+    if same_name:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A document named '{name}' already exists in this knowledge base, so adding another would answer from "
+                f"both versions. Use Replace on it to update its content (document {same_name.id})."
+            ),
+        )
     stored = store_file(settings, kb_id, checksum, document_type, raw)
 
     document = doc_repo.create(
@@ -155,9 +167,61 @@ async def upload_document(
         )
     )
 
-    background_tasks.add_task(
-        _run_ingestion, database, ingestion_service, document.id, job.id, kb_id
+    _queue(background_tasks, database, ingestion_service, settings, document, job)
+    _audit(request, principal, audit, "add", document.id, kb_id, file_name=name, content_type=stored.content_type, size_bytes=len(raw), checksum=checksum)
+    return document
+
+
+@router.post(
+    "/documents/{document_id}/replace",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_ingestion_ready)],
+)
+async def replace_document_content(
+    document_id: UUID,
+    session: SessionDep,
+    database: DatabaseDep,
+    ingestion_service: IngestionServiceDep,
+    settings: SettingsDep,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    principal: PrincipalDep,
+    audit: AuditDep,
+    file: UploadFile = File(...),
+):
+    """Replace a Document's content with a new file, keeping its id, title, Knowledge Base and restrictions.
+
+    The new content is ingested as a new revision while the old one keeps answering; it takes over only when it is
+    ready. If it fails, the old content stays and the error is shown on the Document.
+    """
+    doc_repo = DocumentRepository(session)
+    document = doc_repo.get_by_id(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    raw = await read_capped(file, settings.ingestion.max_upload_mb)
+    # Checked after the upload is read, with nothing awaited before the replacement is recorded: two requests cannot both pass.
+    session.refresh(document)
+    if document.status in (IngestionStatus.QUEUED.value, IngestionStatus.PROCESSING.value):
+        raise HTTPException(status_code=409, detail="The document is still being ingested. Wait for it to finish, then replace it.")
+    if pending_replacement(document):
+        raise HTTPException(status_code=409, detail="A replacement of this document is already being ingested.")
+    checksum = hashlib.sha256(raw).hexdigest()
+    if document.checksum == checksum or doc_repo.get_by_checksum(document.knowledge_base_id, checksum):
+        raise HTTPException(status_code=409, detail="Identical document already exists in this knowledge base")
+    try:
+        document_type = sniff_document_type(file.filename, raw, file.content_type)
+    except UnsupportedDocument as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    name = display_name(file.filename)
+    replacement = stage_replacement(settings, doc_repo, document, name, raw, document_type)
+
+    job = IngestionJobRepository(session).create(
+        IngestionJob(document_id=document.id, knowledge_base_id=document.knowledge_base_id, status=IngestionStatus.QUEUED.value)
     )
+    _queue(background_tasks, database, ingestion_service, settings, document, job, replacement=True)
+    _audit(request, principal, audit, "replace", document.id, document.knowledge_base_id, file_name=name, content_type=replacement["content_type"], size_bytes=len(raw), checksum=checksum)
     return document
 
 
@@ -172,27 +236,45 @@ async def reprocess_document(
     session: SessionDep,
     database: DatabaseDep,
     ingestion_service: IngestionServiceDep,
+    settings: SettingsDep,
     opensearch: OpenSearchDep,
     background_tasks: BackgroundTasks,
 ):
-    """Re-run the ingestion pipeline for an existing document."""
+    """Retry a Document: re-run ingestion of its content, or of its failed replacement (the old content keeps answering)."""
     doc_repo = DocumentRepository(session)
     document = doc_repo.get_by_id(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    if not document.raw_text and not (document.file_path and Path(document.file_path).exists()):
-        raise HTTPException(
-            status_code=409,
-            detail="The original file is gone (removed by upload cleanup), so this document cannot be reprocessed. Add it to the knowledge base again.",
-        )
 
-    # Clear previous chunks (in the index too, or the document would be answered from twice) + reset status.
-    _purge_index_chunks(opensearch, document.id)
-    doc_repo.delete_chunks_for_document(document.id)
-    document.status = IngestionStatus.QUEUED.value
-    document.chunk_count = 0
-    document.error = None
-    doc_repo.save(document)
+    if pending_replacement(document):
+        raise HTTPException(status_code=409, detail="A replacement of this document is being ingested. Wait for it to finish.")
+    failed = (document.extra_metadata or {}).get("replacement")
+    if failed and failed.get("state") == "failed":
+        path = failed.get("file_path")
+        if not failed.get("raw_text") and not (path and Path(path).exists()):
+            raise HTTPException(
+                status_code=409,
+                detail="The file of the failed replacement is gone, so it cannot be retried. Replace the document again.",
+            )
+        document.extra_metadata = {**document.extra_metadata, "replacement": {**failed, "state": "queued", "error": None}}
+        if document.status == IngestionStatus.COMPLETED.value:
+            document.error = None
+        doc_repo.save(document)
+        replacing = True
+    else:
+        if not document.raw_text and not (document.file_path and Path(document.file_path).exists()):
+            raise HTTPException(
+                status_code=409,
+                detail="The original file is gone (removed by upload cleanup), so this document cannot be reprocessed. Add it to the knowledge base again.",
+            )
+        # Clear previous chunks (in the index too, or the document would be answered from twice) + reset status.
+        _purge_index_chunks(opensearch, document.id)
+        doc_repo.delete_chunks_for_document(document.id)
+        document.status = IngestionStatus.QUEUED.value
+        document.chunk_count = 0
+        document.error = None
+        doc_repo.save(document)
+        replacing = False
 
     job = IngestionJobRepository(session).create(
         IngestionJob(
@@ -201,21 +283,31 @@ async def reprocess_document(
             status=IngestionStatus.QUEUED.value,
         )
     )
-    background_tasks.add_task(
-        _run_ingestion, database, ingestion_service, document.id, job.id, document.knowledge_base_id
-    )
+    _queue(background_tasks, database, ingestion_service, settings, document, job, replacement=replacing)
     return job
 
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_document(document_id: UUID, session: SessionDep, opensearch: OpenSearchDep):
-    doc_repo = DocumentRepository(session)
-    document = doc_repo.get_by_id(document_id)
+def delete_document(
+    document_id: UUID,
+    session: SessionDep,
+    opensearch: OpenSearchDep,
+    request: Request,
+    principal: PrincipalDep,
+    audit: AuditDep,
+):
+    """Delete a Document and everything about it: stored file, chunks, index entries (every revision), locators, restrictions."""
+    document = DocumentRepository(session).get_by_id(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    # The index first: a deleted document must stop being answerable, so if its chunks cannot be removed it stays.
-    _purge_index_chunks(opensearch, document.id)
-    doc_repo.delete(document)
+    ids, details = (document.id, document.knowledge_base_id), {"file_name": document.source_uri, "chunk_count": document.chunk_count}
+    try:
+        # The index first and verified: a deleted document must stop being answerable, so if its chunks cannot be removed it stays.
+        remove_document(session, opensearch, document)
+    except IndexNotUpdated as exc:
+        _audit(request, principal, audit, "delete", *ids, outcome=AuditOutcome.ERROR.value, **details)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    _audit(request, principal, audit, "delete", *ids, **details)
     return None
 
 

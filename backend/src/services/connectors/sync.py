@@ -1,8 +1,10 @@
 """One Connector run: list the source, compare it with what was recorded, and make the Knowledge Base match.
 
 * a file not seen before is **added** (ingested as a new Document);
-* a file whose content changed is **updated** in place -- the same Document, so restrictions an admin set survive;
-* a file that disappeared is **removed**, Document and indexed chunks both, so withdrawn content stops being answerable;
+* a file whose content changed is **replaced** in place -- the same Document, so restrictions an admin set survive, with
+  the new content built beside the old and taking over only when ready (the API's replace path);
+* a file that disappeared is **removed**, Document and indexed chunks both, so withdrawn content stops being answerable
+  (the API's delete path);
 * anything else is left alone, and is not even read when its size and modified time (or ETag) are unchanged.
 
 A file that fails is recorded and retried on the next run; it never stops the others.
@@ -25,6 +27,7 @@ from src.models.enums import IngestionStatus
 from src.models.ingestion import IngestionJob
 from src.repositories import DocumentRepository, IngestionJobRepository, KnowledgeBaseRepository
 from src.repositories.connector import ConnectorRepository
+from src.services.ingestion.lifecycle import delete_document, stage_replacement
 from src.services.ingestion.types import sniff_document_type, store_file, type_for_extension
 from src.services.ingestion.uploads import display_name
 
@@ -249,30 +252,39 @@ class ConnectorSync:
     ) -> None:
         repo = ConnectorRepository(session)
         doc_repo, job_repo = DocumentRepository(session), IngestionJobRepository(session)
-        stored = store_file(self.settings, kb.id, checksum, sniff_document_type(source_file.key, raw), raw)
+        document_type = sniff_document_type(source_file.key, raw)
 
-        fields = dict(
-            title=_title(source_file.key),
-            source_uri=f"connector:{connector.name}/{source_file.key}"[:500],
-            content_type=stored.content_type,
-            file_path=stored.file_path,
-            file_size_bytes=len(raw),
-            checksum=checksum,
-            raw_text=stored.raw_text,
-            sections=None,
-            status=IngestionStatus.QUEUED.value,
-            error=None,
-            chunk_count=0,
-        )
-        if document is not None:
-            # In place, so the Document keeps its identity -- and with it any restrictions an admin has set.
-            self.opensearch.purge_document_chunks(str(document.id))
-            doc_repo.delete_chunks_for_document(document.id)
-            for name, value in fields.items():
-                setattr(document, name, value)
-            doc_repo.save(document)
+        if document is not None and document.status == IngestionStatus.COMPLETED.value:
+            # A Document that is answering is replaced the way the API replaces one: the new content is built beside
+            # the old and takes over only when ready, so a bad file leaves the last good version in place.
+            replacement = stage_replacement(self.settings, doc_repo, document, display_name(source_file.key), raw, document_type)
+            ingest = self.ingestion.replace_document
         else:
-            document = doc_repo.create(Document(knowledge_base_id=kb.id, **fields))
+            stored = store_file(self.settings, kb.id, checksum, document_type, raw)
+            fields = dict(
+                title=_title(source_file.key),
+                source_uri=f"connector:{connector.name}/{source_file.key}"[:500],
+                content_type=stored.content_type,
+                file_path=stored.file_path,
+                file_size_bytes=len(raw),
+                checksum=checksum,
+                raw_text=stored.raw_text,
+                sections=None,
+                status=IngestionStatus.QUEUED.value,
+                error=None,
+                chunk_count=0,
+            )
+            if document is not None:
+                # Nothing of it is answering (an earlier attempt failed): start it over, as the same Document.
+                self.opensearch.purge_document_chunks(str(document.id))
+                doc_repo.delete_chunks_for_document(document.id)
+                for name, value in fields.items():
+                    setattr(document, name, value)
+                doc_repo.save(document)
+            else:
+                document = doc_repo.create(Document(knowledge_base_id=kb.id, **fields))
+            replacement = None
+            ingest = self.ingestion.ingest_document
 
         # Recorded before ingesting, as failed, so a crash or failure leaves a state that is retried, never a lost file.
         if state is None:
@@ -286,10 +298,8 @@ class ConnectorSync:
             session.commit()
 
         job = job_repo.create(IngestionJob(document_id=document.id, knowledge_base_id=kb.id, status=IngestionStatus.QUEUED.value))
-        await self.ingestion.ingest_document(
-            document=document, job=job, document_repo=doc_repo, ingestion_repo=job_repo, knowledge_base=kb
-        )
-        if document.status != IngestionStatus.COMPLETED.value:
+        await ingest(document=document, job=job, document_repo=doc_repo, ingestion_repo=job_repo, knowledge_base=kb)
+        if document.status != IngestionStatus.COMPLETED.value or (replacement is not None and document.error):
             raise RuntimeError(document.error or "ingestion failed")
 
         state.fingerprint, state.checksum, state.size_bytes = source_file.fingerprint, checksum, len(raw)
@@ -305,9 +315,8 @@ class ConnectorSync:
             doc_repo = DocumentRepository(session)
             document = doc_repo.get_by_id(state.document_id) if state.document_id else None
             if document is not None:
-                # The index first: if the chunks cannot be removed the Document stays, and the next run tries again.
-                self.opensearch.purge_document_chunks(str(document.id))
-                doc_repo.delete(document)
+                # The index first, and verified: if the chunks cannot be removed the Document stays, and the next run tries again.
+                delete_document(session, self.opensearch, document)
             ConnectorRepository(session).delete_state(state)
             summary.note("removed", key)
         except Exception as exc:  # noqa: BLE001

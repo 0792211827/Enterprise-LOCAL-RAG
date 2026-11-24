@@ -19,4 +19,5 @@ def make_ingestion_service(opensearch: Any, embeddings: Any, pdf_parser: Any, se
         embeddings_provider=embeddings,
         opensearch_client=opensearch,
         pdf_parser=pdf_parser,
+        timeout_seconds=settings.ingestion.document_timeout_seconds,
     )

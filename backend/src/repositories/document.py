@@ -27,6 +27,11 @@ class DocumentRepository:
         )
         return self.session.scalar(stmt)
 
+    def get_by_source_name(self, knowledge_base_id: UUID, name: str) -> Optional[Document]:
+        """The Document an upload of this name was made for (uploads keep their display name as ``source_uri``)."""
+        stmt = select(Document).where(Document.knowledge_base_id == knowledge_base_id, Document.source_uri == name)
+        return self.session.scalars(stmt.order_by(Document.created_at)).first()
+
     def list_for_knowledge_base(
         self, knowledge_base_id: UUID, limit: int = 100, offset: int = 0
     ) -> List[Document]:
@@ -68,12 +73,42 @@ class DocumentRepository:
         self.session.refresh(document)
         return document
 
+    def exists(self, document_id: UUID) -> bool:
+        """Whether the Document is still there, read from the database (not the session's cache)."""
+        return bool(self.session.scalar(select(func.count()).select_from(Document).where(Document.id == document_id)))
+
+    def rollback(self) -> None:
+        self.session.rollback()
+
+    def file_in_use(self, path: str, except_document_id: Optional[UUID] = None) -> bool:
+        """Whether a Document other than ``except_document_id`` holds (or awaits a replacement with) this stored file."""
+        stmt = select(Document).where(Document.file_path == path)
+        if except_document_id is not None:
+            stmt = stmt.where(Document.id != except_document_id)
+        if self.session.scalar(stmt.limit(1)) is not None:
+            return True
+        waiting = select(Document.extra_metadata).where(Document.extra_metadata.is_not(None))
+        if except_document_id is not None:
+            waiting = waiting.where(Document.id != except_document_id)
+        return any(((meta or {}).get("replacement") or {}).get("file_path") == path for meta in self.session.scalars(waiting))
+
+    def list_all_for_knowledge_base(self, knowledge_base_id: UUID) -> List[Document]:
+        return list(self.session.scalars(select(Document).where(Document.knowledge_base_id == knowledge_base_id)))
+
     def delete(self, document: Document) -> None:
         self.session.delete(document)
         self.session.commit()
 
     # -- chunk operations -------------------------------------------------
     def add_chunks(self, chunks: List[DocumentChunk]) -> None:
+        self.session.add_all(chunks)
+        self.session.commit()
+
+    def replace_chunks(self, document_id: UUID, chunks: List[DocumentChunk]) -> None:
+        """Swap a Document's chunk rows for ``chunks`` -- and commit whatever else was changed on it -- in one transaction."""
+        for chunk in self.session.scalars(select(DocumentChunk).where(DocumentChunk.document_id == document_id)):
+            self.session.delete(chunk)
+        self.session.flush()
         self.session.add_all(chunks)
         self.session.commit()
 

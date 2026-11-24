@@ -94,6 +94,8 @@ async def client(monkeypatch, index_dimension):
     monkeypatch.setattr(main, "make_vlm_provider", lambda settings: None)
     monkeypatch.setattr(main, "make_langfuse_tracer", lambda: MagicMock())
     monkeypatch.setattr(main, "make_cache_client", lambda settings: None)
+    # The restart sweep over interrupted ingestion has nothing to find in a mock database.
+    monkeypatch.setattr(main, "resume_interrupted", AsyncMock(return_value=0))
     monkeypatch.setattr(main, "make_chat_limiter", lambda settings: None)
     # Pin auditing off for the same reason as auth below: tests that exercise
     # the audit trail install their own recorder.

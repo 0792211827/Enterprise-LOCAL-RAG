@@ -18,6 +18,8 @@ KNN_ENGINE = "lucene"
 #   restriction_principals: the Principals a Document is restricted to (``group:finance``); absent means unrestricted.
 #   locator: where the chunk came from in its source (page, slide, sheet and rows, heading path); absent on chunks
 #   indexed before locators existed or cut from plain text, which a Citation then shows without a position.
+#   revision / staged: which revision of a replaced Document a chunk belongs to, and whether that revision is still
+#   being built (``staged: true`` chunks are hidden from search until it becomes current).
 ADDITIVE_FIELDS = {
     "locator": {
         "type": "object",
@@ -33,6 +35,8 @@ ADDITIVE_FIELDS = {
         },
     },
     "restriction_principals": {"type": "keyword"},
+    "revision": {"type": "keyword"},
+    "staged": {"type": "boolean"},
     "conversation_id": {"type": "keyword"},
     "owner_subject": {"type": "keyword"},
     "attachment_id": {"type": "keyword"},

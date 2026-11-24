@@ -1,6 +1,6 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Lock, RotateCw, ShieldCheck, Trash2, Upload, X } from "lucide-react";
+import { FileText, FileUp, Lock, RotateCw, ShieldCheck, Trash2, Upload, X } from "lucide-react";
 import { Fragment, useRef, useState } from "react";
 import {
   Callout,
@@ -21,7 +21,7 @@ import {
 import { documentsApi } from "@/lib/api/resources";
 import type { DocumentItem } from "@/lib/api/types";
 import { formatBytes, timeAgo } from "@/lib/format";
-import { IngestionStage, titleCase, useLatestJobs } from "../ingestion";
+import { IngestionStage, isBusy, sourceType, titleCase, useLatestJobs } from "../ingestion";
 import { RestrictionEditor } from "./RestrictionEditor";
 import type { UploadFailure } from "./useUpload";
 
@@ -43,6 +43,8 @@ export function DocumentsTab({
 }) {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
+  const replaceRef = useRef<HTMLInputElement>(null);
+  const replacing = useRef<DocumentItem | null>(null);
   const [dragging, setDragging] = useState(false);
   const [restrictingId, setRestrictingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<DocumentItem | null>(null);
@@ -52,7 +54,7 @@ export function DocumentsTab({
   const docs = useQuery({
     queryKey: ["docs", kbId],
     queryFn: () => documentsApi.listForKb(kbId),
-    refetchInterval: (q) => (q.state.data?.some((d) => !["completed", "failed"].includes(d.status.toLowerCase())) ? 2_000 : 15_000),
+    refetchInterval: (q) => (q.state.data?.some(isBusy) ? 2_000 : 15_000),
   });
   const jobs = useLatestJobs(docs.data);
   const restricted = useQuery({ queryKey: ["doc-restriction-map", kbId], queryFn: () => documentsApi.restrictionsForKb(kbId) });
@@ -68,6 +70,14 @@ export function DocumentsTab({
       setDeleting(null);
       refresh();
     },
+  });
+  const replace = useMutation({
+    mutationFn: ({ id, file }: { id: string; file: File }) => documentsApi.replace(id, file),
+    onSuccess: () => {
+      setActionError(null);
+      refresh();
+    },
+    onError: (e) => setActionError((e as Error).message),
   });
   const reprocess = useMutation({
     mutationFn: (id: string) => documentsApi.reprocess(id),
@@ -128,9 +138,22 @@ export function DocumentsTab({
           </button>
         </Callout>
       )}
+      <input
+        ref={replaceRef}
+        type="file"
+        accept={ACCEPT}
+        className="sr-only"
+        aria-label="Choose the replacement file"
+        tabIndex={-1}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file && replacing.current) replace.mutate({ id: replacing.current.id, file });
+          e.target.value = "";
+        }}
+      />
       {actionError && <ErrorState title="That did not work" message={actionError} />}
 
-      {docs.isLoading && <TableSkeleton columns={5} label="Loading Documents" />}
+      {docs.isLoading && <TableSkeleton columns={6} label="Loading Documents" />}
       {docs.isError && <ErrorState title="Could not load Documents" message={(docs.error as Error).message} onRetry={() => docs.refetch()} />}
       {docs.data && docs.data.length === 0 && (
         <EmptyState icon={FileText} title="No Documents yet" description="Upload files above, or connect a folder on the Connectors tab to keep this Knowledge Base in sync." />
@@ -140,6 +163,7 @@ export function DocumentsTab({
           <THead>
             <tr>
               <Th>Document</Th>
+              <Th>Type</Th>
               <Th>Ingestion stage</Th>
               <Th>Status</Th>
               <Th align="right">Chunks</Th>
@@ -162,6 +186,7 @@ export function DocumentsTab({
                       )}
                     </div>
                   </Td>
+                  <Td>{sourceType(d.content_type)}</Td>
                   <Td>
                     <IngestionStage doc={d} job={jobs.data?.get(d.id)} />
                   </Td>
@@ -170,6 +195,21 @@ export function DocumentsTab({
                     {(d.error || jobs.data?.get(d.id)?.error) && d.status.toLowerCase() === "failed" && (
                       <p className="mt-1 max-w-xs text-xs text-danger [overflow-wrap:anywhere]">{d.error || jobs.data?.get(d.id)?.error}</p>
                     )}
+                    {(d.replacement?.state === "queued" || d.replacement?.state === "processing") && (
+                      <p className="mt-1 max-w-xs text-xs text-muted [overflow-wrap:anywhere]">
+                        Replacing with {d.replacement.filename ?? "a new file"}; the current content still answers.
+                      </p>
+                    )}
+                    {d.replacement?.state === "failed" && (
+                      <p className="mt-1 max-w-xs text-xs text-danger [overflow-wrap:anywhere]">
+                        Replacement failed, the previous content still answers: {d.replacement.error ?? d.error}
+                      </p>
+                    )}
+                    {(d.warnings ?? []).map((w) => (
+                      <p key={w} className="mt-1 max-w-xs text-xs text-clay-text [overflow-wrap:anywhere]">
+                        {w}
+                      </p>
+                    ))}
                   </Td>
                   <Td align="right">{d.chunk_count}</Td>
                   <Td align="right">{formatBytes(d.file_size_bytes)}</Td>
@@ -179,7 +219,25 @@ export function DocumentsTab({
                       <button type="button" className="btn btn-ghost btn-sm" aria-label={`Restrict ${d.title}`} aria-expanded={restrictingId === d.id} onClick={() => setRestrictingId(restrictingId === d.id ? null : d.id)}>
                         <Icon icon={ShieldCheck} size="sm" />
                       </button>
-                      <button type="button" className="btn btn-ghost btn-sm" aria-label={`Reprocess ${d.title}`} onClick={() => reprocess.mutate(d.id)}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        aria-label={`Replace ${d.title}`}
+                        disabled={isBusy(d)}
+                        onClick={() => {
+                          replacing.current = d;
+                          replaceRef.current?.click();
+                        }}
+                      >
+                        <Icon icon={FileUp} size="sm" />
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        aria-label={`${d.status.toLowerCase() === "failed" || d.replacement?.state === "failed" ? "Retry" : "Reprocess"} ${d.title}`}
+                        disabled={isBusy(d)}
+                        onClick={() => reprocess.mutate(d.id)}
+                      >
                         <Icon icon={RotateCw} size="sm" />
                       </button>
                       <button type="button" className="btn btn-ghost btn-sm" aria-label={`Delete ${d.title}`} onClick={() => setDeleting(d)}>
@@ -190,7 +248,7 @@ export function DocumentsTab({
                 </Tr>
                 {restrictingId === d.id && (
                   <tr className="bg-sunken/40">
-                    <td colSpan={7} className="px-5 py-4">
+                    <td colSpan={8} className="px-5 py-4">
                       <RestrictionEditor kbId={kbId} documentId={d.id} />
                     </td>
                   </tr>

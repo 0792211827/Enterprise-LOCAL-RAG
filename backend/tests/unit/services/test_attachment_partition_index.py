@@ -86,7 +86,7 @@ def test_an_index_built_before_partitions_gains_the_fields_in_place(world):
     world.ensure_additive_fields()
 
     body = world.client.indices.put_mapping.call_args.kwargs["body"]
-    assert set(body["properties"]) == {"conversation_id", "owner_subject", "attachment_id", "restriction_principals", "locator"}
+    assert set(body["properties"]) == {"conversation_id", "owner_subject", "attachment_id", "restriction_principals", "locator", "revision", "staged"}
 
     world.client.indices.put_mapping.reset_mock()
     world.client.indices.get_mapping.return_value = {"chunks-v1": {"mappings": {"properties": {**body["properties"]}}}}

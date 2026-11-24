@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from src.auth import Principal, Role
 from src.config import split_csv
-from src.dependencies import PrincipalDep, SessionDep, SettingsDep
+from src.dependencies import OpenSearchDep, PrincipalDep, SessionDep, SettingsDep
 from src.models.knowledge_base import KnowledgeBase
 from src.repositories import DocumentRepository, GrantRepository, KnowledgeBaseRepository
 from src.schemas.api.domain import (
@@ -18,6 +18,8 @@ from src.schemas.api.domain import (
     KnowledgeBaseUpdate,
 )
 from src.services.access import resolve_scope
+from src.services.ingestion.lifecycle import IndexNotUpdated
+from src.services.ingestion.lifecycle import delete_knowledge_base as delete_knowledge_base_content
 from src.services.slug import slugify
 
 router = APIRouter(prefix="/api/v1/knowledge-bases", tags=["knowledge-bases"])
@@ -117,12 +119,16 @@ def update_knowledge_base(kb_id: UUID, payload: KnowledgeBaseUpdate, session: Se
 
 
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_knowledge_base(kb_id: UUID, session: SessionDep):
+def delete_knowledge_base(kb_id: UUID, session: SessionDep, opensearch: OpenSearchDep):
+    """Delete a Knowledge Base the way each of its Documents is deleted: chunks out of the index (verified), then files and rows."""
     repo = KnowledgeBaseRepository(session)
     kb = repo.get_by_id(kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
-    repo.delete(kb)
+    try:
+        delete_knowledge_base_content(session, opensearch, kb, repo.delete)
+    except IndexNotUpdated as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return None
 
 

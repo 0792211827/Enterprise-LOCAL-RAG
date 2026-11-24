@@ -345,6 +345,25 @@ async def test_a_changed_file_updates_its_document_in_place_and_replaces_its_chu
         assert session.scalar(select(Document).where(Document.id == original.id)).chunk_count == len(texts)
 
 
+async def test_a_changed_file_that_fails_leaves_the_old_content_answering_until_a_good_version_arrives(world):
+    write(world, "leave.txt", "Employees get 25 days of annual leave.", mtime=1_000_000_000)
+    await sync(world)
+
+    write(world, "leave.txt", "BOOM", mtime=1_100_000_000)
+    failed = await sync(world)
+
+    assert (failed.updated, failed.failed) == (0, 1) and "rejected this text" in failed.files["failed"][0]["error"]
+    assert any("25 days" in t for t in indexed_text(world)) and not any("BOOM" in t for t in indexed_text(world))
+    assert documents(world)["leave.txt"].status == "COMPLETED" and "rejected" in documents(world)["leave.txt"].error
+
+    write(world, "leave.txt", "Employees now get 30 days of annual leave.", mtime=1_200_000_000)
+    fixed = await sync(world)
+
+    assert (fixed.updated, fixed.failed) == (1, 0)
+    assert any("30 days" in t for t in indexed_text(world)) and not any("25 days" in t for t in indexed_text(world))
+    assert documents(world)["leave.txt"].error is None
+
+
 async def test_a_restriction_an_admin_set_survives_an_update(world):
     write(world, "board.txt", "Board minutes, version one.", mtime=1_000_000_000)
     await sync(world)

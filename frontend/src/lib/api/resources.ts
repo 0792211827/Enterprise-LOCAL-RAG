@@ -81,6 +81,12 @@ export const documentsApi = {
     if (title) form.append("title", title);
     return apiUpload<DocumentItem>(`/api/v1/knowledge-bases/${kbId}/documents`, form);
   },
+  /** Replaces a Document's content in place: it keeps its id, title and restrictions, and the old content answers until the new is ready. */
+  replace: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return apiUpload<DocumentItem>(`/api/v1/documents/${id}/replace`, form);
+  },
   remove: (id: string) => apiSend<void>(`/api/v1/documents/${id}`, "DELETE"),
   reprocess: (id: string) =>
     apiSend<IngestionJob>(`/api/v1/documents/${id}/reprocess`, "POST"),

@@ -191,6 +191,83 @@ test.describe("a Knowledge Base's detail page", () => {
   });
 });
 
+test.describe("adding many Documents, and replacing one", () => {
+  const upload = (name: string) => ({ name, mimeType: "application/octet-stream", buffer: Buffer.from(`content of ${name}`) });
+  const json = (route: import("@playwright/test").Route, body: unknown, status = 202) =>
+    route.fulfill({ status, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(body) });
+
+  test("a mixed batch: each file succeeds or fails on its own, two at a time, and failed ones offer Retry and Delete", async ({ page }) => {
+    const added: string[] = [];
+    let inFlight = 0;
+    let peak = 0;
+    let retried = "";
+    await openAdmin(page, "/knowledge-bases/kb-hr", (a) => {
+      a.respond("GET", "/api/v1/knowledge-bases/:id/documents", [
+        doc({ id: "doc-a", title: "Handbook.docx", status: "COMPLETED" }),
+        doc({ id: "doc-b", title: "Deck.pptx", status: "FAILED", error: "The file could not be read as a PPTX: it may be corrupt.", chunk_count: 0, content_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }),
+        doc({ id: "doc-c", title: "Rates.xlsx", status: "QUEUED", chunk_count: 0 }),
+      ]);
+      a.respond("GET", "/api/v1/ingestion-jobs", [job({ document_id: "doc-b", status: "FAILED", stage: "parse" })]);
+      a.intercept("POST", "/api/v1/knowledge-bases/:id/documents", async (route) => {
+        const name = /filename="([^"]+)"/.exec(route.request().postData() ?? "")?.[1] ?? "";
+        added.push(name);
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        inFlight -= 1;
+        if (name === "same-name.docx") return json(route, { detail: "A document named 'same-name.docx' already exists in this knowledge base. Use Replace on it to update its content." }, 409);
+        return json(route, doc({ id: `doc-${name}`, title: name, status: "QUEUED" }));
+      });
+      a.intercept("POST", "/api/v1/documents/:id/reprocess", (route, url) => {
+        retried = url.pathname;
+        return json(route, job({ document_id: "doc-b", status: "QUEUED" }));
+      });
+    });
+
+    await page.getByLabel("Upload Documents").setInputFiles(["a.pdf", "b.docx", "same-name.docx", "d.csv", "e.txt"].map(upload));
+
+    await expect(page.getByText("A file was not added")).toBeVisible();
+    await expect(page.getByText("Use Replace on it to update its content.")).toBeVisible();
+    expect(added.sort()).toEqual(["a.pdf", "b.docx", "d.csv", "e.txt", "same-name.docx"]);
+    expect(peak).toBeLessThanOrEqual(2);
+    const failed = page.getByRole("row", { name: /Deck\.pptx/ });
+    await expect(failed).toContainText("Failed");
+    await expect(failed).toContainText("PPTX");
+    await expect(failed).toContainText("it may be corrupt");
+    await expect(page.getByRole("row", { name: /Handbook\.docx/ })).toContainText("Completed");
+    await expect(page.getByRole("row", { name: /Rates\.xlsx/ })).toContainText("Queued");
+    await expect(page.getByRole("button", { name: "Delete Deck.pptx" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Retry Deck.pptx" }).click();
+    await expect.poll(() => retried).toBe("/api/v1/documents/doc-b/reprocess");
+    await captureAll(page, "knowledge-base-bulk-upload");
+  });
+
+  test("replaces a Document's content with a new file, and shows a failed replacement without losing the old content", async ({ page }) => {
+    let replaced = "";
+    let state: "ready" | "failed" = "ready";
+    await openAdmin(page, "/knowledge-bases/kb-hr", (a) => {
+      a.respondWith("GET", "/api/v1/knowledge-bases/:id/documents", () => [
+        doc({ id: "doc-leave", replacement: state === "failed" ? { state: "failed", filename: "Leave v2.pdf", error: "No text found in the document." } : null }),
+      ]);
+      a.intercept("POST", "/api/v1/documents/:id/replace", (route, url) => {
+        replaced = `${url.pathname} ${/filename="([^"]+)"/.exec(route.request().postData() ?? "")?.[1]}`;
+        state = "failed";
+        return json(route, doc({ id: "doc-leave", replacement: { state: "queued", filename: "Leave v2.pdf", error: null } }));
+      });
+    });
+
+    const chooser = page.waitForEvent("filechooser");
+    await page.getByRole("button", { name: "Replace Leave policy.pdf" }).click();
+    await (await chooser).setFiles(upload("Leave v2.pdf"));
+
+    await expect.poll(() => replaced).toBe("/api/v1/documents/doc-leave/replace Leave v2.pdf");
+    const row = page.getByRole("row", { name: /Leave policy\.pdf/ });
+    await expect(row).toContainText("Replacement failed, the previous content still answers: No text found in the document.", { timeout: 15_000 });
+    await expect(row.getByRole("button", { name: "Retry Leave policy.pdf" })).toBeVisible();
+  });
+});
+
 test.describe("the Documents view across Knowledge Bases", () => {
   test("lists Documents from every Knowledge Base and searches them", async ({ page }) => {
     await openAdmin(page, "/documents", (a) => {

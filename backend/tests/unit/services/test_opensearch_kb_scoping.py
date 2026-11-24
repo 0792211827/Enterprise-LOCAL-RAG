@@ -59,7 +59,7 @@ def test_hybrid_knn_leg_only_excludes_attachment_partitions_when_unscoped(client
     client.search_unified(query="q", query_embedding=[0.1] * 8, size=5, use_hybrid=True)
     body = client.client.search.call_args.kwargs["body"]
     _bm25, knn_leg = body["query"]["hybrid"]["queries"]
-    assert knn_leg["bool"] == {"must": [knn_leg["bool"]["must"][0]], "must_not": [{"exists": {"field": "conversation_id"}}]}
+    assert knn_leg["bool"] == {"must": [knn_leg["bool"]["must"][0]], "must_not": [{"term": {"staged": True}}, {"exists": {"field": "conversation_id"}}]}
     assert "filter" not in knn_leg["bool"]
 
 
