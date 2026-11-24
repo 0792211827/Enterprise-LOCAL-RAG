@@ -18,39 +18,40 @@ const config: Config = {
   content: ["./src/**/*.{ts,tsx}"],
   theme: {
     spacing,
-    extend: {
-      colors: {
-        canvas: channel("canvas"),
-        surface: channel("surface"),
-        sunken: channel("sunken"),
-        line: { DEFAULT: channel("line"), strong: channel("line-strong") },
-        fg: channel("fg"),
-        muted: channel("muted"),
-        subtle: channel("subtle"),
-        accent: {
-          DEFAULT: channel("accent"),
-          hover: channel("accent-hover"),
-          fg: channel("accent-fg"),
-          soft: channel("accent-soft"),
-          text: channel("accent-text"),
-        },
-        clay: { DEFAULT: channel("clay"), soft: channel("clay-soft"), text: channel("clay-text") },
-        ok: { DEFAULT: channel("ok"), soft: channel("ok-soft") },
-        warn: { DEFAULT: channel("warn"), soft: channel("warn-soft") },
-        danger: { DEFAULT: channel("danger"), soft: channel("danger-soft") },
-        info: { DEFAULT: channel("info"), soft: channel("info-soft") },
-        overlay: channel("overlay"),
-        code: { bg: channel("code-bg"), fg: channel("code-fg") },
-        ring: channel("ring"),
-        // Pages not yet rebuilt still say `brand-*`; it now resolves to the ink-green scale
-        // rather than the old blue. Removed with the last of those pages.
-        brand: scale("ink", [50, 100, 200, 500, 600, 700]),
-        // Raw palette scales, for the specimen page only.
-        ink: scale("ink", [50, 100, 200, 500, 600, 700, 800, 900]),
-        paper: scale("paper", [50, 100, 200, 300, 600, 700, 900]),
-        cool: scale("cool", [50, 100, 200, 300, 600, 700, 900]),
-        "clay-scale": scale("clay", [50, 100, 500, 600, 700]),
+    // Replaces Tailwind's default palette on purpose: only these token-backed colours exist, so a
+    // generic blue or slate cannot creep back in.
+    colors: {
+      transparent: "transparent",
+      current: "currentColor",
+      canvas: channel("canvas"),
+      surface: channel("surface"),
+      sunken: channel("sunken"),
+      line: { DEFAULT: channel("line"), strong: channel("line-strong") },
+      fg: channel("fg"),
+      muted: channel("muted"),
+      subtle: channel("subtle"),
+      accent: {
+        DEFAULT: channel("accent"),
+        hover: channel("accent-hover"),
+        fg: channel("accent-fg"),
+        soft: channel("accent-soft"),
+        text: channel("accent-text"),
       },
+      clay: { DEFAULT: channel("clay"), soft: channel("clay-soft"), text: channel("clay-text") },
+      ok: { DEFAULT: channel("ok"), soft: channel("ok-soft") },
+      warn: { DEFAULT: channel("warn"), soft: channel("warn-soft") },
+      danger: { DEFAULT: channel("danger"), soft: channel("danger-soft") },
+      info: { DEFAULT: channel("info"), soft: channel("info-soft") },
+      overlay: channel("overlay"),
+      code: { bg: channel("code-bg"), fg: channel("code-fg") },
+      ring: channel("ring"),
+      // Raw palette scales, for the specimen page only.
+      ink: scale("ink", [50, 100, 200, 500, 600, 700, 800, 900]),
+      paper: scale("paper", [50, 100, 200, 300, 600, 700, 900]),
+      cool: scale("cool", [50, 100, 200, 300, 600, 700, 900]),
+      "clay-scale": scale("clay", [50, 100, 500, 600, 700]),
+    },
+    extend: {
       fontFamily: {
         sans: "var(--font-sans)",
         serif: "var(--font-serif)",

@@ -86,10 +86,10 @@ export function AdminShell({
       </aside>
 
       <div className="ml-14 lg:ml-60">
-        <div className="flex h-14 items-center border-b border-line bg-surface px-6 lg:px-8">
+        <header className="flex h-14 items-center border-b border-line bg-surface px-6 lg:px-8">
           {crumbs.length > 0 && <Breadcrumb items={crumbs} />}
-        </div>
-        <main className="mx-auto max-w-6xl px-6 py-6 lg:px-8">
+        </header>
+        <main id="main" tabIndex={-1} className="mx-auto max-w-6xl px-6 py-6 outline-none lg:px-8">
           <AuthBanner onSignIn={onSignIn} />
           {children}
         </main>

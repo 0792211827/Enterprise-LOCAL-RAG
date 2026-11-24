@@ -3,52 +3,6 @@ import { Check, ChevronDown, Copy, Eye, EyeOff } from "lucide-react";
 import { KeyboardEvent, ReactElement, ReactNode, cloneElement, useId, useState } from "react";
 import { Icon } from "./Icon";
 
-/** Step indicator for multi-step flows. Completed steps are clickable. */
-export function Stepper({
-  steps,
-  current,
-  onStepClick,
-}: {
-  steps: string[];
-  current: number;
-  onStepClick?: (index: number) => void;
-}) {
-  return (
-    <ol className="mb-8 flex items-center gap-2">
-      {steps.map((label, i) => {
-        const done = i < current;
-        const active = i === current;
-        const clickable = done && onStepClick;
-        return (
-          <li key={label} className="flex flex-1 items-center gap-2">
-            <button
-              type="button"
-              disabled={!clickable}
-              aria-current={active ? "step" : undefined}
-              onClick={() => clickable && onStepClick(i)}
-              className={`flex items-center gap-2 text-sm ${clickable ? "cursor-pointer" : "cursor-default"}`}
-            >
-              <span
-                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ring-1 ring-inset ${
-                  active
-                    ? "bg-accent text-accent-fg ring-accent"
-                    : done
-                      ? "bg-accent-soft text-accent-text ring-accent/30"
-                      : "bg-surface text-subtle ring-line-strong"
-                }`}
-              >
-                {done ? <Icon icon={Check} size="sm" /> : i + 1}
-              </span>
-              <span className={active ? "font-medium text-fg" : done ? "text-muted" : "text-subtle"}>{label}</span>
-            </button>
-            {i < steps.length - 1 && <span className={`hidden h-px flex-1 sm:block ${done ? "bg-accent/40" : "bg-line"}`} />}
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
 /**
  * Copy-to-clipboard with a fallback.
  *

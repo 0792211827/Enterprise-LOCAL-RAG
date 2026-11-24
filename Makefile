@@ -1,14 +1,104 @@
-.PHONY: help start stop restart status logs health setup format lint test test-cov \
-        frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup reindex eval eval-compare start-hardened health-hardened connectors connector-sync ingest-samples
+.PHONY: help install infra app app-stop backend frontend pull-model psql start stop restart status logs health setup \
+        format lint test test-cov frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup \
+        reindex eval eval-compare start-hardened health-hardened connectors connector-sync ingest-samples
+
+# Task runner for Enterprise-LOCAL-RAG.
+#
+#   make            list every target
+#   make install    one-time setup: Python + frontend deps, .env from .env.example
+#   make start      the whole stack in Docker (api, frontend, datastores, Langfuse)
+#   make app        dev mode: datastores in Docker, backend + frontend on the host with reload
+#
+# Kept compatible with the GNU Make 3.81 that ships with macOS: any recipe
+# needing shell logic is one joined command, not several lines.
+
+SHELL := /bin/bash
+.DEFAULT_GOAL := help
 
 # The virtualenv lives at the repo root, not in backend/. uv resolves this
 # relative to the project root (backend/, where pyproject.toml is).
 export UV_PROJECT_ENVIRONMENT := ../.venv
 
+# Host ports. API_PORT is also what `make health` probes; with compose.localports.yml
+# the container is on 8020, so pass API_PORT=8020 to health, not to app.
+API_PORT ?= 8010
+UI_PORT  ?= 3003
+PG_PORT  ?= 5432
+
+# Datastores and model server that `make app` needs; the api and frontend run on the host instead.
+INFRA ?= postgres opensearch redis ollama
+MODEL ?= $(or $(shell sed -n 's/^OLLAMA_MODEL=//p' .env 2>/dev/null | tail -1),llama3.2:1b)
+
+# .env addresses the compose network (postgres, opensearch, ollama...). A host process reaches
+# the published ports on localhost, so these are overridden in its environment only; the
+# provider endpoints are rewritten just when they still point at the bundled ollama.
+LOCAL_ENV = export POSTGRES_DATABASE_URL=postgresql://rag_user:rag_password@localhost:$(PG_PORT)/rag_db \
+	OPENSEARCH__HOST=http://localhost:9200 OPENSEARCH_HOST=http://localhost:9200 \
+	OLLAMA_HOST=http://localhost:11434 REDIS__HOST=localhost LANGFUSE__HOST=http://localhost:3000 \
+	CORS_ALLOW_ORIGINS=http://localhost:$(UI_PORT),http://127.0.0.1:$(UI_PORT),http://localhost:3001,http://localhost:3000; \
+	for v in LLM__ENDPOINT EMBEDDING__ENDPOINT VLM__ENDPOINT; do \
+	  val=$$(sed -n "s/^$$v=//p" .env | tail -1); \
+	  case "$$val" in *//ollama:*) export $$v=$${val/\/\/ollama:/\/\/localhost:};; esac; \
+	done
+
 # Default target
 help: ## Show this help message
 	@echo "Available commands:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+
+# Setup
+install: setup frontend-setup ## One-time setup: Python + frontend deps, and .env from .env.example if missing
+	@if [ ! -f .env ]; then cp .env.example .env; echo "wrote .env -- review it before 'make start' or 'make app'"; fi
+
+# Local development: datastores in Docker, the two servers on the host.
+infra: ## Start only the datastores and Ollama (what 'make app' needs), waiting until healthy
+	docker compose up -d --wait $(INFRA)
+
+pull-model: ## Pull the Ollama chat model into rag-ollama (MODEL=llama3.2:1b)
+	docker exec rag-ollama ollama pull $(MODEL)
+
+# One joined command so a single trap reaps both servers however the run ends -- by
+# port too, since uvicorn --reload and next dev run as children of the shell we start.
+app: ## Dev stack: datastores in Docker, backend (reload) + frontend on the host
+	@if [ ! -f .env ]; then echo "no .env -- run 'make install' first"; exit 1; fi; \
+	for p in $(API_PORT) $(UI_PORT); do \
+	  if lsof -nP -iTCP:$$p -sTCP:LISTEN -t >/dev/null 2>&1; then \
+	    echo "port $$p is in use -- 'make app-stop' frees it"; exit 1; fi; \
+	done; \
+	echo '==> datastores'; \
+	docker compose up -d --wait $(INFRA) || exit 1; \
+	$(LOCAL_ENV); \
+	echo '==> backend on $(API_PORT)'; \
+	(cd backend && uv run uvicorn src.main:app --reload --port $(API_PORT)) & api=$$!; \
+	trap 'kill $$api $$ui 2>/dev/null; sleep 1; \
+	  for p in $(API_PORT) $(UI_PORT); do \
+	    held=$$(lsof -nP -iTCP:$$p -sTCP:LISTEN -t 2>/dev/null); \
+	    if [ -n "$$held" ]; then kill $$held 2>/dev/null; fi; \
+	  done' EXIT INT TERM; \
+	for _ in $$(seq 120); do \
+	  curl -sf "http://127.0.0.1:$(API_PORT)/api/v1/health" >/dev/null && break; \
+	  kill -0 $$api 2>/dev/null || { echo 'backend exited during startup -- see above'; exit 1; }; \
+	  sleep 1; \
+	done; \
+	echo '==> frontend on $(UI_PORT)'; \
+	(cd frontend && NEXT_PUBLIC_API_URL=http://localhost:$(API_PORT) npm run dev -- -p $(UI_PORT)) & ui=$$!; \
+	wait $$ui
+
+backend: ## Backend only, with reload, against 'make infra' datastores
+	@$(LOCAL_ENV); cd backend && uv run uvicorn src.main:app --reload --port $(API_PORT)
+
+frontend: ## Frontend only, against the backend on API_PORT
+	cd frontend && NEXT_PUBLIC_API_URL=http://localhost:$(API_PORT) npm run dev -- -p $(UI_PORT)
+
+app-stop: ## Free the dev ports (API_PORT, UI_PORT) and stop the datastores 'make app' started
+	@for p in $(API_PORT) $(UI_PORT); do \
+	  pids=$$(lsof -nP -iTCP:$$p -sTCP:LISTEN -t 2>/dev/null); \
+	  if [ -n "$$pids" ]; then kill $$pids 2>/dev/null; echo "freed $$p"; fi; \
+	done
+	-@docker compose stop $(INFRA) >/dev/null 2>&1
+
+psql: ## Open psql in the rag-postgres container
+	docker exec -it rag-postgres psql -U rag_user -d rag_db
 
 # Service management
 start: ## Start all services
@@ -32,7 +122,6 @@ logs: ## Show service logs
 # Health checks
 # Override when the API's host port is remapped, e.g. `make health API_PORT=8020`
 # with compose.localports.yml.
-API_PORT ?= 8000
 
 # curl -f fails on HTTP errors and connection refusals; capturing its output
 # first (rather than piping to jq, which exits 0 on empty input) makes the

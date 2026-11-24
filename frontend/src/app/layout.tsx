@@ -10,14 +10,17 @@ import { AppShell } from "./AppShell";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "Enterprise Local RAG — Admin Control Plane",
-  description: "Self-hosted Enterprise Local RAG control plane",
+  title: "Enterprise Local RAG",
+  description: "Ask questions of your company's documents, on your own infrastructure",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
+        <a href="#main" className="skip-link">
+          Skip to content
+        </a>
         <Providers>
           <AppShell>{children}</AppShell>
         </Providers>

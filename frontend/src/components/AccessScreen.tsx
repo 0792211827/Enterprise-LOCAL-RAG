@@ -13,7 +13,7 @@ function Screen({ title, children, actions }: { title: string; children?: ReactN
       <header className="px-6 py-5 sm:px-10">
         <Wordmark className="text-lg" />
       </header>
-      <main className="flex flex-1 items-center px-6 pb-24 sm:px-10">
+      <main id="main" tabIndex={-1} className="flex flex-1 items-center px-6 pb-24 outline-none sm:px-10">
         <div className="mx-auto w-full max-w-xl border-l-2 border-accent pl-6 sm:pl-8">
           <h1 className="font-display text-3xl font-semibold tracking-tight">{title}</h1>
           <div className="mt-4 space-y-3 text-base text-muted">{children}</div>

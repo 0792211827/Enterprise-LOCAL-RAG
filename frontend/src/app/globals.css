@@ -29,6 +29,13 @@
     outline: none;
   }
 
+  /* A bare `border` takes the token line colour, not currentColor. */
+  *,
+  ::before,
+  ::after {
+    border-color: rgb(var(--line));
+  }
+
   ::selection {
     background: rgb(var(--ink-200));
     color: rgb(var(--ink-900));
@@ -64,6 +71,11 @@
   }
   .btn-danger {
     @apply border border-danger/30 bg-surface text-danger hover:bg-danger-soft;
+  }
+
+  /* First stop in the tab order: lets a keyboard user jump past the navigation. */
+  .skip-link {
+    @apply sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[70] focus:rounded-control focus:bg-accent focus:px-3.5 focus:py-2 focus:text-sm focus:font-medium focus:text-accent-fg;
   }
 
   .skeleton {

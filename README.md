@@ -94,6 +94,10 @@ at **http://localhost:8000/docs**.
 
 ```bash
 make start     # build + start all services
+make install   # one-time: Python + frontend deps, .env from .env.example
+make app       # dev mode: datastores in Docker, backend (reload) + frontend on the host; make app-stop to free it
+make infra     # just the datastores + Ollama; then make backend / make frontend in separate terminals
+make pull-model  # pull OLLAMA_MODEL (or MODEL=...) into rag-ollama
 make start-hardened  # same, publishing only the API and UIs, on 127.0.0.1
 make stop      # stop services
 make logs      # tail logs
@@ -144,7 +148,7 @@ Full, interactive documentation is available at `/docs`.
 
 A Next.js 14 admin UI (`frontend/`) for managing knowledge bases, document
 ingestion, RAG applications (with a retrieval playground), model providers,
-retrieval profiles, and system health, plus an audit log viewer for auditors.
+retrieval profiles, feedback and system health, plus an audit log viewer for auditors.
 
 It is also the employees' chat app. Each role reaches its own surface, enforced
 on the server and mirrored in the UI: `querier` gets **Chat** only, `admin` the
@@ -152,6 +156,15 @@ control plane, `auditor` the audit log (a user with several roles gets each).
 In Chat an employee sees only the Applications whose *every* Knowledge Base they
 hold a Grant on, gets the answer streamed, and can open each citation to see the
 source Document with the cited passage marked. Conversations are not stored yet.
+
+The UI is two surfaces on shared design tokens (`frontend/src/styles/tokens.css`,
+mapped in `tailwind.config.ts`, which carries no other colours): the **User UI**
+(`/chat`, warm paper, reading-first, usable one-handed on a phone) and the **Admin
+UI** (everything else, cool and dense, grouped Build / Operate / Review, tables
+scroll inside their container on a tablet). `src/app/AppShell.tsx` picks the shell
+from the caller's roles. Shared components live in `src/components/ui/`; the
+specimen at `/design` shows them with the palette and type. Fonts and icons are
+bundled, so nothing is fetched from a CDN.
 
 Run with Docker (part of `make start`):
 
@@ -166,12 +179,21 @@ cd frontend
 npm install
 npm run dev          # http://localhost:3001
 npm run build        # production build + type check
+npx playwright install chromium   # once: the browser the UI tests drive
+npm run test:e2e     # builds the app (auth off and OIDC) and runs the browser tests, offline
 ```
+
+The browser tests (`frontend/e2e/`) drive production builds with the API stubbed at
+the HTTP boundary (`e2e/support/api-stub.ts`), so they need no running services. A
+test signs in as an End user, Admin, auditor or a caller with no role. To capture
+desktop, tablet and phone screenshots into `frontend/e2e/screenshots/` for design
+review, run `SCREENSHOTS=1 npm run test:e2e` (the specs capture their key states as
+they pass). `e2e/final-pass.spec.ts` holds the whole-app checks: landmarks, one
+heading per page, no icon glyphs, no horizontal overflow, skip link, visible focus
+and reduced motion.
 
 The browser calls the API at `http://localhost:8000` (configurable via the
 `NEXT_PUBLIC_API_URL` build arg in `compose.yml`). The backend enables CORS for
-npx playwright install chromium   # once: the browser the UI tests drive
-npm run test:e2e     # builds the app (auth off and OIDC) and runs the browser tests, offline
 `localhost:3000/3001` out of the box.
 
 ## ⚙️ Configuration

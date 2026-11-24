@@ -119,7 +119,7 @@ export function Chip({
 
 export function Table({ children, caption }: { children: ReactNode; caption?: string }) {
   return (
-    <div className="overflow-x-auto rounded-panel border border-line bg-surface">
+    <div className="relative overflow-x-auto rounded-panel border border-line bg-surface">
       <table className="w-full text-sm">
         {caption && <caption className="sr-only">{caption}</caption>}
         {children}

@@ -1,17 +1,29 @@
 "use client";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { Download, ScrollText, SearchX } from "lucide-react";
 import { FormEvent, ReactNode, useState } from "react";
 import {
+  Advanced,
   Callout,
+  Drawer,
   EmptyState,
   ErrorState,
-  LoadingState,
-  Modal,
+  Icon,
   PageHeader,
   StatusBadge,
+  TBody,
+  Table,
+  TableSkeleton,
+  Td,
+  Th,
+  THead,
+  Tr,
+  useToast,
 } from "@/components/ui";
 import { auditApi } from "@/lib/api/resources";
 import type { AuditAction, AuditEvent, AuditFilters, AuditOutcome, AuditStatus } from "@/lib/api/types";
+import { saveBlob } from "@/lib/download";
+import { formatDateTime } from "@/lib/format";
 
 const ACTIONS: { value: AuditAction; label: string }[] = [
   { value: "query.answer", label: "Answer" },
@@ -24,29 +36,25 @@ const ACTIONS: { value: AuditAction; label: string }[] = [
   { value: "chat.purge", label: "Chat purge" },
   { value: "connector.sync", label: "Connector sync" },
 ];
-const ACTION_LABELS = Object.fromEntries(ACTIONS.map((a) => [a.value, a.label]));
+const ACTION_LABELS: Record<string, string> = Object.fromEntries(ACTIONS.map((a) => [a.value, a.label]));
 const OUTCOMES: AuditOutcome[] = ["ok", "denied", "error"];
-
-function fmt(ts: string) {
-  return new Date(ts).toLocaleString();
-}
 
 /** <input type="datetime-local"> is local time; the API wants an instant. */
 function toInstant(local: string): string | undefined {
   return local ? new Date(local).toISOString() : undefined;
 }
 
-function short(id: string | null | undefined) {
-  return id ? id.slice(0, 8) : "—";
-}
+const short = (id: string | null | undefined) => (id ? id.slice(0, 8) : "—");
+
+const none = <span className="text-subtle">—</span>;
 
 function kbList(ids: string[] | null, nullMeans: string) {
-  if (ids === null) return <span className="text-slate-400">{nullMeans}</span>;
-  if (ids.length === 0) return <span className="text-slate-400">none</span>;
+  if (ids === null) return <span className="text-muted">{nullMeans}</span>;
+  if (ids.length === 0) return <span className="text-muted">none</span>;
   return <span className="font-mono text-xs">{ids.join(", ")}</span>;
 }
 
-function target(e: AuditEvent) {
+function Target({ event: e }: { event: AuditEvent }) {
   if (e.action === "admin.mutation" || e.action === "access.denied") {
     return (
       <span className="font-mono text-xs">
@@ -54,25 +62,24 @@ function target(e: AuditEvent) {
       </span>
     );
   }
-  return <span className="font-mono text-xs text-slate-500">{e.route ?? "—"}</span>;
+  return <span className="font-mono text-xs text-muted">{e.route ?? "—"}</span>;
 }
 
 function RecordingStatus({ status }: { status: AuditStatus }) {
   if (status.level === "off") {
     return (
       <Callout tone="warn" title="Audit logging is off">
-        Nothing is being recorded. Set <code>AUDIT__LEVEL=metadata</code> (IDs and digests) or{" "}
-        <code>AUDIT__LEVEL=full</code> (also the query and answer text) on the API and restart it.
-        Events recorded earlier are still listed below.
+        Nothing is being recorded. Set <code>AUDIT__LEVEL=metadata</code> (IDs and digests) or <code>AUDIT__LEVEL=full</code> (also the query and answer text) on the API and restart it. Events
+        recorded earlier are still listed below.
       </Callout>
     );
   }
   return (
-    <p className="text-sm text-slate-500">
-      Recording at level <strong>{status.level}</strong>
-      {status.level === "metadata" && " (IDs and SHA-256 digests, no query or answer text)"} · when a
-      write fails: <strong>{status.fail_mode === "deny" ? "refuse the request" : "log and continue"}</strong> ·
-      retention: <strong>{status.retention_days ? `${status.retention_days} days` : "forever"}</strong>
+    <p className="text-sm text-muted">
+      Recording at level <strong className="font-medium text-fg">{status.level}</strong>
+      {status.level === "metadata" && " (IDs and SHA-256 digests, no query or answer text)"} · when a write fails:{" "}
+      <strong className="font-medium text-fg">{status.fail_mode === "deny" ? "refuse the request" : "log and continue"}</strong> · retention:{" "}
+      <strong className="font-medium text-fg">{status.retention_days ? `${status.retention_days} days` : "forever"}</strong>
     </p>
   );
 }
@@ -90,8 +97,7 @@ const EMPTY_FORM = {
 
 function FilterBar({ onApply }: { onApply: (filters: AuditFilters) => void }) {
   const [form, setForm] = useState(EMPTY_FORM);
-  const set = (key: keyof typeof EMPTY_FORM) => (e: { target: { value: string } }) =>
-    setForm({ ...form, [key]: e.target.value });
+  const set = (key: keyof typeof EMPTY_FORM) => (e: { target: { value: string } }) => setForm({ ...form, [key]: e.target.value });
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -108,54 +114,76 @@ function FilterBar({ onApply }: { onApply: (filters: AuditFilters) => void }) {
   };
 
   return (
-    <form onSubmit={submit} className="card mb-4 grid grid-cols-4 gap-3 p-4">
-      <div>
-        <label className="label">Actor</label>
-        <input className="input" value={form.actor} onChange={set("actor")} placeholder="exact subject" />
+    <form onSubmit={submit} aria-label="Filter the Audit Log" className="card mb-4 space-y-3 p-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div>
+          <label htmlFor="audit-actor" className="label">
+            Actor
+          </label>
+          <input id="audit-actor" className="input" value={form.actor} onChange={set("actor")} placeholder="Exact subject" />
+        </div>
+        <div>
+          <label htmlFor="audit-action" className="label">
+            Action
+          </label>
+          <select id="audit-action" className="input" value={form.action} onChange={set("action")}>
+            <option value="">Any</option>
+            {ACTIONS.map((a) => (
+              <option key={a.value} value={a.value}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="audit-outcome" className="label">
+            Outcome
+          </label>
+          <select id="audit-outcome" className="input" value={form.outcome} onChange={set("outcome")}>
+            <option value="">Any</option>
+            {OUTCOMES.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="audit-since" className="label">
+            From
+          </label>
+          <input id="audit-since" className="input" type="datetime-local" value={form.since} onChange={set("since")} />
+        </div>
+        <div>
+          <label htmlFor="audit-until" className="label">
+            Until
+          </label>
+          <input id="audit-until" className="input" type="datetime-local" value={form.until} onChange={set("until")} />
+        </div>
       </div>
-      <div>
-        <label className="label">Action</label>
-        <select className="input" value={form.action} onChange={set("action")}>
-          <option value="">Any</option>
-          {ACTIONS.map((a) => (
-            <option key={a.value} value={a.value}>
-              {a.label}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div>
-        <label className="label">Outcome</label>
-        <select className="input" value={form.outcome} onChange={set("outcome")}>
-          <option value="">Any</option>
-          {OUTCOMES.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div>
-        <label className="label">Request ID</label>
-        <input className="input" value={form.request_id} onChange={set("request_id")} />
-      </div>
-      <div>
-        <label className="label">Knowledge base ID</label>
-        <input className="input" value={form.knowledge_base_id} onChange={set("knowledge_base_id")} />
-      </div>
-      <div>
-        <label className="label">Assistant ID</label>
-        <input className="input" value={form.application_id} onChange={set("application_id")} />
-      </div>
-      <div>
-        <label className="label">From</label>
-        <input className="input" type="datetime-local" value={form.since} onChange={set("since")} />
-      </div>
-      <div>
-        <label className="label">Until</label>
-        <input className="input" type="datetime-local" value={form.until} onChange={set("until")} />
-      </div>
-      <div className="col-span-4 flex justify-end gap-2">
+      <Advanced title="More filters">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div>
+            <label htmlFor="audit-request" className="label">
+              Request ID
+            </label>
+            <input id="audit-request" className="input font-mono text-xs" value={form.request_id} onChange={set("request_id")} />
+          </div>
+          <div>
+            <label htmlFor="audit-kb" className="label">
+              Knowledge Base ID
+            </label>
+            <input id="audit-kb" className="input font-mono text-xs" value={form.knowledge_base_id} onChange={set("knowledge_base_id")} />
+          </div>
+          <div>
+            <label htmlFor="audit-app" className="label">
+              Application ID
+            </label>
+            <input id="audit-app" className="input font-mono text-xs" value={form.application_id} onChange={set("application_id")} />
+          </div>
+        </div>
+      </Advanced>
+      <div className="flex justify-end gap-2">
         <button
           type="button"
           className="btn btn-secondary"
@@ -174,72 +202,66 @@ function FilterBar({ onApply }: { onApply: (filters: AuditFilters) => void }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children }: { label: string; children?: ReactNode }) {
   return (
-    <div className="grid grid-cols-3 gap-2 py-1.5 text-sm">
-      <div className="text-slate-500">{label}</div>
-      <div className="col-span-2 break-words text-slate-800">{children ?? "—"}</div>
+    <div className="grid grid-cols-1 gap-0.5 py-2 text-sm sm:grid-cols-[9rem_1fr] sm:gap-3">
+      <dt className="text-muted">{label}</dt>
+      <dd className="min-w-0 text-fg [overflow-wrap:anywhere]">{children ?? none}</dd>
     </div>
   );
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div>
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</div>
-      <div className="divide-y divide-slate-100">{children}</div>
-    </div>
+    <section>
+      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">{title}</h3>
+      <dl className="divide-y divide-line">{children}</dl>
+    </section>
   );
 }
+
+const mono = (value: string | null | undefined) => (value ? <span className="font-mono text-xs">{value}</span> : none);
 
 function EventDetail({ event }: { event: AuditEvent }) {
   const isQuery = event.action.startsWith("query.");
   return (
-    <div className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
+    <div className="space-y-6">
       <Section title="Event">
-        <Field label="When">{fmt(event.occurred_at)}</Field>
+        <Field label="When">{formatDateTime(event.occurred_at)}</Field>
         <Field label="Action">{ACTION_LABELS[event.action] ?? event.action}</Field>
         <Field label="Outcome">
           <StatusBadge status={event.outcome} />
-          {event.status_code !== null && <span className="ml-2 text-slate-500">HTTP {event.status_code}</span>}
-          {event.error_code && <span className="ml-2 font-mono text-xs text-red-600">{event.error_code}</span>}
+          {event.status_code !== null && <span className="ml-2 text-muted">HTTP {event.status_code}</span>}
+          {event.error_code && <span className="ml-2 font-mono text-xs text-danger">{event.error_code}</span>}
         </Field>
-        <Field label="Request ID">
-          <span className="font-mono text-xs">{event.request_id}</span>
+        <Field label="Request ID">{mono(event.request_id)}</Field>
+        <Field label="Route">
+          <Target event={event} />
         </Field>
-        <Field label="Route">{target(event)}</Field>
         {event.resource_id && (
           <Field label="Resource">
-            {event.resource_type} <span className="font-mono text-xs">{event.resource_id}</span>
+            {event.resource_type} {mono(event.resource_id)}
           </Field>
         )}
         {event.latency_ms !== null && <Field label="Latency">{event.latency_ms} ms</Field>}
       </Section>
 
       <Section title="Who">
-        <Field label="Subject">{event.actor_subject ?? <span className="text-slate-400">not authenticated</span>}</Field>
+        <Field label="Subject">{event.actor_subject ?? <span className="text-muted">not authenticated</span>}</Field>
         <Field label="Signed in with">{event.auth_method}</Field>
-        <Field label="Roles">{event.actor_roles?.join(", ") || "—"}</Field>
-        <Field label="Groups">{event.actor_groups?.join(", ") || "—"}</Field>
-        {event.api_key_id && (
-          <Field label="API key">
-            <span className="font-mono text-xs">{event.api_key_id}</span>
-          </Field>
-        )}
-        {event.application_id && (
-          <Field label="Assistant">
-            <span className="font-mono text-xs">{event.application_id}</span>
-          </Field>
-        )}
+        <Field label="Roles">{event.actor_roles?.join(", ") || none}</Field>
+        <Field label="Groups">{event.actor_groups?.join(", ") || none}</Field>
+        {event.api_key_id && <Field label="API key">{mono(event.api_key_id)}</Field>}
+        {event.application_id && <Field label="Application">{mono(event.application_id)}</Field>}
         <Field label="Source IP">{event.source_ip}</Field>
         <Field label="User agent">{event.user_agent}</Field>
       </Section>
 
       {isQuery && (
         <Section title="Knowledge scope">
-          <Field label="Requested">{kbList(event.requested_kb_ids, "every knowledge base (global search)")}</Field>
+          <Field label="Requested">{kbList(event.requested_kb_ids, "every Knowledge Base (global search)")}</Field>
           <Field label="Permitted">{kbList(event.permitted_kb_ids, "unrestricted")}</Field>
-          <Field label="Dropped by grants">{kbList(event.dropped_kb_ids, "none")}</Field>
+          <Field label="Dropped by Grants">{kbList(event.dropped_kb_ids, "none")}</Field>
           {event.cache_hit !== null && <Field label="Cache hit">{event.cache_hit ? "yes" : "no"}</Field>}
           {event.model && <Field label="Model">{event.model}</Field>}
         </Section>
@@ -248,100 +270,103 @@ function EventDetail({ event }: { event: AuditEvent }) {
       {isQuery && (
         <Section title="Retrieved">
           {event.retrieved === null ? (
-            <p className="py-1.5 text-sm text-slate-400">No retrieval ran for this request.</p>
+            <p className="py-2 text-sm text-muted">No retrieval ran for this request.</p>
           ) : event.retrieved.length === 0 ? (
-            <p className="py-1.5 text-sm text-slate-400">Nothing was retrieved.</p>
+            <p className="py-2 text-sm text-muted">Nothing was retrieved.</p>
           ) : (
-            <table className="w-full text-xs">
-              <thead className="text-left text-slate-400">
-                <tr>
-                  <th className="py-1 font-medium">Chunk</th>
-                  <th className="py-1 font-medium">Document</th>
-                  <th className="py-1 font-medium">Knowledge base</th>
-                  <th className="py-1 text-right font-medium">Score</th>
-                </tr>
-              </thead>
-              <tbody className="font-mono">
-                {event.retrieved.map((r, i) => (
-                  <tr key={`${r.chunk_id}-${i}`} className="border-t border-slate-100">
-                    <td className="py-1" title={r.chunk_id ?? ""}>{short(r.chunk_id)}</td>
-                    <td className="py-1" title={r.document_id ?? ""}>{short(r.document_id)}</td>
-                    <td className="py-1" title={r.knowledge_base_id ?? ""}>{short(r.knowledge_base_id)}</td>
-                    <td className="py-1 text-right">{r.score?.toFixed(3) ?? "—"}</td>
+            <div className="overflow-x-auto py-2">
+              <table className="w-full text-xs">
+                <caption className="sr-only">Retrieved passages</caption>
+                <thead className="text-left text-muted">
+                  <tr>
+                    <th scope="col" className="py-1 pr-3 font-medium">
+                      Chunk
+                    </th>
+                    <th scope="col" className="py-1 pr-3 font-medium">
+                      Document
+                    </th>
+                    <th scope="col" className="py-1 pr-3 font-medium">
+                      Knowledge Base
+                    </th>
+                    <th scope="col" className="py-1 text-right font-medium">
+                      Score
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="font-mono">
+                  {event.retrieved.map((r, i) => (
+                    <tr key={`${r.chunk_id}-${i}`} className="border-t border-line">
+                      <td className="py-1 pr-3" title={r.chunk_id ?? ""}>
+                        {short(r.chunk_id)}
+                      </td>
+                      <td className="py-1 pr-3" title={r.document_id ?? ""}>
+                        {short(r.document_id)}
+                      </td>
+                      <td className="py-1 pr-3" title={r.knowledge_base_id ?? ""}>
+                        {short(r.knowledge_base_id)}
+                      </td>
+                      <td className="py-1 text-right">{r.score?.toFixed(3) ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </Section>
       )}
 
       {isQuery && (
         <Section title="Exchange">
-          <Field label="Query">
-            {event.query_text ?? <span className="text-slate-400">not stored (level metadata)</span>}
-          </Field>
-          <Field label="Query SHA-256">
-            <span className="font-mono text-xs">{event.query_sha256}</span>
-          </Field>
+          <Field label="Query">{event.query_text ?? <span className="text-muted">Not stored (level metadata)</span>}</Field>
+          <Field label="Query SHA-256">{mono(event.query_sha256)}</Field>
           {event.action === "query.answer" && (
             <>
-              <Field label="Answer">
-                {event.answer_text ?? <span className="text-slate-400">not stored (level metadata)</span>}
-              </Field>
-              <Field label="Answer SHA-256">
-                <span className="font-mono text-xs">{event.answer_sha256}</span>
-              </Field>
+              <Field label="Answer">{event.answer_text ?? <span className="text-muted">Not stored (level metadata)</span>}</Field>
+              <Field label="Answer SHA-256">{mono(event.answer_sha256)}</Field>
             </>
           )}
         </Section>
       )}
 
       {event.details && (
-        <Section title="Details">
-          <pre className="overflow-x-auto rounded bg-slate-50 p-3 text-xs text-slate-700">
-            {JSON.stringify(event.details, null, 2)}
-          </pre>
-        </Section>
+        <section>
+          <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Details</h3>
+          <pre className="overflow-x-auto rounded-control bg-sunken p-3 text-xs text-fg">{JSON.stringify(event.details, null, 2)}</pre>
+        </section>
       )}
     </div>
   );
 }
 
 function ExportButtons({ filters }: { filters: AuditFilters }) {
+  const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const download = async (format: "ndjson" | "csv") => {
     setBusy(format);
-    setError(null);
     try {
       const { blob, filename } = await auditApi.export(filters, format);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename ?? `audit.${format}`;
-      link.click();
-      URL.revokeObjectURL(url);
+      saveBlob(blob, filename ?? `audit.${format}`);
+      toast({ title: `Audit Log exported as ${format.toUpperCase()}`, description: filename ?? undefined });
     } catch (err) {
-      setError((err as Error).message);
+      toast({ title: "Could not export the Audit Log", description: (err as Error).message, tone: "danger" });
     } finally {
       setBusy(null);
     }
   };
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex flex-col items-start gap-1 sm:items-end">
       <div className="flex gap-2">
-        <button className="btn btn-secondary whitespace-nowrap" disabled={busy !== null} onClick={() => download("csv")}>
+        <button type="button" className="btn btn-secondary whitespace-nowrap" disabled={busy !== null} onClick={() => download("csv")}>
+          <Icon icon={Download} size="sm" />
           {busy === "csv" ? "Exporting…" : "Export CSV"}
         </button>
-        <button className="btn btn-secondary whitespace-nowrap" disabled={busy !== null} onClick={() => download("ndjson")}>
+        <button type="button" className="btn btn-secondary whitespace-nowrap" disabled={busy !== null} onClick={() => download("ndjson")}>
           {busy === "ndjson" ? "Exporting…" : "Export NDJSON"}
         </button>
       </div>
-      {error && <p className="text-xs text-red-600">{error}</p>}
-      <p className="text-xs text-slate-400">Exports use the current filters and are themselves audited.</p>
+      <p className="text-xs text-muted">Exports use the filters applied below and are themselves audited.</p>
     </div>
   );
 }
@@ -358,82 +383,88 @@ export default function AuditPage() {
     getNextPageParam: (last) => last.next_cursor,
   });
   const rows = events.data?.pages.flatMap((page) => page.items) ?? [];
+  const filtered = Object.values(filters).some(Boolean);
 
   return (
     <div>
       <PageHeader
-        title="Audit log"
-        description="Who asked what, which knowledge they were allowed to search, what was retrieved and answered, and every change to the control plane."
+        title="Audit Log"
+        description="Who asked what, which Knowledge Bases they were allowed to search, what was retrieved and answered, and every change to the control plane."
         action={<ExportButtons filters={filters} />}
       />
       <div className="mb-4">
         {status.data && <RecordingStatus status={status.data} />}
-        {status.isError && <ErrorState message={(status.error as Error).message} />}
+        {status.isError && <ErrorState title="Could not read the recording status" message={(status.error as Error).message} onRetry={() => status.refetch()} />}
       </div>
 
       <FilterBar onApply={setFilters} />
 
-      {events.isLoading && <LoadingState />}
-      {events.isError && <ErrorState message={(events.error as Error).message} />}
+      {events.isLoading && <TableSkeleton columns={6} rows={6} label="Loading the Audit Log" />}
+      {events.isError && <ErrorState title="Could not load the Audit Log" message={(events.error as Error).message} onRetry={() => events.refetch()} />}
       {events.data && rows.length === 0 && (
-        <EmptyState title="No audit events" description="Nothing matches these filters yet." />
+        <EmptyState
+          icon={filtered ? SearchX : ScrollText}
+          title={filtered ? "No events match these filters" : "No audit events yet"}
+          description={filtered ? "Widen the time range or clear a filter." : "Events appear here as people ask questions and Admins change things."}
+        />
       )}
       {rows.length > 0 && (
-        <div className="card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-400">
+        <div className="space-y-3">
+          <Table caption="Audit events, newest first">
+            <THead>
               <tr>
-                <th className="px-5 py-3 font-medium">When</th>
-                <th className="px-4 py-3 font-medium">Actor</th>
-                <th className="px-4 py-3 font-medium">Action</th>
-                <th className="px-4 py-3 font-medium">Target</th>
-                <th className="px-4 py-3 font-medium">Outcome</th>
-                <th className="px-4 py-3 text-right font-medium">Retrieved</th>
+                <Th>When</Th>
+                <Th>Actor</Th>
+                <Th>Action</Th>
+                <Th>Target</Th>
+                <Th>Outcome</Th>
+                <Th align="right">Retrieved</Th>
               </tr>
-            </thead>
-            <tbody>
+            </THead>
+            <TBody>
               {rows.map((e) => (
-                <tr
-                  key={e.id}
-                  onClick={() => setSelected(e)}
-                  className="cursor-pointer border-t border-slate-100 hover:bg-slate-50"
-                >
-                  <td className="whitespace-nowrap px-5 py-3 text-xs text-slate-500">{fmt(e.occurred_at)}</td>
-                  <td className="px-4 py-3">
+                <Tr key={e.id} onClick={() => setSelected(e)}>
+                  <Td>
+                    <button type="button" className="whitespace-nowrap rounded-sm text-left text-xs underline-offset-2 hover:underline" aria-label={`Open event from ${formatDateTime(e.occurred_at)}`}>
+                      {formatDateTime(e.occurred_at)}
+                    </button>
+                  </Td>
+                  <Td>
                     <div className="max-w-[14rem] truncate" title={e.actor_subject ?? ""}>
-                      {e.actor_subject ?? <span className="text-slate-400">anonymous</span>}
+                      {e.actor_subject ?? <span className="text-muted">anonymous</span>}
                     </div>
-                    {e.auth_method && <div className="text-xs text-slate-400">{e.auth_method}</div>}
-                  </td>
-                  <td className="px-4 py-3">{ACTION_LABELS[e.action] ?? e.action}</td>
-                  <td className="px-4 py-3">{target(e)}</td>
-                  <td className="px-4 py-3">
+                    {e.auth_method && <div className="text-xs text-muted">{e.auth_method}</div>}
+                  </Td>
+                  <Td>{ACTION_LABELS[e.action] ?? e.action}</Td>
+                  <Td>
+                    <Target event={e} />
+                  </Td>
+                  <Td>
                     <StatusBadge status={e.outcome} />
-                  </td>
-                  <td className="px-4 py-3 text-right text-slate-500">
-                    {e.cache_hit ? "cached" : e.retrieved === null ? "—" : e.retrieved.length}
-                  </td>
-                </tr>
+                  </Td>
+                  <Td align="right">{e.cache_hit ? "cached" : e.retrieved === null ? "—" : e.retrieved.length}</Td>
+                </Tr>
               ))}
-            </tbody>
-          </table>
-          {events.hasNextPage && (
-            <div className="border-t border-slate-100 p-3 text-center">
-              <button
-                className="btn btn-secondary"
-                disabled={events.isFetchingNextPage}
-                onClick={() => events.fetchNextPage()}
-              >
+            </TBody>
+          </Table>
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted">
+            <span>
+              Showing {rows.length} event{rows.length === 1 ? "" : "s"}
+              {events.hasNextPage ? ", newest first" : ""}
+            </span>
+            {events.hasNextPage && (
+              <button type="button" className="btn btn-secondary" disabled={events.isFetchingNextPage} onClick={() => events.fetchNextPage()}>
                 {events.isFetchingNextPage ? "Loading…" : "Load older events"}
               </button>
-            </div>
-          )}
+            )}
+          </div>
+          {events.isFetchNextPageError && <ErrorState title="Could not load older events" message={(events.error as Error).message} onRetry={() => events.fetchNextPage()} />}
         </div>
       )}
 
-      <Modal open={selected !== null} onClose={() => setSelected(null)} title="Audit event" size="xl">
+      <Drawer open={selected !== null} onClose={() => setSelected(null)} title="Audit event" size="lg">
         {selected && <EventDetail event={selected} />}
-      </Modal>
+      </Drawer>
     </div>
   );
 }

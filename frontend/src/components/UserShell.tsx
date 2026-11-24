@@ -33,7 +33,7 @@ export function UserShell({
           <CallerBadge onSignOut={onSignOut} showRoles={false} />
         </div>
       </header>
-      <main className="flex min-h-0 flex-1 flex-col">
+      <main id="main" tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
         <div className="px-4 pt-3 empty:hidden sm:px-6">
           <AuthBanner onSignIn={onSignIn} />
         </div>

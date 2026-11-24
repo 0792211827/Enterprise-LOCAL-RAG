@@ -243,8 +243,3 @@ export function ConfirmModal({
     </Modal>
   );
 }
-
-export function confirmDialog(message: string): boolean {
-  if (typeof window === "undefined") return false;
-  return window.confirm(message);
-}

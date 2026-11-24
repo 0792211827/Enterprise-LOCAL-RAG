@@ -385,7 +385,7 @@ function Surface({ surface, title }: { surface: "user" | "admin"; title: string 
 
 export default function DesignSpecimenPage() {
   return (
-    <div className="space-y-12">
+    <main id="main" tabIndex={-1} className="space-y-12 outline-none">
       <PageHeader
         title="Design specimen"
         description="The palette, type and base components that both surfaces are built on. Nothing here is a page; it exists to be approved."
@@ -451,6 +451,6 @@ export default function DesignSpecimenPage() {
           <Surface surface="admin" title="Admin surface" />
         </div>
       </section>
-    </div>
+    </main>
   );
 }

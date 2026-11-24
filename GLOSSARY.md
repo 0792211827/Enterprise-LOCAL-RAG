@@ -9,8 +9,12 @@ A named collection of documents that is searched as one unit and is the unit of 
 _Avoid_: Collection, index, corpus
 
 **Document**:
-A single source file ingested into exactly one Knowledge Base.
+A single source ingested into exactly one Knowledge Base: a file, or a web page fetched from a URL. It keeps its identity when its content is replaced.
 _Avoid_: File, upload
+
+**Image description**:
+Text a vision model writes about an image inside a Document, together with the page or slide it sits on. It is searched and cited like the Document's own text.
+_Avoid_: Caption, alt text, OCR
 
 **Application**:
 A named, admin-configured way of answering questions: it attaches Knowledge Bases to a prompt, a model choice and a retrieval profile.
@@ -61,3 +65,7 @@ A thumbs up or down, with an optional comment, that an End user gives one answer
 
 **Shared exchange**:
 One question and its answer that an End user explicitly chose to share with admins when rating it; the only Conversation text an admin can read, and exportable as Golden set candidates.
+
+**Citation**:
+A numbered pointer from an answer to the passage of a Document, or of an Attachment, that it drew on. The reader can open it to see the passage in its source.
+_Avoid_: Source, reference, footnote
