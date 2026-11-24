@@ -182,7 +182,13 @@ class TestIndexPayloadMatchesMapping:
         mapped = set(mapping["properties"])
 
         service = IngestionService(chunker=MagicMock(), embeddings_provider=MagicMock(), opensearch_client=MagicMock())
-        document = SimpleNamespace(id="doc-1", knowledge_base_id="kb-1", title="Doc")
+        document = SimpleNamespace(
+            id="doc-1",
+            knowledge_base_id="kb-1",
+            title="Doc",
+            extra_metadata={"source": {"kind": "url", "url": "https://docs.example.com/"}},
+            source_url="https://docs.example.com/",
+        )
         knowledge_base = SimpleNamespace(embedding_model="BAAI/bge-m3")
         chunk = SimpleNamespace(
             text="chunk text",
@@ -205,6 +211,7 @@ class TestIndexPayloadMatchesMapping:
         from src.services.pdf_parser.parser import PDFParserService
 
         assert list(inspect.signature(PDFParserService.parse_document).parameters)[1:] == ["path"]
+        assert list(inspect.signature(PDFParserService.extract_images).parameters)[1:] == ["path", "load"]
         assert list(inspect.signature(TextChunker.chunk_elements).parameters)[1:] == ["elements", "document_id"]
 
 

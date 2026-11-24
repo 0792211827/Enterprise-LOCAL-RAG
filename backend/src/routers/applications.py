@@ -234,6 +234,7 @@ async def ask_application(
             section_title=h.get("section_title"),
             locator=h.get("locator"),
             locator_text=locator_label(h.get("locator")),
+            source_url=h.get("source_url"),
             retrieval_method=result.mode,
         )
         for h in result.hits

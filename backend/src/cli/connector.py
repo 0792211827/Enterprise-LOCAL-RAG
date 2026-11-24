@@ -37,11 +37,12 @@ def build_sync() -> tuple[ConnectorSync, Any]:
     from src.services.ingestion.factory import make_ingestion_service
     from src.services.opensearch.factory import make_opensearch_client
     from src.services.pdf_parser.factory import make_pdf_parser_service
+    from src.services.providers.vlm.factory import make_vlm_provider
 
     settings = get_settings()
     database = make_database()
     opensearch = make_opensearch_client()
-    ingestion = make_ingestion_service(opensearch, make_embeddings_service(), make_pdf_parser_service(), settings)
+    ingestion = make_ingestion_service(opensearch, make_embeddings_service(), make_pdf_parser_service(), settings, make_vlm_provider(settings))
     return ConnectorSync(database.get_session, ingestion, opensearch, settings), database
 
 

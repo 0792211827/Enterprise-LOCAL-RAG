@@ -86,8 +86,17 @@ export interface DocumentItem {
   updated_at: string | null;
   /** A replacement being ingested (queued, processing) or that failed; the Document keeps answering from its current content. */
   replacement?: { state: "queued" | "processing" | "failed"; filename: string | null; error: string | null } | null;
-  /** Things that did not stop ingestion but are worth knowing. */
+  /** Things that did not stop ingestion but are worth knowing (for example images that were not described). */
   warnings?: string[];
+  /** `url` for a web page the server fetched; its Citations link to `source_url`. */
+  source_kind?: "file" | "url";
+  source_url?: string | null;
+}
+
+/** The outcome of refreshing a URL Document: `changed` is false when the page holds what the Document already does. */
+export interface DocumentRefresh {
+  changed: boolean;
+  document: DocumentItem;
 }
 
 export interface IngestionJob {
@@ -220,6 +229,8 @@ export interface RetrievedSource {
   section_title: string | null;
   /** Where in the source the passage sits, in words ("slide 7", "sheet Codes, rows 12-30"); null for plain text. */
   locator_text?: string | null;
+  /** The page of a URL Document, which the Citation links to. */
+  source_url?: string | null;
   retrieval_method: string | null;
 }
 
@@ -311,6 +322,8 @@ export interface ChatCitation {
   section_title: string | null;
   /** Where in the source the passage sits, in words ("slide 7", "sheet Codes, rows 12-30"); null for plain text. */
   locator_text?: string | null;
+  /** The page of a URL Document, which the Citation links to. */
+  source_url?: string | null;
   chunk_id: string | null;
   passage: string;
   score: number;

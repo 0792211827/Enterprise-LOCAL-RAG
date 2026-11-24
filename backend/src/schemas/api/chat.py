@@ -41,6 +41,7 @@ class ChatCitation(BaseModel):
     # Where the passage sits in its source (page, slide, sheet and rows); ``locator_text`` is that in words, e.g. "slide 7".
     locator: Optional[dict] = None
     locator_text: Optional[str] = None
+    source_url: Optional[str] = None  # the page of a URL Document, which the Citation links to
     chunk_id: Optional[str] = None
     passage: str = ""
     score: float = 0.0

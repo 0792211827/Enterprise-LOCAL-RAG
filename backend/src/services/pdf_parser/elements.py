@@ -189,3 +189,31 @@ def csv_elements(path: Path) -> List[DocumentElement]:
         dialect = csv.excel
     element = table_element(enumerate(csv.reader(io.StringIO(text), dialect), 1), None)
     return [element] if element is not None else []
+
+
+NOISE_TAGS = ("script", "style", "noscript", "template", "iframe", "svg", "canvas", "form", "button", "select", "dialog")
+PAGE_FURNITURE = ("nav", "aside", "header", "footer")
+
+
+def main_text_html(raw: bytes) -> bytes:
+    """A web page reduced to its main text: the ``main`` or ``article`` part if it has one, else the body, without
+    navigation, headers, footers, side bars, scripts and styles. What is left is what Docling reads."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(decode_text(raw), "lxml")
+    title = (soup.title.get_text(" ", strip=True) if soup.title else "") or ""
+    root = soup.find("main") or soup.find(attrs={"role": "main"})
+    if root is None:
+        articles = soup.find_all("article")
+        root = max(articles, key=lambda a: len(a.get_text(strip=True)), default=None)
+    scoped = root is not None
+    root = root or soup.body or soup
+    for tag in root.find_all(NOISE_TAGS):
+        tag.decompose()
+    for tag in root.find_all(attrs={"role": "navigation"}):
+        tag.decompose()
+    # Inside main content a header or footer belongs to the article (its title, its byline); on a bare page it is the site's.
+    for tag in root.find_all(("nav", "aside") if scoped else PAGE_FURNITURE):
+        tag.decompose()
+    heading = f"<h1>{title}</h1>" if title and root.find(("h1", "h2")) is None else ""
+    return f"<html><body>{heading}{root.decode_contents() if root.name == 'body' else root}</body></html>".encode()

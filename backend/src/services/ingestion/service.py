@@ -19,8 +19,11 @@ from typing import Any, Dict, List, Optional
 from src.models.document import Document, DocumentChunk, DocumentChunkLocator
 from src.models.enums import IngestionStatus
 from src.models.ingestion import IngestionJob
+from src.schemas.indexing.elements import DocumentElement, Locator
 
+from .images import Described, describe_images
 from .lifecycle import remove_stored_file
+from .url_documents import fetch_content, is_url_document, keep_content
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +48,18 @@ class IngestionService:
         opensearch_client: Any,
         pdf_parser: Any = None,
         timeout_seconds: int = 0,
+        vlm_provider: Any = None,
+        url_fetcher: Any = None,
+        settings: Any = None,
     ) -> None:
         self.chunker = chunker
         self.embeddings_provider = embeddings_provider
         self.opensearch_client = opensearch_client
         self.pdf_parser = pdf_parser
         self.timeout_seconds = timeout_seconds
+        self.vlm_provider = vlm_provider
+        self.url_fetcher = url_fetcher
+        self.settings = settings
 
     async def ingest_document(
         self,
@@ -144,6 +153,10 @@ class IngestionService:
     ) -> Dict[str, int]:
         revision = replacement["revision"] if replacement else None
 
+        if replacement is None and is_url_document(document) and not document.file_path and not document.raw_text:
+            mark_stage("fetch")
+            await self._fetch_page(document)
+
         # Stage 1: parse/extract text.
         mark_stage("parse")
         source = (
@@ -152,8 +165,17 @@ class IngestionService:
             else SimpleNamespace(file_path=replacement.get("file_path"), raw_text=replacement.get("raw_text"), sections=None)
         )
         text, sections, elements = await self._extract(source)
+        images = await self._describe_images(source)
+        if images.elements:
+            if not elements and text.strip():
+                elements = [DocumentElement(text=text, locator=Locator(kind="text"))]
+            elements = [*elements, *images.elements]
+            text = "\n\n".join(filter(None, [text, *(e.text for e in images.elements)]))
         if not text or not text.strip():
-            raise ValueError("No text found in the document. A scan or a file made only of images cannot be searched.")
+            raise ValueError(
+                "No text found in the document. A scan or a file made only of images cannot be searched."
+                + (f" {images.warnings[0]}" if images.warnings else "")
+            )
 
         # Stage 2: chunk (section-aware where sections are available).
         mark_stage("chunk")
@@ -207,6 +229,7 @@ class IngestionService:
         document.processed_at = datetime.now(timezone.utc)
         document.error = None
         document.raw_text = text
+        self._note_images(document, images)
         document_repo.save(document)
 
         job.status = IngestionStatus.COMPLETED.value
@@ -215,6 +238,8 @@ class IngestionService:
             "chunks_created": len(chunks),
             "chunks_indexed": indexed,
             "embeddings_generated": len(embeddings),
+            "images_described": images.described,
+            "images_undescribed": images.undescribed,
         }
         ingestion_repo.save(job)
 
@@ -301,6 +326,34 @@ class IngestionService:
             logger.error("Could not remove the chunks of a failed attempt for document %s: %s", document.id, exc)
 
     # ------------------------------------------------------------------ #
+    async def _fetch_page(self, document: Document) -> None:
+        """A URL Document is fetched when it is first ingested (or retried after a failed fetch) and kept like an upload."""
+        if self.url_fetcher is None or self.settings is None:
+            raise ValueError("Fetching web pages is not available here.")
+        keep_content(self.settings, document, await fetch_content(self.url_fetcher, document.source_url))
+
+    async def _describe_images(self, document: Any) -> Described:
+        """Describe the pictures of a stored PDF, PPTX or DOCX; none for any other source. Never raises."""
+        from pathlib import Path
+
+        path = Path(document.file_path) if document.file_path else None
+        if path is None or not path.exists() or not self.pdf_parser:
+            return Described()
+        try:
+            extraction = await self.pdf_parser.extract_images(path, load=self.vlm_provider is not None)
+            return await describe_images(self.vlm_provider, extraction)
+        except Exception as exc:  # noqa: BLE001 - pictures never fail a Document
+            logger.warning("Images of document %s were not described: %s", document.id if hasattr(document, "id") else path.name, exc)
+            return Described()
+
+    @staticmethod
+    def _note_images(document: Document, images: Described) -> None:
+        """Show the admin which pictures went undescribed; a Document whose pictures all were has no such warning."""
+        meta = {k: v for k, v in (document.extra_metadata or {}).items() if k != "image_warnings"}
+        if images.warnings:
+            meta["image_warnings"] = list(images.warnings)
+        document.extra_metadata = meta
+
     async def _extract(self, document: Document):
         """Return ``(text, sections, elements)`` for a document; ``elements`` carry locators and are empty for plain text.
 
@@ -348,6 +401,8 @@ class IngestionService:
             }
             if chunk.locator is not None:
                 chunk_data["locator"] = chunk.locator.as_index_field()
+            if is_url_document(document):
+                chunk_data["source_url"] = document.source_url
             if restriction_keys:
                 chunk_data["restriction_principals"] = restriction_keys
             if revision:

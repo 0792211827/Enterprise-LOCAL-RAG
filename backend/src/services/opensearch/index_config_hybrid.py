@@ -20,6 +20,7 @@ KNN_ENGINE = "lucene"
 #   indexed before locators existed or cut from plain text, which a Citation then shows without a position.
 #   revision / staged: which revision of a replaced Document a chunk belongs to, and whether that revision is still
 #   being built (``staged: true`` chunks are hidden from search until it becomes current).
+#   source_url: the page a URL Document was fetched from; a Citation links to it. Returned with the hit, never searched.
 ADDITIVE_FIELDS = {
     "locator": {
         "type": "object",
@@ -35,6 +36,7 @@ ADDITIVE_FIELDS = {
         },
     },
     "restriction_principals": {"type": "keyword"},
+    "source_url": {"type": "keyword", "index": False},
     "revision": {"type": "keyword"},
     "staged": {"type": "boolean"},
     "conversation_id": {"type": "keyword"},

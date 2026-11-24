@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from src.auth import Principal, Role
 from src.config import split_csv
 from src.dependencies import (
@@ -17,6 +17,7 @@ from src.dependencies import (
     PrincipalDep,
     SessionDep,
     SettingsDep,
+    UrlFetcherDep,
     require_ingestion_ready,
 )
 from src.models import AuditAction, AuditOutcome
@@ -32,12 +33,14 @@ from src.repositories import (
 )
 from src.schemas.api.domain import (
     DocumentAccessCheck,
+    DocumentRefreshResponse,
     DocumentResponse,
     DocumentRestrictionEntry,
     DocumentRestrictionsResponse,
     DocumentRestrictionsUpdate,
     DocumentRestrictionWarning,
     IngestionJobResponse,
+    UrlDocumentCreate,
 )
 from src.services.access import resolve_scope
 from src.services.audit import AuditContext, record_event
@@ -46,6 +49,8 @@ from src.services.ingestion.lifecycle import delete_document as remove_document
 from src.services.ingestion.runner import pending_replacement, run_ingestion
 from src.services.ingestion.types import UnsupportedDocument, sniff_document_type, store_file
 from src.services.ingestion.uploads import display_name, read_capped
+from src.services.ingestion.url_documents import fetch_content, is_url_document, url_source
+from src.services.ingestion.url_fetch import UrlFetchError, audit_form
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +178,122 @@ async def upload_document(
 
 
 @router.post(
+    "/knowledge-bases/{kb_id}/documents/url",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_ingestion_ready)],
+)
+async def add_url_document(
+    kb_id: UUID,
+    payload: UrlDocumentCreate,
+    session: SessionDep,
+    database: DatabaseDep,
+    ingestion_service: IngestionServiceDep,
+    settings: SettingsDep,
+    url_fetcher: UrlFetcherDep,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    principal: PrincipalDep,
+    audit: AuditDep,
+):
+    """Add a web page to a Knowledge Base. The page is fetched by the server (only hosts on the operator's allowlist),
+    then ingested like a file; a page that cannot be fetched becomes a failed Document with the reason."""
+    kb = KnowledgeBaseRepository(session).get_by_id(kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    url = _checked_url(url_fetcher, payload.url)
+    doc_repo = DocumentRepository(session)
+    existing = doc_repo.get_by_source_name(kb_id, url)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This page is already in the knowledge base. Use Refresh on it to fetch it again (document {existing.id}).",
+        )
+    document = doc_repo.create(
+        Document(
+            knowledge_base_id=kb_id,
+            title=(payload.title or "").strip() or url,
+            source_uri=url,
+            extra_metadata={"source": url_source(url)},
+            status=IngestionStatus.QUEUED.value,
+        )
+    )
+    job = IngestionJobRepository(session).create(
+        IngestionJob(document_id=document.id, knowledge_base_id=kb_id, status=IngestionStatus.QUEUED.value)
+    )
+    _queue(background_tasks, database, ingestion_service, settings, document, job)
+    _audit(request, principal, audit, "add", document.id, kb_id, source_kind="url", url=audit_form(url))
+    return document
+
+
+def _checked_url(url_fetcher, url: str) -> str:
+    """The normal form of an address the server may fetch, or the reason it may not (400 invalid, 403 not allowed)."""
+    if url_fetcher is None:
+        raise HTTPException(status_code=403, detail="Adding a URL is turned off (INGESTION__URL_ALLOWED_HOSTS is empty).")
+    try:
+        return url_fetcher.check(url)
+    except UrlFetchError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.post(
+    "/documents/{document_id}/refresh",
+    response_model=DocumentRefreshResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_ingestion_ready)],
+)
+async def refresh_url_document(
+    document_id: UUID,
+    response: Response,
+    session: SessionDep,
+    database: DatabaseDep,
+    ingestion_service: IngestionServiceDep,
+    settings: SettingsDep,
+    url_fetcher: UrlFetcherDep,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    principal: PrincipalDep,
+    audit: AuditDep,
+):
+    """Fetch a URL Document's page again, and replace its content (the safe swap of Replace) only if the page changed."""
+    doc_repo = DocumentRepository(session)
+    document = doc_repo.get_by_id(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not is_url_document(document):
+        raise HTTPException(status_code=409, detail="Only a document added by URL can be refreshed. Use Replace for a file.")
+    if document.status in (IngestionStatus.QUEUED.value, IngestionStatus.PROCESSING.value):
+        raise HTTPException(status_code=409, detail="The document is still being ingested. Wait for it to finish, then refresh it.")
+    if pending_replacement(document):
+        raise HTTPException(status_code=409, detail="A refresh of this document is already being ingested.")
+    url = _checked_url(url_fetcher, document.source_url)
+    ids, shown = (document.id, document.knowledge_base_id), audit_form(url)
+    try:
+        content = await fetch_content(url_fetcher, url)
+    except UrlFetchError as exc:
+        _audit(request, principal, audit, "refresh", *ids, outcome=AuditOutcome.ERROR.value, source_kind="url", url=shown)
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    session.refresh(document)  # nothing awaited between this check and the replacement being recorded
+    if document.status in (IngestionStatus.QUEUED.value, IngestionStatus.PROCESSING.value) or pending_replacement(document):
+        raise HTTPException(status_code=409, detail="The document is being ingested. Wait for it to finish, then refresh it.")
+    if content.checksum == document.checksum:
+        response.status_code = status.HTTP_200_OK
+        _audit(request, principal, audit, "refresh", *ids, source_kind="url", url=shown, changed=False)
+        return DocumentRefreshResponse(changed=False, document=DocumentResponse.model_validate(document))
+    replacement = stage_replacement(settings, doc_repo, document, shown, content.page.raw, content.document_type)
+    job = IngestionJobRepository(session).create(
+        IngestionJob(document_id=document.id, knowledge_base_id=document.knowledge_base_id, status=IngestionStatus.QUEUED.value)
+    )
+    _queue(background_tasks, database, ingestion_service, settings, document, job, replacement=True)
+    _audit(
+        request, principal, audit, "refresh", *ids, source_kind="url", url=shown, changed=True,
+        content_type=replacement["content_type"], size_bytes=len(content.page.raw), checksum=content.checksum,
+    )
+    return DocumentRefreshResponse(changed=True, document=DocumentResponse.model_validate(document))
+
+
+@router.post(
     "/documents/{document_id}/replace",
     response_model=DocumentResponse,
     status_code=status.HTTP_202_ACCEPTED,
@@ -207,6 +328,8 @@ async def replace_document_content(
         raise HTTPException(status_code=409, detail="The document is still being ingested. Wait for it to finish, then replace it.")
     if pending_replacement(document):
         raise HTTPException(status_code=409, detail="A replacement of this document is already being ingested.")
+    if is_url_document(document):
+        raise HTTPException(status_code=409, detail="This document is a web page. Use Refresh to fetch it again.")
     checksum = hashlib.sha256(raw).hexdigest()
     if document.checksum == checksum or doc_repo.get_by_checksum(document.knowledge_base_id, checksum):
         raise HTTPException(status_code=409, detail="Identical document already exists in this knowledge base")
@@ -262,7 +385,8 @@ async def reprocess_document(
         doc_repo.save(document)
         replacing = True
     else:
-        if not document.raw_text and not (document.file_path and Path(document.file_path).exists()):
+        fetchable = is_url_document(document) and not document.file_path  # its fetch failed: retrying fetches it again
+        if not fetchable and not document.raw_text and not (document.file_path and Path(document.file_path).exists()):
             raise HTTPException(
                 status_code=409,
                 detail="The original file is gone (removed by upload cleanup), so this document cannot be reprocessed. Add it to the knowledge base again.",

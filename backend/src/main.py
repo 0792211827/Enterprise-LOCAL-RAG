@@ -37,6 +37,7 @@ from src.services.chat import make_chat_limiter, run_daily
 from src.services.embeddings.factory import make_embeddings_service
 from src.services.ingestion.factory import make_ingestion_service
 from src.services.ingestion.runner import resume_interrupted
+from src.services.ingestion.url_fetch import make_url_fetcher
 from src.services.langfuse.factory import make_langfuse_tracer
 from src.services.ollama.factory import make_ollama_client
 from src.services.opensearch.dimension_guard import check_index_dimension
@@ -57,7 +58,14 @@ logger = logging.getLogger(__name__)
 async def _resume_ingestion(app: FastAPI, settings) -> None:
     """Queue again the Documents a restart interrupted; trouble here never keeps the API from serving."""
     try:
-        service = make_ingestion_service(app.state.opensearch_client, app.state.embeddings_service, app.state.pdf_parser, settings)
+        service = make_ingestion_service(
+            app.state.opensearch_client,
+            app.state.embeddings_service,
+            app.state.pdf_parser,
+            settings,
+            app.state.vlm_provider,
+            app.state.url_fetcher,
+        )
         await resume_interrupted(app.state.database, service, settings.ingestion.concurrency)
     except Exception:  # noqa: BLE001
         logger.exception("Could not resume the ingestion interrupted by the last shutdown")
@@ -122,6 +130,7 @@ async def lifespan(app: FastAPI):
     app.state.provider_registry = make_provider_registry(settings)
     app.state.reranker = make_reranker(settings)
     app.state.vlm_provider = make_vlm_provider(settings)
+    app.state.url_fetcher = make_url_fetcher(settings)
     app.state.langfuse_tracer = make_langfuse_tracer()
     app.state.cache_client = make_cache_client(settings)
     app.state.chat_limiter = make_chat_limiter(settings)

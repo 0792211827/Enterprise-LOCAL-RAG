@@ -107,6 +107,7 @@ make audit-purge DAYS=365  # delete audit events older than 365 days (DRY_RUN=1 
 make uploads-cleanup DAYS=14  # remove stale uploaded files (off unless run; DRY_RUN=1 to count)
 make reindex             # rebuild the chunk index on lucene / a new embedding model, then swap the alias (DRY_RUN=1 to preview)
 make connector-sync NAME=hr-share  # mirror a Connector's source folder into its Knowledge Base (ALL=1, DRY_RUN=1)
+make ingest-samples      # ingest data/File Examples into a scratch Knowledge Base and report each file (URLS=1, ASK=1, CLEAN=1); not part of CI
 make chat-purge DAYS=30  # delete Conversations idle for 30+ days (the API also does this daily; DRY_RUN=1 to count)
 make clean     # tear down + prune
 ```
@@ -214,7 +215,10 @@ documented list. Key groups:
 - **Uploads** (`INGESTION__*`) — document upload size cap (`MAX_UPLOAD_MB`, default
   50; larger uploads get `413`), the upload directory, and an opt-in retention for
   stale files (`make uploads-cleanup`). Stored files are named by content hash;
-  nothing from the uploaded filename reaches the file system.
+  nothing from the uploaded filename reaches the file system. Also the images
+  described per Document (`MAX_IMAGES_PER_DOCUMENT`, default 200) and the host
+  allowlist for web pages (`URL_ALLOWED_HOSTS`, empty = adding a URL is refused);
+  see [`docs/document-ingestion.md`](docs/document-ingestion.md).
 - **Redis** (`REDIS__*`) and **Langfuse** client (`LANGFUSE__*` — note the
   double underscore; single-underscore `LANGFUSE_*` names configure the
   self-hosted Langfuse server in compose, not the backend).
@@ -625,6 +629,28 @@ hr-share: added 3, updated 1, removed 0, failed 1 (120 unchanged, 4 skipped as a
   or ingestion refused because the index needs `make reindex`).
 - **Audited.** Every run leaves a `connector.sync` audit event: counts and the
   names of added, updated, removed and failed files (never file content).
+
+## 🧪 Sample-data check
+
+`make ingest-samples` ingests the real sample folder (`data/File Examples`, git-ignored) into a scratch
+Knowledge Base called *Sample data (scratch)* and prints, per file, what happened: added, replaced,
+unchanged, skipped or failed, the chunk count, warnings (for example images that were not described) and
+the error. A broken file (the 71-byte PPTX stub) shows as failed with its reason and never stops the run.
+It is a local, opt-in check for judging ingestion quality on real documents and **is not part of CI**,
+which uses small synthetic files. It runs in the `rag-api` container, so the stack must be up.
+
+```bash
+make ingest-samples                 # add new files, replace changed ones, skip unchanged ones, retry failed ones
+make ingest-samples URLS=1          # also add the web links in Links.docx whose hosts are in INGESTION__URL_ALLOWED_HOSTS
+make ingest-samples ASK=1           # then ask the questions in evals/sample-data-questions.yaml and print the Citations
+make ingest-samples CLEAN=1         # remove the scratch Knowledge Base, its Documents, chunks and files
+make ingest-samples SAMPLES=/path/to/other/folder
+```
+
+The questions file is a Golden set, so once you agree with the Citations it prints you can add
+`expected` content and run it with `make eval` against an Application attached to the scratch
+Knowledge Base ([`docs/evaluation.md`](docs/evaluation.md)). The exit status is 0 when the run
+finished, whatever failed in it; 2 means it could not be made (no such folder, index needs `make reindex`).
 
 ## 📏 Evaluating answers
 

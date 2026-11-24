@@ -5,6 +5,7 @@ import type { DocumentItem, IngestionJob } from "@/lib/api/types";
 
 const STAGES = ["parse", "chunk", "embed", "index"] as const;
 const STAGE_LABEL: Record<string, string> = {
+  fetch: "Fetching",
   parse: "Parsing",
   extract: "Extracting",
   chunk: "Chunking",

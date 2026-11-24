@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 class Locator(BaseModel):
     """A position in the source Document. Which fields are set depends on the kind of source."""
 
-    kind: str = "text"  # text | table | slide
+    kind: str = "text"  # text | table | slide | image
     page: Optional[int] = None
     slide: Optional[int] = None
     sheet: Optional[str] = None
@@ -36,10 +36,21 @@ class DocumentElement(BaseModel):
     rows: List[Tuple[int, str]] = Field(default_factory=list)  # a table's rows as (row number, text)
 
 
+def _image_label(locator: Mapping[str, Any]) -> str:
+    if locator.get("slide"):
+        return f"image on slide {locator['slide']}"
+    if locator.get("page"):
+        return f"image on page {locator['page']}"
+    heading = " > ".join(locator.get("heading_path") or [])
+    return f"image in {heading}" if heading else "image"
+
+
 def locator_label(locator: Optional[Mapping[str, Any]]) -> Optional[str]:
     """The words a Citation shows for a locator (``slide 7``, ``sheet Codes, rows 12-30``, ``Leave, page 14``)."""
     if not locator:
         return None
+    if locator.get("kind") == "image":
+        return _image_label(locator)
     if locator.get("slide"):
         return f"slide {locator['slide']}"
     start, end = locator.get("row_start"), locator.get("row_end")
@@ -53,3 +64,27 @@ def locator_label(locator: Optional[Mapping[str, Any]]) -> Optional[str]:
     if locator.get("page"):
         parts.append(f"page {locator['page']}")
     return ", ".join(parts) or None
+
+
+class ExtractedImage(BaseModel):
+    """An image found inside a Document, with where it sits and the text around it."""
+
+    data: bytes = b""  # PNG; empty when the bytes were not loaded (nothing will describe it)
+    width: int
+    height: int
+    locator: Locator  # kind "image", with the page or slide (or the heading path, for a Word file)
+    context: str = ""  # the text on the same page or slide, to help the vision model
+
+
+class ImageExtraction(BaseModel):
+    """The images of a Document worth describing, and a count of those left out and why."""
+
+    images: List[ExtractedImage] = Field(default_factory=list)  # in document order, at most the cap
+    skipped_small: int = 0  # icons and rules
+    skipped_repeated: int = 0  # the same picture on many pages: a logo or a background
+    over_cap: int = 0  # worth describing, but past the per-Document cap
+    unreadable: int = 0  # worth describing, but the picture could not be read
+
+    @property
+    def eligible(self) -> int:
+        return len(self.images) + self.over_cap + self.unreadable

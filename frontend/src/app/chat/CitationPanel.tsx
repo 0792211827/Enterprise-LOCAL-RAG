@@ -1,6 +1,6 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import { FileText, Lock, X } from "lucide-react";
+import { ExternalLink, FileText, Lock, X } from "lucide-react";
 import { ReactNode, useEffect, useRef } from "react";
 import { Icon, LoadingState, Sheet } from "@/components/ui";
 import { ApiError } from "@/lib/api/client";
@@ -133,6 +133,18 @@ function Source({ citation }: { citation: ChatCitation }) {
             {[citation.section_title, citation.locator_text].filter(Boolean).join(" · ")}
           </p>
         )
+      )}
+
+      {citation.source_url && (
+        <a
+          href={citation.source_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-accent-text underline-offset-2 hover:underline [overflow-wrap:anywhere]"
+        >
+          <Icon icon={ExternalLink} size="sm" />
+          Open the page
+        </a>
       )}
 
       <div className="mt-5">

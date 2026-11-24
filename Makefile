@@ -1,5 +1,5 @@
 .PHONY: help start stop restart status logs health setup format lint test test-cov \
-        frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup reindex eval eval-compare start-hardened health-hardened connectors connector-sync
+        frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup reindex eval eval-compare start-hardened health-hardened connectors connector-sync ingest-samples
 
 # The virtualenv lives at the repo root, not in backend/. uv resolves this
 # relative to the project root (backend/, where pyproject.toml is).
@@ -103,6 +103,20 @@ connectors: ## List Connectors and their last run
 connector-sync: ## Mirror a Connector's source into its Knowledge Base: NAME=... or ALL=1
 	@test -n "$(NAME)$(ALL)" || { echo "usage: make connector-sync NAME=hr-share   (or ALL=1)"; exit 2; }
 	docker exec rag-api python -m src.cli.connector sync $(if $(ALL),--all,$(NAME)) $(if $(DRY_RUN),--dry-run) $(if $(ALLOW_EMPTY),--allow-empty)
+
+# Sample-data check: ingests the real sample folder into a scratch Knowledge Base and prints per-file results. Local and
+# opt-in, never part of CI (which uses synthetic files). The folder and the questions are copied into the rag-api container.
+#   make ingest-samples              (SAMPLES=<folder>; URLS=1 adds the links in Links.docx; ASK=1 asks the sample questions)
+#   make ingest-samples CLEAN=1      removes the scratch Knowledge Base
+SAMPLES ?= data/File Examples
+ingest-samples: ## Ingest the sample folder into a scratch Knowledge Base and report each file (URLS=1, ASK=1, CLEAN=1)
+	@if [ -n "$(CLEAN)" ]; then docker exec rag-api python -m src.cli.ingest_samples --clean; exit $$?; fi; \
+	test -d "$(SAMPLES)" || { echo "no sample folder at '$(SAMPLES)' (SAMPLES=<folder>)"; exit 2; }; \
+	docker exec rag-api rm -rf /tmp/sample-data /tmp/sample-data-questions.yaml && \
+	docker cp "$(SAMPLES)" rag-api:/tmp/sample-data && \
+	docker cp evals/sample-data-questions.yaml rag-api:/tmp/sample-data-questions.yaml && \
+	docker exec rag-api python -m src.cli.ingest_samples --folder /tmp/sample-data --questions /tmp/sample-data-questions.yaml \
+		$(if $(URLS),--urls) $(if $(ASK),--ask)
 
 # Eval harness. Runs in the rag-api container: the Golden set is copied in and the
 # report copied back to REPORT (default eval-report.json). The exit status is the

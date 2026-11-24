@@ -119,6 +119,7 @@ def _citations(hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             section_title=hit.get("section_title"),
             locator=hit.get("locator"),
             locator_text=locator_label(hit.get("locator")),
+            source_url=hit.get("source_url"),
             chunk_id=hit.get("chunk_id"),
             passage=hit.get("chunk_text") or "",
             score=float(hit.get("score") or 0.0),

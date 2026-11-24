@@ -81,6 +81,7 @@ async def _search(request, opensearch_client, embeddings_service, scope, reranke
                     section_title=hit.get("section_title"),
                     locator=hit.get("locator"),
                     locator_text=locator_label(hit.get("locator")),
+                    source_url=hit.get("source_url"),
                 )
             )
 

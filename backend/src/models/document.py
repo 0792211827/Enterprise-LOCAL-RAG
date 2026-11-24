@@ -62,9 +62,20 @@ class Document(Base):
         return {"state": pending.get("state"), "filename": pending.get("filename"), "error": pending.get("error")}
 
     @property
+    def source_kind(self) -> str:
+        """``url`` for a web page fetched by the server, ``file`` for everything else."""
+        return ((self.extra_metadata or {}).get("source") or {}).get("kind", "file")
+
+    @property
+    def source_url(self):
+        """The normalised address of a URL Document (its identity within its Knowledge Base), else ``None``."""
+        return ((self.extra_metadata or {}).get("source") or {}).get("url")
+
+    @property
     def warnings(self):
         """Things that did not stop ingestion but the admin should know (for example images that could not be described)."""
-        return list((self.extra_metadata or {}).get("warnings") or [])
+        meta = self.extra_metadata or {}
+        return [*(meta.get("warnings") or []), *(meta.get("image_warnings") or [])]
 
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
 

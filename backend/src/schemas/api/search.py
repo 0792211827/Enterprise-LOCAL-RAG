@@ -52,6 +52,7 @@ class SearchHit(BaseModel):
     section_title: Optional[str] = Field(None, description="Section the chunk was found in")
     locator: Optional[dict] = Field(None, description="Where the chunk sits in its source: page, slide, sheet and rows, heading path")
     locator_text: Optional[str] = Field(None, description="The locator in words, for a Citation (for example 'slide 7')")
+    source_url: Optional[str] = Field(None, description="The page of a URL Document, which a Citation links to")
 
 
 class SearchResponse(BaseModel):

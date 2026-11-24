@@ -77,6 +77,17 @@ test.describe("Citations on a wide screen", () => {
     await expect(panel(page).getByRole("heading", { name: "Leave policy" })).toBeVisible();
   });
 
+  test("a Citation from a web page says where in it and links to the page", async ({ page }) => {
+    const page_url = "https://docs.example.com/support";
+    await askWithCitations(page, [{ ...SAMPLE_CITATION, locator_text: "image on slide 7", source_url: page_url }]);
+    await expect(page.getByRole("list", { name: "Citations" }).getByRole("button", { name: /Leave policy/ })).toContainText("image on slide 7");
+
+    await page.getByRole("button", { name: "Open citation 1" }).click();
+
+    await expect(panel(page).getByRole("link", { name: "Open the page" })).toHaveAttribute("href", page_url);
+    await expect(panel(page).getByRole("link", { name: "Open the page" })).toHaveAttribute("target", "_blank");
+  });
+
   test("highlights the cited passage in its source", async ({ page }) => {
     await askWithCitations(page, [SAMPLE_CITATION, SECOND]);
     await page.getByRole("button", { name: "Open citation 1" }).click();

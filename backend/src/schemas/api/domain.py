@@ -146,6 +146,22 @@ class DocumentResponse(BaseModel):
     # Document itself keeps answering from its current content either way.
     replacement: Optional[Dict[str, Optional[str]]] = None
     warnings: List[str] = Field(default_factory=list)
+    source_kind: str = "file"  # file | url
+    source_url: Optional[str] = None  # a URL Document's page; its Citations link to it
+
+
+class UrlDocumentCreate(BaseModel):
+    """A web page to add to a Knowledge Base. Only hosts on the operator's allowlist are fetched."""
+
+    url: str = Field(..., min_length=1, max_length=2048)
+    title: Optional[str] = Field(None, max_length=300)
+
+
+class DocumentRefreshResponse(BaseModel):
+    """The outcome of refreshing a URL Document: ``changed`` is False when the page's content is what it already holds."""
+
+    changed: bool
+    document: DocumentResponse
 
 
 class DocumentRestrictionEntry(KnowledgeBaseGrantEntry):
@@ -405,6 +421,7 @@ class RetrievedSource(BaseModel):
     section_title: Optional[str] = None
     locator: Optional[dict] = None
     locator_text: Optional[str] = None  # where in the source, in words ("slide 7")
+    source_url: Optional[str] = None  # the page of a URL Document, which the Citation links to
     retrieval_method: Optional[str] = None
 
 

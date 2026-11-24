@@ -1,0 +1,21 @@
+# Questions for the sample folder (data/File Examples), asked by `make ingest-samples ASK=1`.
+#
+# The file is a Golden set, so it can grow into one: once you have read the Citations it prints and agree with them,
+# add `expected` (the Document and the passage the answer must come from) and run it with `make eval` against an
+# Application that has the scratch Knowledge Base attached. See docs/evaluation.md.
+version: 1
+name: sample-data
+
+cases:
+  - id: enrolment-codes
+    question: What do the enrolment codes mean?
+  - id: withdraw-codes
+    question: Which code do I use when a student withdraws, and what does it mean?
+  - id: release-notes
+    question: What is new in release 2026.1?
+  - id: heat-self-service
+    question: How do I log a request through HEAT self service?
+  - id: l1-role
+    question: What does the L1 support role do?
+  - id: api-subscription-key
+    question: How do I manage my API subscription key for the MyEdBC API portal?

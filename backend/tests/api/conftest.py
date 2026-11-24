@@ -92,6 +92,7 @@ async def client(monkeypatch, index_dimension):
     monkeypatch.setattr(main, "make_provider_registry", lambda settings: ProviderRegistry(builder=_make_llm_for_endpoint))
     monkeypatch.setattr(main, "make_reranker", lambda settings: None)
     monkeypatch.setattr(main, "make_vlm_provider", lambda settings: None)
+    monkeypatch.setattr(main, "make_url_fetcher", lambda settings: None)
     monkeypatch.setattr(main, "make_langfuse_tracer", lambda: MagicMock())
     monkeypatch.setattr(main, "make_cache_client", lambda settings: None)
     # The restart sweep over interrupted ingestion has nothing to find in a mock database.

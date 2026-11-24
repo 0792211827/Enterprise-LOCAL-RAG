@@ -1,6 +1,6 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, FileUp, Lock, RotateCw, ShieldCheck, Trash2, Upload, X } from "lucide-react";
+import { FileText, FileUp, Globe, Link2, Lock, RefreshCw, RotateCw, ShieldCheck, Trash2, Upload, X } from "lucide-react";
 import { Fragment, useRef, useState } from "react";
 import {
   Callout,
@@ -49,6 +49,8 @@ export function DocumentsTab({
   const [restrictingId, setRestrictingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<DocumentItem | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [address, setAddress] = useState("");
 
   // Ingestion finishes after the upload response, so the list polls while anything is unfinished.
   const docs = useQuery({
@@ -78,6 +80,27 @@ export function DocumentsTab({
       refresh();
     },
     onError: (e) => setActionError((e as Error).message),
+  });
+  const addUrl = useMutation({
+    mutationFn: (url: string) => documentsApi.addUrl(kbId, url),
+    onSuccess: () => {
+      setActionError(null);
+      setAddress("");
+      refresh();
+    },
+    onError: (e) => setActionError((e as Error).message),
+  });
+  const refreshUrl = useMutation({
+    mutationFn: (d: DocumentItem) => documentsApi.refreshUrl(d.id),
+    onSuccess: (result, d) => {
+      setActionError(null);
+      setNotice(result.changed ? null : `${d.title} is already up to date: the page has not changed.`);
+      refresh();
+    },
+    onError: (e) => {
+      setNotice(null);
+      setActionError((e as Error).message);
+    },
   });
   const reprocess = useMutation({
     mutationFn: (id: string) => documentsApi.reprocess(id),
@@ -123,6 +146,36 @@ export function DocumentsTab({
         </button>
       </div>
 
+      <form
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (address.trim()) addUrl.mutate(address.trim());
+        }}
+      >
+        <div className="min-w-[16rem] flex-1">
+          <label htmlFor="add-url" className="mb-1 block text-xs font-medium text-muted">
+            Or add a web page by address
+          </label>
+          <input
+            id="add-url"
+            type="url"
+            inputMode="url"
+            placeholder="https://docs.example.com/guide"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            className="input w-full"
+          />
+        </div>
+        <button type="submit" className="btn btn-secondary" disabled={!address.trim() || addUrl.isPending}>
+          <Icon icon={Link2} size="sm" />
+          {addUrl.isPending ? "Adding…" : "Add URL"}
+        </button>
+        <p className="basis-full text-xs text-muted">
+          The server fetches just that page, and only from hosts the operator has allowed (INGESTION__URL_ALLOWED_HOSTS).
+        </p>
+      </form>
+
       {failures.length > 0 && (
         <Callout tone="danger" title={failures.length === 1 ? "A file was not added" : `${failures.length} files were not added`}>
           <ul className="mt-1 space-y-1">
@@ -152,6 +205,11 @@ export function DocumentsTab({
         }}
       />
       {actionError && <ErrorState title="That did not work" message={actionError} />}
+      {notice && (
+        <Callout tone="info" title="Nothing to refresh">
+          {notice}
+        </Callout>
+      )}
 
       {docs.isLoading && <TableSkeleton columns={6} label="Loading Documents" />}
       {docs.isError && <ErrorState title="Could not load Documents" message={(docs.error as Error).message} onRetry={() => docs.refetch()} />}
@@ -178,7 +236,13 @@ export function DocumentsTab({
                 <Tr>
                   <Td>
                     <div className="flex items-center gap-2 font-medium">
-                      {d.title}
+                      {d.source_kind === "url" && d.source_url ? (
+                        <a href={d.source_url} target="_blank" rel="noopener noreferrer" className="underline-offset-2 hover:underline [overflow-wrap:anywhere]">
+                          {d.title}
+                        </a>
+                      ) : (
+                        d.title
+                      )}
                       {restricted.data?.[d.id] && (
                         <Chip tone="clay" icon={Lock}>
                           Restricted · {restricted.data[d.id].length}
@@ -186,7 +250,16 @@ export function DocumentsTab({
                       )}
                     </div>
                   </Td>
-                  <Td>{sourceType(d.content_type)}</Td>
+                  <Td>
+                    {d.source_kind === "url" ? (
+                      <span className="inline-flex items-center gap-1">
+                        <Icon icon={Globe} size="sm" className="text-subtle" />
+                        {d.content_type && sourceType(d.content_type) !== "HTML" ? `Web · ${sourceType(d.content_type)}` : "Web page"}
+                      </span>
+                    ) : (
+                      sourceType(d.content_type)
+                    )}
+                  </Td>
                   <Td>
                     <IngestionStage doc={d} job={jobs.data?.get(d.id)} />
                   </Td>
@@ -219,18 +292,30 @@ export function DocumentsTab({
                       <button type="button" className="btn btn-ghost btn-sm" aria-label={`Restrict ${d.title}`} aria-expanded={restrictingId === d.id} onClick={() => setRestrictingId(restrictingId === d.id ? null : d.id)}>
                         <Icon icon={ShieldCheck} size="sm" />
                       </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        aria-label={`Replace ${d.title}`}
-                        disabled={isBusy(d)}
-                        onClick={() => {
-                          replacing.current = d;
-                          replaceRef.current?.click();
-                        }}
-                      >
-                        <Icon icon={FileUp} size="sm" />
-                      </button>
+                      {d.source_kind === "url" ? (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          aria-label={`Refresh ${d.title}`}
+                          disabled={isBusy(d) || d.status.toLowerCase() === "failed"}
+                          onClick={() => refreshUrl.mutate(d)}
+                        >
+                          <Icon icon={RefreshCw} size="sm" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          aria-label={`Replace ${d.title}`}
+                          disabled={isBusy(d)}
+                          onClick={() => {
+                            replacing.current = d;
+                            replaceRef.current?.click();
+                          }}
+                        >
+                          <Icon icon={FileUp} size="sm" />
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm"

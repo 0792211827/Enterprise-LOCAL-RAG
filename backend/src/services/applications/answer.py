@@ -91,6 +91,7 @@ def _chunk_from_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
         "document_id": hit.get("document_id"),
         "section_title": hit.get("section_title"),
         "locator": hit.get("locator"),
+        **({"source_url": hit["source_url"]} if hit.get("source_url") else {}),
     }
 
 

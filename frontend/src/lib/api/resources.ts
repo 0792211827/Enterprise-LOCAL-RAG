@@ -24,6 +24,7 @@ import type {
   DashboardStats,
   DocumentAccessCheck,
   DocumentItem,
+  DocumentRefresh,
   DocumentRestrictions,
   GPUResponse,
   IngestionJob,
@@ -87,6 +88,11 @@ export const documentsApi = {
     form.append("file", file);
     return apiUpload<DocumentItem>(`/api/v1/documents/${id}/replace`, form);
   },
+  /** Adds a web page by address; the server fetches it (only hosts the operator allowlisted) and ingests it like a file. */
+  addUrl: (kbId: string, url: string, title?: string) =>
+    apiSend<DocumentItem>(`/api/v1/knowledge-bases/${kbId}/documents/url`, "POST", { url, ...(title ? { title } : {}) }),
+  /** Fetches a URL Document's page again and replaces its content only if the page changed. */
+  refreshUrl: (id: string) => apiSend<DocumentRefresh>(`/api/v1/documents/${id}/refresh`, "POST"),
   remove: (id: string) => apiSend<void>(`/api/v1/documents/${id}`, "DELETE"),
   reprocess: (id: string) =>
     apiSend<IngestionJob>(`/api/v1/documents/${id}/reprocess`, "POST"),

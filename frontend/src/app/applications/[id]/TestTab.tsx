@@ -75,6 +75,12 @@ export function TestTab({ app }: { app: Application }) {
                               {s.document_title || "Untitled document"}
                               {s.section_title ? <span className="font-normal text-muted"> · {s.section_title}</span> : null}
                               {s.locator_text ? <span className="font-normal text-muted"> · {s.locator_text}</span> : null}
+                              {s.source_url ? (
+                                <a href={s.source_url} target="_blank" rel="noopener noreferrer" className="font-normal text-accent-text underline-offset-2 hover:underline">
+                                  {" "}
+                                  · Open the page
+                                </a>
+                              ) : null}
                             </span>
                             <span className="font-mono text-xs text-muted">
                               score {s.score.toFixed(3)}

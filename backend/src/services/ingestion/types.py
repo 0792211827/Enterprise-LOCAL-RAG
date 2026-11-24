@@ -127,6 +127,8 @@ def sniff_document_type(filename: Optional[str], raw: bytes, declared_content_ty
     if declared is not None and declared.key in TEXT_FORMATS:
         return declared
     extension = _extension_of(filename)
+    if names_binary:
+        raise UnsupportedDocument(f"The file is called '{extension}' but holds plain text, not a {by_name.label} file (an error message saved under that name?).")
     raise UnsupportedDocument(f"The file is plain text but its name ends in '{extension or 'nothing'}'.")
 
 

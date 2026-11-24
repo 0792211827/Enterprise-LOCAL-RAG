@@ -126,6 +126,7 @@ def test_the_answer_streams_deltas_then_citations_then_done(stack, world):
         "attachment_id": None,  # only a passage of an Attachment names one
         "locator": None,  # a passage indexed before locators, or cut from plain text, has no position
         "locator_text": None,
+        "source_url": None,  # only a passage of a URL Document names its page
     }
     assert stack.index.search_unified.call_args.kwargs["knowledge_base_ids"] == [world.kbs["hr"]]
 

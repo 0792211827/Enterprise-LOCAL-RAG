@@ -22,6 +22,7 @@ from src.services.agents.factory import make_agentic_rag_service
 from src.services.audit import AuditRecorder, NoopAuditRecorder
 from src.services.cache.client import CacheClient
 from src.services.chat.limits import ChatLimiter
+from src.services.ingestion.url_fetch import UrlFetcher
 from src.services.langfuse.client import LangfuseTracer
 from src.services.ollama.client import OllamaClient
 from src.services.opensearch.client import OpenSearchClient
@@ -90,6 +91,11 @@ def get_embeddings_service(request: Request) -> EmbeddingProvider:
     return request.app.state.embeddings_service
 
 
+def get_url_fetcher(request: Request) -> Optional[UrlFetcher]:
+    """The fetcher for URL Documents (it refuses every host unless the operator listed it)."""
+    return getattr(request.app.state, "url_fetcher", None)
+
+
 def get_vlm_provider(request: Request) -> Optional[VLMProvider]:
     """Get the optional VLM provider from the request state."""
     return getattr(request.app.state, "vlm_provider", None)
@@ -155,6 +161,7 @@ OpenSearchDep = Annotated[OpenSearchClient, Depends(get_opensearch_client)]
 PDFParserDep = Annotated[PDFParserService, Depends(get_pdf_parser)]
 EmbeddingsDep = Annotated[EmbeddingProvider, Depends(get_embeddings_service)]
 VLMDep = Annotated[Optional[VLMProvider], Depends(get_vlm_provider)]
+UrlFetcherDep = Annotated[Optional[UrlFetcher], Depends(get_url_fetcher)]
 OllamaDep = Annotated[OllamaClient, Depends(get_ollama_client)]
 LangfuseDep = Annotated[LangfuseTracer, Depends(get_langfuse_tracer)]
 CacheDep = Annotated[CacheClient | None, Depends(get_cache_client)]
@@ -172,11 +179,13 @@ def get_ingestion_service(
     embeddings: EmbeddingsDep,
     settings: SettingsDep,
     pdf_parser: PDFParserDep,
+    vlm: VLMDep,
+    url_fetcher: UrlFetcherDep,
 ) -> "IngestionService":
     """Construct the generic ingestion service from platform collaborators."""
     from src.services.ingestion.factory import make_ingestion_service
 
-    return make_ingestion_service(opensearch, embeddings, pdf_parser, settings)
+    return make_ingestion_service(opensearch, embeddings, pdf_parser, settings, vlm, url_fetcher)
 
 
 IngestionServiceDep = Annotated["IngestionService", Depends(get_ingestion_service)]

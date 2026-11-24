@@ -30,6 +30,8 @@ export interface Citation {
   passage: string;
   score: number;
   attachment_id?: string | null;
+  locator_text?: string | null;
+  source_url?: string | null;
 }
 
 export interface StreamedAnswer {

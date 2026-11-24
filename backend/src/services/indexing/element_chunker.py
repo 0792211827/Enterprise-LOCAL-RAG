@@ -3,12 +3,13 @@
 * a slide is one passage where it fits, else it is split between paragraphs; every part says which slide it is;
 * a table (sheet or CSV) is cut into runs of rows, each repeating the header row, with the rows it holds as its locator;
 * running text follows its headings and pages: each section (or page of one) is a passage, a big one is split
-  between paragraphs, and every passage opens with its heading path so it makes sense on its own.
+  between paragraphs, and every passage opens with its heading path so it makes sense on its own;
+* an Image description is a passage of its own that opens with where the image sits ("Image on slide 7").
 """
 
 from typing import List, Optional
 
-from src.schemas.indexing.elements import DocumentElement, Locator
+from src.schemas.indexing.elements import DocumentElement, Locator, locator_label
 from src.schemas.indexing.models import ChunkMetadata, TextChunk
 
 
@@ -111,12 +112,21 @@ def _text(builder: _Builder, element: DocumentElement, limit: int) -> None:
         builder.add(_prefixed(element, part), element.locator, element.title)
 
 
+def _image(builder: _Builder, element: DocumentElement, limit: int) -> None:
+    where = locator_label(element.locator.as_index_field()) or "image"
+    where = where[0].upper() + where[1:]
+    for part in _pack(_paragraphs(element.text), max(limit - _words(where), 1)):
+        builder.add(f"{where}:\n\n{part}", element.locator, element.title)
+
+
 def chunk_elements(elements: List[DocumentElement], document_id: str, limit: int) -> List[TextChunk]:
     """Passages of at most about ``limit`` words (a single table row or an unbreakable block may exceed it)."""
     builder = _Builder(document_id)
     for element in elements:
         if element.locator.kind == "slide":
             _slide(builder, element, limit)
+        elif element.locator.kind == "image":
+            _image(builder, element, limit)
         elif element.locator.kind == "table":
             _table(builder, element, limit)
         elif element.text.strip():

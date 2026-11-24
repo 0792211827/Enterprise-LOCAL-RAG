@@ -1,16 +1,27 @@
 import asyncio
 import logging
+from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
 import pypdfium2 as pdfium
-from docling.datamodel.base_models import InputFormat
+from docling.datamodel.base_models import DocumentStream, InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from src.exceptions import PDFParsingException, PDFValidationError
+from src.schemas.indexing.elements import ImageExtraction
 from src.schemas.pdf_parser.models import PaperFigure, PaperSection, PaperTable, ParserType, PdfContent
 
-from .elements import csv_elements, element_text, pptx_notes, section_elements, slide_elements, spreadsheet_elements
+from .elements import (
+    csv_elements,
+    element_text,
+    main_text_html,
+    pptx_notes,
+    section_elements,
+    slide_elements,
+    spreadsheet_elements,
+)
+from .images import ImageRules, extract_images
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +29,21 @@ logger = logging.getLogger(__name__)
 class DoclingParser:
     """Docling PDF parser for scientific document processing."""
 
-    def __init__(self, max_pages: int, max_file_size_mb: int, do_ocr: bool = False, do_table_structure: bool = True):
+    def __init__(
+        self,
+        max_pages: int,
+        max_file_size_mb: int,
+        do_ocr: bool = False,
+        do_table_structure: bool = True,
+        image_rules: Optional[ImageRules] = None,
+    ):
         """Initialize DocumentConverter with optimized pipeline options.
 
         :param max_pages: Maximum number of pages to process
         :param max_file_size_mb: Maximum file size in MB
         :param do_ocr: Enable OCR for scanned PDFs (default: False, very slow)
         :param do_table_structure: Extract table structures (default: True)
+        :param image_rules: Which pictures :meth:`extract_images` leaves out (icons, repeats, past the cap)
         """
         # Configure pipeline options
         pipeline_options = PdfPipelineOptions(
@@ -36,6 +55,7 @@ class DoclingParser:
         self._warmed_up = False
         self.max_pages = max_pages
         self.max_file_size_bytes = max_file_size_mb * 1024 * 1024
+        self.image_rules = image_rules or ImageRules()
 
     def _warm_up_models(self):
         """Pre-warm the models with a small dummy document to avoid cold start."""
@@ -217,7 +237,14 @@ class DoclingParser:
             return spreadsheet_elements(path)
         if suffix == ".csv":
             return csv_elements(path)
+        if suffix in (".html", ".htm"):
+            page = DocumentStream(name="page.html", stream=BytesIO(main_text_html(path.read_bytes())))
+            return section_elements(self._converter.convert(page, max_file_size=self.max_file_size_bytes).document, paged=False)
         doc = self._converter.convert(str(path), max_file_size=self.max_file_size_bytes).document
         if suffix == ".pptx":
             return slide_elements(doc, pptx_notes(path))
         return section_elements(doc, paged=False)
+
+    async def extract_images(self, path: Path, load: bool) -> ImageExtraction:
+        """The pictures of a PDF, PPTX or DOCX worth describing, with where each sits (``load=False`` only counts them)."""
+        return await asyncio.to_thread(extract_images, path, self.image_rules, load)
