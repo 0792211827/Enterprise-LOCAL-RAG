@@ -274,7 +274,10 @@ async def refresh_url_document(
         _audit(request, principal, audit, "refresh", *ids, outcome=AuditOutcome.ERROR.value, source_kind="url", url=shown)
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
-    session.refresh(document)  # nothing awaited between this check and the replacement being recorded
+    try:
+        session.refresh(document)  # nothing awaited between this check and the replacement being recorded
+    except Exception as exc:  # noqa: BLE001 - deleted while the page was being fetched
+        raise HTTPException(status_code=404, detail="Document not found") from exc
     if document.status in (IngestionStatus.QUEUED.value, IngestionStatus.PROCESSING.value) or pending_replacement(document):
         raise HTTPException(status_code=409, detail="The document is being ingested. Wait for it to finish, then refresh it.")
     if content.checksum == document.checksum:
@@ -424,7 +427,8 @@ def delete_document(
     document = DocumentRepository(session).get_by_id(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    ids, details = (document.id, document.knowledge_base_id), {"file_name": document.source_uri, "chunk_count": document.chunk_count}
+    named = audit_form(document.source_uri) if is_url_document(document) else document.source_uri  # a page's query string may carry a token
+    ids, details = (document.id, document.knowledge_base_id), {"file_name": named, "chunk_count": document.chunk_count}
     try:
         # The index first and verified: a deleted document must stop being answerable, so if its chunks cannot be removed it stays.
         remove_document(session, opensearch, document)

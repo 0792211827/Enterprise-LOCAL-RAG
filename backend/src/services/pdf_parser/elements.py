@@ -191,7 +191,8 @@ def csv_elements(path: Path) -> List[DocumentElement]:
     return [element] if element is not None else []
 
 
-NOISE_TAGS = ("script", "style", "noscript", "template", "iframe", "svg", "canvas", "form", "button", "select", "dialog")
+# Form controls are not text; the <form> around a page is unwrapped, not dropped.
+NOISE_TAGS = ("script", "style", "noscript", "template", "iframe", "svg", "canvas", "button", "select", "input", "textarea", "dialog")
 PAGE_FURNITURE = ("nav", "aside", "header", "footer")
 
 
@@ -210,6 +211,8 @@ def main_text_html(raw: bytes) -> bytes:
     root = root or soup.body or soup
     for tag in root.find_all(NOISE_TAGS):
         tag.decompose()
+    for tag in root.find_all("form"):
+        tag.unwrap()  # keep what the form holds: some frameworks put the whole page inside one
     for tag in root.find_all(attrs={"role": "navigation"}):
         tag.decompose()
     # Inside main content a header or footer belongs to the article (its title, its byline); on a bare page it is the site's.

@@ -113,6 +113,23 @@ async def test_a_name_that_does_not_resolve_is_a_readable_failure():
         await fetcher(["gone.corp.test"], resolving({})).fetch("http://gone.corp.test/")
 
 
+def test_an_entry_with_a_port_that_is_not_a_number_matches_nothing_and_a_non_ascii_name_is_matched_as_punycode():
+    guard = fetcher(["docs.example.com:abc", "bücher.example.com"])
+
+    with pytest.raises(UrlRefused):
+        guard.check("https://docs.example.com/")
+    assert guard.check("https://bücher.example.com/")
+
+
+async def test_when_one_checked_address_cannot_be_reached_the_next_is_tried(site):
+    site.serve("/page", b"<html>reached</html>")
+    resolver = resolving({"wiki.corp.test": ["::1", "127.0.0.1"]})  # the stub listens on IPv4 only
+
+    page = await fetcher(["wiki.corp.test"], resolver).fetch(site.url("/page", host="wiki.corp.test"))
+
+    assert page.raw == b"<html>reached</html>"
+
+
 # --- redirects -------------------------------------------------------------------------------------------------- #
 async def test_a_redirect_between_allowed_hosts_is_followed_and_reported_at_its_final_address(site):
     site.redirect("/old", "/new")
@@ -140,6 +157,13 @@ async def test_a_redirect_to_an_allowed_name_that_resolves_somewhere_internal_is
         await guard.fetch(site.url("/old"))
 
     assert site.paths() == ["/old"]
+
+
+async def test_a_redirect_to_a_page_that_merely_has_sso_inside_a_word_is_not_a_sign_in(site):
+    site.redirect("/old", "/lessons/associations")
+    site.serve("/lessons/associations", b"<html>fine</html>")
+
+    assert (await fetcher(["127.0.0.1"]).fetch(site.url("/old"))).raw == b"<html>fine</html>"
 
 
 async def test_at_most_three_redirects_are_followed(site):

@@ -128,7 +128,7 @@ class IngestionSettings(BaseConfigSettings):
     document_timeout_seconds: int = Field(default=900, ge=0)
     # Images described by the vision model per Document; the rest are counted as a warning on the Document.
     max_images_per_document: int = Field(default=200, ge=1)
-    # An image with either side shorter than this many pixels is an icon or a rule, and is not described.
+    # An image with both sides shorter than this many pixels is an icon, and is not described.
     min_image_px: int = Field(default=100, ge=1)
     # Hosts a URL Document may be fetched from, comma-separated: `docs.example.com`, `*.example.com` (subdomains),
     # optionally with a port (`wiki.internal:8443`). Empty = fetching URLs is refused. Loopback, link-local and cloud

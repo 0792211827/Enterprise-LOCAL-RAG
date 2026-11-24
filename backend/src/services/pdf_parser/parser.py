@@ -73,9 +73,8 @@ class PDFParserService:
             raise PDFParsingException(f"Docling parsing error for {path.name}: {e}")
 
     async def extract_images(self, path: Path, load: bool = True) -> ImageExtraction:
-        """The pictures of a PDF, PPTX or DOCX worth describing; none for other types. Never raises: pictures do not fail a Document."""
-        try:
-            return await self.docling_parser.extract_images(path, load)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Could not extract images from {path.name}: {e}")
-            return ImageExtraction()
+        """The pictures of a PDF, PPTX or DOCX worth describing; none for other types.
+
+        :raises Exception: the file's pictures could not be read (the caller treats that as a warning, not a failure).
+        """
+        return await self.docling_parser.extract_images(path, load)

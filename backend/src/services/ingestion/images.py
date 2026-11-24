@@ -6,8 +6,10 @@ descriptions and says so: the admin sees how many pictures were not described an
 once the model is available adds them.
 """
 
+import asyncio
 import base64
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
@@ -49,22 +51,29 @@ def _element(image: ExtractedImage, description: str) -> DocumentElement:
     return DocumentElement(text=description, locator=locator)
 
 
-async def describe_images(vlm: Optional[Any], extraction: ImageExtraction) -> Described:
-    """Describe the pictures of ``extraction`` with ``vlm`` (``None`` = the vision model is off)."""
+async def describe_images(vlm: Optional[Any], extraction: ImageExtraction, budget_seconds: Optional[float] = None) -> Described:
+    """Describe the pictures of ``extraction`` with ``vlm`` (``None`` = the vision model is off).
+
+    ``budget_seconds`` bounds the time spent here: what is not described when it runs out is counted as undescribed, so
+    slow pictures cost the Document its descriptions, never the Document its place in the index.
+    """
     result = Described()
     if extraction.eligible == 0:
         return result
 
     failed = extraction.unreadable
     failures_in_a_row = 0
+    deadline = time.monotonic() + budget_seconds if budget_seconds else None
     if vlm is not None:
         for index, image in enumerate(extraction.images):
-            if failures_in_a_row >= CONSECUTIVE_FAILURE_LIMIT:
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if failures_in_a_row >= CONSECUTIVE_FAILURE_LIMIT or (remaining is not None and remaining <= 0):
                 failed += len(extraction.images) - index
                 break
             try:
-                description = (await vlm.describe_image(base64.b64encode(image.data).decode("ascii"), _prompt(image)) or "").strip()
-            except Exception as exc:  # noqa: BLE001 - one picture never fails the Document
+                async with asyncio.timeout(remaining):
+                    description = (await vlm.describe_image(base64.b64encode(image.data).decode("ascii"), _prompt(image)) or "").strip()
+            except Exception as exc:  # noqa: BLE001 - one picture never fails the Document (a timeout here is this budget, not the Document's)
                 logger.warning("The vision model could not describe an image (%s): %s", image.locator.as_index_field(), exc)
                 description = ""
             if not description:
@@ -84,7 +93,7 @@ async def describe_images(vlm: Optional[Any], extraction: ImageExtraction) -> De
         )
     elif failed:
         result.warnings.append(
-            f"{_count(failed)} not described (the vision model failed or returned nothing). Reprocess this Document to try again."
+            f"{_count(failed)} not described (the vision model failed, ran out of time or returned nothing). Reprocess this Document to try again."
         )
     if extraction.over_cap:
         result.warnings.append(

@@ -4,7 +4,7 @@ Docling is not used here: it does not hand back the picture bytes of Office file
 for a PDF are slow. python-pptx and python-docx walk the file's own structure, and pypdfium2 lists a PDF page's image
 objects, so each picture comes with the exact slide, page (or heading) it belongs to and the text around it.
 
-A picture is left out when it is an icon or a rule (a side under ``min_px``), when the same picture sits in many places
+A picture is left out when it is an icon (both sides under ``min_px``) or a rule (a side under ``THIN_PX``), when the same picture sits in many places
 (a logo or a background), or when the Document already has ``max_images`` to describe. Anything this module cannot read
 is left out too: pictures never fail a Document.
 """
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 MAX_SIDE_PX = 1600  # larger pictures are scaled down before they are sent to the vision model
 CONTEXT_CHARS = 800
+THIN_PX = 20  # a line or a rule, whatever its length
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,7 @@ def select_images(candidates: Iterable[Candidate], rules: ImageRules, load: bool
 
     kept: List[Candidate] = []
     for candidate in found:
-        if candidate.width < rules.min_px or candidate.height < rules.min_px:
+        if (candidate.width < rules.min_px and candidate.height < rules.min_px) or min(candidate.width, candidate.height) < THIN_PX:
             result.skipped_small += 1
         elif len(places[candidate.digest]) >= rules.repeat_places:
             result.skipped_repeated += 1
@@ -218,21 +219,21 @@ def pdf_candidates(pdf: Any) -> Iterator[Candidate]:
 
 
 def extract_images(path: Path, rules: ImageRules, load: bool) -> ImageExtraction:
-    """The pictures of a PDF, PPTX or DOCX worth describing. Any other type, or a file this cannot read, has none."""
-    suffix = path.suffix.lower()
-    try:
-        if suffix == ".pdf":
-            import pypdfium2 as pdfium
+    """The pictures of a PDF, PPTX or DOCX worth describing; any other type has none.
 
-            pdf = pdfium.PdfDocument(str(path))
-            try:
-                return select_images(pdf_candidates(pdf), rules, load)
-            finally:
-                pdf.close()
-        if suffix == ".pptx":
-            return select_images(pptx_candidates(path), rules, load)
-        if suffix == ".docx":
-            return select_images(docx_candidates(path), rules, load)
-    except Exception as exc:  # noqa: BLE001 - pictures never fail a Document
-        logger.warning("Could not look for images in %s: %s", path.name, exc)
+    :raises Exception: the file could not be read for its pictures.
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(str(path))
+        try:
+            return select_images(pdf_candidates(pdf), rules, load)
+        finally:
+            pdf.close()
+    if suffix == ".pptx":
+        return select_images(pptx_candidates(path), rules, load)
+    if suffix == ".docx":
+        return select_images(docx_candidates(path), rules, load)
     return ImageExtraction()

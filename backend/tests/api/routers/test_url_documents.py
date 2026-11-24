@@ -240,6 +240,25 @@ def test_only_url_documents_can_be_refreshed_and_they_are_not_replaced_by_a_file
 
 
 # --- audit ------------------------------------------------------------------------------------------------------ #
+def test_a_page_wrapped_in_a_form_keeps_its_text(library, site):
+    site.serve("/webforms", b"<html><body><form action='/x'><h1>Tickets</h1><p>Open a ticket from the kiosk screen</p><input name='q'></form></body></html>")
+    allow(library, "127.0.0.1")
+
+    stored = document(library, add_url(library, site.url("/webforms")).json()["id"])
+
+    assert stored["status"] == "COMPLETED" and len(search(library, "kiosk")) == 1
+
+
+def test_deleting_a_page_is_audited_without_its_query_string(library, site, world):
+    site.serve("/support?token=SECRET", PAGE)
+    allow(library, "127.0.0.1")
+    doc_id = add_url(library, site.url("/support?token=SECRET")).json()["id"]
+
+    library.http.delete(f"/api/v1/documents/{doc_id}")
+
+    assert "SECRET" not in json.dumps([e.details for e in audit_events(world)])
+
+
 def test_add_and_refresh_are_audited_without_page_text_or_query_strings(library, site, world):
     site.serve("/support?token=SECRET", PAGE)
     allow(library, "127.0.0.1")

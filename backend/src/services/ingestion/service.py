@@ -31,6 +31,8 @@ OLD_CONTENT_NOT_REMOVED = (
     "The previous content could not be removed from the search index, so it may still be answered from. "
     "Reprocess this Document to clear it."
 )
+IMAGES_UNREADABLE = "The images in this Document could not be read, so none were described. Reprocess this Document to try again."
+IMAGE_TIME_SHARE = 0.5
 NO_STATS = {"chunks_created": 0, "chunks_indexed": 0, "embeddings_generated": 0}
 
 
@@ -170,8 +172,7 @@ class IngestionService:
             if not elements and text.strip():
                 elements = [DocumentElement(text=text, locator=Locator(kind="text"))]
             elements = [*elements, *images.elements]
-            text = "\n\n".join(filter(None, [text, *(e.text for e in images.elements)]))
-        if not text or not text.strip():
+        if not (text or "").strip() and not images.elements:
             raise ValueError(
                 "No text found in the document. A scan or a file made only of images cannot be searched."
                 + (f" {images.warnings[0]}" if images.warnings else "")
@@ -228,7 +229,7 @@ class IngestionService:
         document.chunk_count = len(chunks)
         document.processed_at = datetime.now(timezone.utc)
         document.error = None
-        document.raw_text = text
+        document.raw_text = text  # the Document's own text: a reprocess without the file must not take descriptions for it
         self._note_images(document, images)
         document_repo.save(document)
 
@@ -341,10 +342,12 @@ class IngestionService:
             return Described()
         try:
             extraction = await self.pdf_parser.extract_images(path, load=self.vlm_provider is not None)
-            return await describe_images(self.vlm_provider, extraction)
+            # Half of the Document's time limit at most: descriptions that run out of time are dropped, not the Document.
+            budget = self.timeout_seconds * IMAGE_TIME_SHARE if self.timeout_seconds else None
+            return await describe_images(self.vlm_provider, extraction, budget)
         except Exception as exc:  # noqa: BLE001 - pictures never fail a Document
-            logger.warning("Images of document %s were not described: %s", document.id if hasattr(document, "id") else path.name, exc)
-            return Described()
+            logger.warning("Images of document %s were not described: %s", getattr(document, "id", path.name), exc)
+            return Described(warnings=[IMAGES_UNREADABLE])
 
     @staticmethod
     def _note_images(document: Document, images: Described) -> None:

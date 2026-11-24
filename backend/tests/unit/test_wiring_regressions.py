@@ -212,6 +212,20 @@ class TestIndexPayloadMatchesMapping:
 
         assert list(inspect.signature(PDFParserService.parse_document).parameters)[1:] == ["path"]
         assert list(inspect.signature(PDFParserService.extract_images).parameters)[1:] == ["path", "load"]
+
+    def test_the_ingestion_service_is_built_with_the_collaborators_the_callers_pass(self):
+        import inspect
+
+        from src.services.ingestion.factory import make_ingestion_service
+        from src.services.ingestion.url_fetch import UrlFetcher
+        from src.services.providers.vlm.base import VLMProvider
+
+        assert list(inspect.signature(make_ingestion_service).parameters) == [
+            "opensearch", "embeddings", "pdf_parser", "settings", "vlm_provider", "url_fetcher",
+        ]
+        assert list(inspect.signature(VLMProvider.describe_image).parameters)[1:] == ["image_base64", "prompt", "model"]
+        assert list(inspect.signature(UrlFetcher.check).parameters)[1:] == ["url"]
+        assert list(inspect.signature(UrlFetcher.fetch).parameters)[1:] == ["url"]
         assert list(inspect.signature(TextChunker.chunk_elements).parameters)[1:] == ["elements", "document_id"]
 
 

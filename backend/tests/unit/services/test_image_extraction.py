@@ -92,9 +92,22 @@ def test_a_pdf_picture_is_placed_by_its_page(tmp_path):
     assert locator_label(image.locator.as_index_field()) == "image on page 1"
 
 
-@pytest.mark.parametrize("name,data", [("notes.pptx", b"PK\x03\x04 broken"), ("sheet.xlsx", b"whatever"), ("t.txt", b"hello")])
-def test_a_file_with_no_readable_pictures_has_none_and_nothing_is_raised(tmp_path, name, data):
-    assert pictures(tmp_path, name, data).eligible == 0
+@pytest.mark.parametrize("name", ["sheet.xlsx", "t.txt", "page.html"])
+def test_a_type_that_holds_no_pictures_has_none(tmp_path, name):
+    assert pictures(tmp_path, name, b"whatever").eligible == 0
+
+
+def test_a_file_whose_pictures_cannot_be_read_raises_so_the_caller_can_warn(tmp_path):
+    with pytest.raises(Exception):
+        pictures(tmp_path, "notes.pptx", b"PK\x03\x04 broken")
+
+
+def test_a_wide_screenshot_is_described_but_a_thin_rule_is_not(tmp_path):
+    banner, rule = make_png((5, 5, 5), (900, 60)), make_png((6, 6, 6), (600, 8))
+
+    found = pictures(tmp_path, "deck.pptx", make_pptx([("One", "a", None, [banner, rule])]))
+
+    assert [(i.width, i.height) for i in found.images] == [(900, 60)] and found.skipped_small == 1
 
 
 # --- describing them -------------------------------------------------------------------------------------------- #
@@ -135,11 +148,24 @@ async def test_with_the_vision_model_off_nothing_is_described_and_the_count_is_a
     assert warning.startswith("3 images were not described") and "VLM__ENABLED" in warning
 
 
+async def test_pictures_that_run_out_of_the_time_budget_are_left_undescribed_not_fatal(tmp_path):
+    import asyncio
+
+    class Slow(FakeVision):
+        async def describe_image(self, image_base64, prompt, model=""):
+            await asyncio.sleep(5)
+
+    result = await describe_images(Slow(), pictures(tmp_path, "deck.pptx", extraction(2)), budget_seconds=0.2)
+
+    assert result.described == 0 and result.undescribed == 2
+    assert "ran out of time" in result.warnings[0]
+
+
 async def test_a_picture_that_fails_does_not_stop_the_others(tmp_path):
     result = await described(tmp_path, FakeVision("first", RuntimeError("model busy"), "third"))
 
     assert [e.text for e in result.elements] == ["first", "third"]
-    assert result.undescribed == 1 and result.warnings == ["1 image was not described (the vision model failed or returned nothing). Reprocess this Document to try again."]
+    assert result.undescribed == 1 and result.warnings == ["1 image was not described (the vision model failed, ran out of time or returned nothing). Reprocess this Document to try again."]
 
 
 async def test_a_model_that_keeps_failing_is_given_up_on(tmp_path):

@@ -36,7 +36,7 @@ METADATA_ADDRESSES = frozenset(
     ipaddress.ip_address(a) for a in ("169.254.169.254", "169.254.170.2", "100.100.100.200", "fd00:ec2::254")
 )
 # Where a site sends someone who has to sign in first.
-LOGIN_REDIRECT = re.compile(r"(log-?in|sign-?in|sso|saml|oauth|authorize|/auth(/|$)|session/new)", re.IGNORECASE)
+LOGIN_REDIRECT = re.compile(r"(?<![a-z])(log-?in|sign-?in|sign-?on|sso|saml2?|oauth2?|authorize|auth|session/new)(?![a-z])", re.IGNORECASE)
 PASSWORD_FIELD = re.compile(rb"<input[^>]+type\s*=\s*[\"']?password", re.IGNORECASE)
 
 Resolver = Callable[[str, int], Awaitable[List[str]]]
@@ -152,14 +152,25 @@ class _Entry:
         port: Optional[int] = None
         if value.startswith("["):  # [::1]:8080
             host, _, rest = value[1:].partition("]")
-            port = int(rest[1:]) if rest.startswith(":") and rest[1:].isdigit() else None
+            port = cls._port(rest[1:]) if rest.startswith(":") else None
         elif value.count(":") == 1:
             value, _, tail = value.partition(":")
-            host, port = value, int(tail) if tail.isdigit() else None
+            host, port = value, cls._port(tail)
         else:
             host = value
         wildcard = host.startswith("*.")
-        return cls(host[2:] if wildcard else host, wildcard, port)
+        host = host[2:] if wildcard else host
+        if host and ":" not in host and not host.isascii():
+            try:
+                host = host.encode("idna").decode("ascii")  # a name is compared as the address is normalised
+            except UnicodeError:
+                pass
+        return cls(host, wildcard, port)
+
+    @staticmethod
+    def _port(text: str) -> int:
+        """The port an entry names. One that is not a number matches no port, rather than silently allowing any."""
+        return int(text) if text.isdigit() else -1
 
     def matches(self, host: str, port: int) -> bool:
         if self.port is not None and self.port != port:
@@ -210,8 +221,8 @@ class UrlFetcher:
             raise UrlRefused(f"{host} is not on the allowlist of hosts a URL may be fetched from (INGESTION__URL_ALLOWED_HOSTS).")
         return normal
 
-    async def _address(self, url: str) -> str:
-        """The one address the connection goes to: resolved once, and checked."""
+    async def _addresses(self, url: str) -> List[str]:
+        """The addresses the connection may go to: resolved once, and checked."""
         parts = urlsplit(url)
         host = parts.hostname or ""
         port = parts.port or DEFAULT_PORTS[parts.scheme]
@@ -239,7 +250,7 @@ class UrlFetcher:
                     "exactly in INGESTION__URL_ALLOWED_HOSTS (not by a wildcard)."
                 )
             raise UrlFetchError(f"The host {host} could not be found.")
-        return usable[0]
+        return usable
 
     # ------------------------------------------------------------------------------------------------------ fetch
     async def fetch(self, url: str) -> FetchedPage:
@@ -278,10 +289,19 @@ class UrlFetcher:
         """One request, with the connection pinned to the address the host resolved to. Returns the body or a redirect's Location."""
         parts = urlsplit(url)
         host = parts.hostname or ""
-        address = await self._address(url)
+        addresses = await self._addresses(url)
+        headers = {"Host": parts.netloc, "User-Agent": USER_AGENT, "Accept": "text/html,application/pdf,application/*;q=0.9,*/*;q=0.5"}
+        for number, address in enumerate(addresses):
+            try:
+                return await self._request(parts, host, address, headers)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                if number == len(addresses) - 1:  # only addresses that passed the check are ever tried
+                    raise UrlFetchError(f"The page could not be fetched: {exc.__class__.__name__}: {exc}"[:300]) from exc
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def _request(self, parts: SplitResult, host: str, address: str, headers: dict):
         shown = f"[{address}]" if ":" in address else address
         pinned = urlunsplit(SplitResult(parts.scheme, f"{shown}:{parts.port}" if parts.port else shown, parts.path or "/", parts.query, ""))
-        headers = {"Host": parts.netloc, "User-Agent": USER_AGENT, "Accept": "text/html,application/pdf,application/*;q=0.9,*/*;q=0.5"}
         try:
             async with httpx.AsyncClient(follow_redirects=False, trust_env=False, timeout=self.timeout_seconds) as client:
                 async with client.stream("GET", pinned, headers=headers, extensions={"sni_hostname": host}) as response:
@@ -301,8 +321,8 @@ class UrlFetcher:
                         if len(body) > self.max_bytes:
                             raise UrlFetchError(self._too_large())
                     return bytes(body)
-        except UrlFetchError:
-            raise
+        except (UrlFetchError, httpx.ConnectError, httpx.ConnectTimeout):
+            raise  # the last two: the caller tries the next checked address
         except httpx.HTTPError as exc:
             raise UrlFetchError(f"The page could not be fetched: {exc.__class__.__name__}: {exc}"[:300]) from exc
 

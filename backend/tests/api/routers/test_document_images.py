@@ -120,8 +120,20 @@ def test_a_picture_the_model_fails_on_is_a_warning_not_a_failure(library):
     stored = document(library, upload(library, "charts.pptx", deck).json()["id"])
 
     assert (stored["status"], stored["error"]) == ("COMPLETED", None)
-    assert stored["warnings"] == ["1 image was not described (the vision model failed or returned nothing). Reprocess this Document to try again."]
+    assert stored["warnings"] == ["1 image was not described (the vision model failed, ran out of time or returned nothing). Reprocess this Document to try again."]
     assert len(search(library, "enrolment")) == 1 and len(search(library, "banner")) == 1
+
+
+def test_images_that_cannot_be_read_are_a_warning_not_a_failure(library, monkeypatch):
+    async def broken(path, load=True):
+        raise RuntimeError("corrupt media part")
+
+    monkeypatch.setattr(library.parser_service, "extract_images", broken)
+
+    stored = document(library, upload(library, "training.pptx", DECK).json()["id"])
+
+    assert (stored["status"], stored["error"]) == ("COMPLETED", None)
+    assert stored["warnings"][0].startswith("The images in this Document could not be read")
 
 
 def test_icons_repeated_logos_and_pictures_past_the_cap_are_not_described(library):
