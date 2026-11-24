@@ -34,9 +34,6 @@ def safe_extension(filename: Optional[str]) -> str:
     return suffix if _EXTENSION.match(suffix) else ""
 
 
-TEXT_CONTENT_TYPES = {"text/plain", "text/markdown", "text/html", "application/json"}
-
-
 def decode_text(raw: bytes) -> str:
     """Text content from bytes: UTF-8 if it is, else Latin-1."""
     for encoding in ("utf-8", "latin-1"):
@@ -51,9 +48,9 @@ def upload_root(settings: Settings) -> Path:
     return Path(settings.ingestion.upload_dir) if settings.ingestion.upload_dir else Path(tempfile.gettempdir()) / "rag-uploads"
 
 
-def stored_path(settings: Settings, knowledge_base_id: object, checksum: str, filename: Optional[str]) -> Path:
-    """Where an upload is kept: ``<root>/<kb id>/<checksum><safe extension>``."""
-    return upload_root(settings) / str(knowledge_base_id) / f"{checksum}{safe_extension(filename)}"
+def stored_path(settings: Settings, knowledge_base_id: object, checksum: str, extension: str) -> Path:
+    """Where an upload is kept: ``<root>/<kb id>/<checksum><extension>``. The extension comes from the type registry, never the name."""
+    return upload_root(settings) / str(knowledge_base_id) / f"{checksum}{extension}"
 
 
 async def read_capped(file: UploadFile, max_mb: int, setting: str = "INGESTION__MAX_UPLOAD_MB") -> bytes:

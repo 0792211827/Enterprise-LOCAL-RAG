@@ -399,6 +399,8 @@ class RetrievedSource(BaseModel):
     chunk_text: str
     score: float
     section_title: Optional[str] = None
+    locator: Optional[dict] = None
+    locator_text: Optional[str] = None  # where in the source, in words ("slide 7")
     retrieval_method: Optional[str] = None
 
 

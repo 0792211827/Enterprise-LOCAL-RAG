@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 from src.dependencies import AuditDep, EmbeddingsDep, OpenSearchDep, RerankerDep, ScopeDep
 from src.models import AuditAction
 from src.schemas.api.search import HybridSearchRequest, SearchHit, SearchResponse
+from src.schemas.indexing.elements import locator_label
 from src.services.audit import AuditContext, audited_query
 from src.services.retrieval import embed_or_none, retrieve
 
@@ -78,6 +79,8 @@ async def _search(request, opensearch_client, embeddings_service, scope, reranke
                     chunk_text=hit.get("chunk_text"),
                     chunk_id=hit.get("chunk_id"),
                     section_title=hit.get("section_title"),
+                    locator=hit.get("locator"),
+                    locator_text=locator_label(hit.get("locator")),
                 )
             )
 

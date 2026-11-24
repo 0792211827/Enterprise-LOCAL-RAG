@@ -90,6 +90,7 @@ def _chunk_from_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
         "score": hit.get("score", 0.0),
         "document_id": hit.get("document_id"),
         "section_title": hit.get("section_title"),
+        "locator": hit.get("locator"),
     }
 
 

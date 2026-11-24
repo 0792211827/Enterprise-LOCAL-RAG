@@ -50,6 +50,8 @@ class SearchHit(BaseModel):
     chunk_text: Optional[str] = Field(None, description="Text content of the matching chunk")
     chunk_id: Optional[str] = Field(None, description="Unique identifier of the chunk")
     section_title: Optional[str] = Field(None, description="Section the chunk was found in")
+    locator: Optional[dict] = Field(None, description="Where the chunk sits in its source: page, slide, sheet and rows, heading path")
+    locator_text: Optional[str] = Field(None, description="The locator in words, for a Citation (for example 'slide 7')")
 
 
 class SearchResponse(BaseModel):

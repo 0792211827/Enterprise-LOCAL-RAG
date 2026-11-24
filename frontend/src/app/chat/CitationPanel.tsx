@@ -128,7 +128,11 @@ function Source({ citation }: { citation: ChatCitation }) {
           From your file
         </p>
       ) : (
-        citation.section_title && <p className="mt-1 text-sm text-muted">{citation.section_title}</p>
+        (citation.section_title || citation.locator_text) && (
+          <p className="mt-1 text-sm text-muted">
+            {[citation.section_title, citation.locator_text].filter(Boolean).join(" · ")}
+          </p>
+        )
       )}
 
       <div className="mt-5">

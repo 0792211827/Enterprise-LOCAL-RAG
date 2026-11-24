@@ -14,7 +14,6 @@ import logging
 import socket
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from pathlib import PurePosixPath
 from typing import Any, Callable, ContextManager, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -26,14 +25,13 @@ from src.models.enums import IngestionStatus
 from src.models.ingestion import IngestionJob
 from src.repositories import DocumentRepository, IngestionJobRepository, KnowledgeBaseRepository
 from src.repositories.connector import ConnectorRepository
-from src.services.ingestion.uploads import TEXT_CONTENT_TYPES, decode_text, display_name, stored_path
+from src.services.ingestion.types import sniff_document_type, store_file, type_for_extension
+from src.services.ingestion.uploads import display_name
 
 from .sources import ConnectorError, Source, SourceFile
 
 logger = logging.getLogger(__name__)
 
-# What ingestion can read today: the same types the admin UI accepts.
-SUPPORTED_TYPES = {".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown"}
 AUDIT_FILE_LIST_LIMIT = 50  # file names kept per kind in the audit event
 ERROR_LENGTH = 300
 
@@ -89,10 +87,6 @@ class SyncSummary:
         for item in self.files["failed"]:
             lines.append(f"  FAILED {item['key']}: {item['error']}")
         return "\n".join(lines)
-
-
-def _extension(key: str) -> str:
-    return PurePosixPath(key).suffix.lower()
 
 
 def _title(key: str) -> str:
@@ -167,7 +161,7 @@ class ConnectorSync:
             raise
         except Exception as exc:  # noqa: BLE001
             raise ConnectorError(f"Could not list the source: {exc}") from exc
-        files = [f for f in listed if _extension(f.key) in SUPPORTED_TYPES]
+        files = [f for f in listed if type_for_extension(f.key) is not None]
         summary.skipped = len(listed) - len(files)
 
         states = repo.states(connector.id)
@@ -255,24 +249,16 @@ class ConnectorSync:
     ) -> None:
         repo = ConnectorRepository(session)
         doc_repo, job_repo = DocumentRepository(session), IngestionJobRepository(session)
-        content_type = SUPPORTED_TYPES[_extension(source_file.key)]
-        raw_text, file_path = None, None
-        if content_type in TEXT_CONTENT_TYPES:
-            raw_text = decode_text(raw)
-        else:
-            path = stored_path(self.settings, kb.id, checksum, source_file.key)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(raw)
-            file_path = str(path)
+        stored = store_file(self.settings, kb.id, checksum, sniff_document_type(source_file.key, raw), raw)
 
         fields = dict(
             title=_title(source_file.key),
             source_uri=f"connector:{connector.name}/{source_file.key}"[:500],
-            content_type=content_type,
-            file_path=file_path,
+            content_type=stored.content_type,
+            file_path=stored.file_path,
             file_size_bytes=len(raw),
             checksum=checksum,
-            raw_text=raw_text,
+            raw_text=stored.raw_text,
             sections=None,
             status=IngestionStatus.QUEUED.value,
             error=None,

@@ -58,6 +58,7 @@ from src.schemas.api.chat import (
     MessageFeedbackInput,
     MessageFeedbackView,
 )
+from src.schemas.indexing.elements import locator_label
 from src.services.applications import is_agentic, is_offered_to, prepare_stream, scope_application
 from src.services.audit import AuditContext, QueryAudit, audited_stream
 from src.services.audit.events import elapsed_ms, record_event
@@ -116,6 +117,8 @@ def _citations(hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             document_id=str(hit["document_id"]) if hit.get("document_id") else None,
             title=hit.get("title") or "",
             section_title=hit.get("section_title"),
+            locator=hit.get("locator"),
+            locator_text=locator_label(hit.get("locator")),
             chunk_id=hit.get("chunk_id"),
             passage=hit.get("chunk_text") or "",
             score=float(hit.get("score") or 0.0),

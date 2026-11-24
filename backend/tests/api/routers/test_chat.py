@@ -124,8 +124,19 @@ def test_the_answer_streams_deltas_then_citations_then_done(stack, world):
         "passage": "Employees get 25 days of annual leave.",
         "score": 0.9,
         "attachment_id": None,  # only a passage of an Attachment names one
+        "locator": None,  # a passage indexed before locators, or cut from plain text, has no position
+        "locator_text": None,
     }
     assert stack.index.search_unified.call_args.kwargs["knowledge_base_ids"] == [world.kbs["hr"]]
+
+
+def test_a_citation_says_where_in_the_source_the_passage_sits(stack, world):
+    hit = stack.index.search_unified.return_value["hits"][0]
+    hit["locator"] = {"kind": "slide", "slide": 7}
+
+    [citation] = ask(stack, start_conversation(stack, world)["id"])[2]["citations"]
+
+    assert citation["locator_text"] == "slide 7" and citation["locator"]["slide"] == 7
 
 
 def test_the_stream_is_server_sent_events(stack, world):

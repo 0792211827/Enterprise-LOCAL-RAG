@@ -22,8 +22,10 @@ from src.repositories import RestrictionRepository
 from src.services.connectors import ConnectorError, ConnectorSync, S3Source
 from src.services.ingestion.factory import make_ingestion_service
 from src.services.opensearch.client import OpenSearchClient
+from src.services.pdf_parser.parser import PDFParserService
 
 from tests.audit_support import opener, sqlite_session_factory
+from tests.document_files import make_csv, make_docx, make_html, make_pptx, make_xlsx
 from tests.opensearch_fakes import FakeEmbeddings, FilteringIndex
 
 
@@ -38,8 +40,14 @@ class Embeddings(FakeEmbeddings):
 
 
 class Parser:
-    async def parse_pdf(self, path):
-        return SimpleNamespace(text=f"parsed pdf {path.read_bytes().decode()}", sections=None)
+    """The real parser for Office, CSV and HTML files; PDFs here are not real ones, so they are "parsed" from their bytes."""
+
+    real = PDFParserService(max_pages=20, max_file_size_mb=10)
+
+    async def parse_document(self, path):
+        if path.suffix == ".pdf":
+            return SimpleNamespace(raw_text=f"parsed pdf {path.read_bytes().decode()}", elements=[])
+        return await self.real.parse_document(path)
 
 
 class FakeS3:
@@ -129,12 +137,13 @@ def world(request, tmp_path):
 
 def write(world, name, text="some policy text for the handbook", mtime=None):
     """Put a file in the source (the modified time only matters to a folder; an object changes with its content)."""
+    data = text if isinstance(text, bytes) else text.encode()
     if world.kind == "s3":
-        world.s3.put("hr/" + name, text.encode())
+        world.s3.put("hr/" + name, data)
         return None
     path = world.share / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_bytes(data)
     if mtime is not None:
         os.utime(path, (mtime, mtime))
     return path
@@ -185,7 +194,7 @@ def audit(world):
 async def test_new_files_are_added_as_documents_in_the_knowledge_base(world):
     write(world, "leave.txt", "Employees get 25 days of annual leave.")
     write(world, "policies/remote.md", "# Remote work\n\nRemote work is allowed two days a week.")
-    write(world, "policies/handbook.pdf", "handbook body")
+    write(world, "policies/handbook.pdf", b"%PDF-1.4 handbook body")
 
     summary = await sync(world)
 
@@ -194,7 +203,7 @@ async def test_new_files_are_added_as_documents_in_the_knowledge_base(world):
     assert set(docs) == {"leave.txt", "policies/remote.md", "policies/handbook.pdf"}
     assert all(str(d.knowledge_base_id) == world.kb_id and d.status == "COMPLETED" for d in docs.values())
     assert any("25 days of annual leave" in t for t in indexed_text(world))
-    assert any("parsed pdf handbook body" in t for t in indexed_text(world))  # a binary type goes through the parser
+    assert any("parsed pdf %PDF-1.4 handbook body" in t for t in indexed_text(world))  # a binary type goes through the parser
     assert {s["knowledge_base_id"] for s in world.index.docs.values()} == {world.kb_id}
     assert set(states(world)) == {"leave.txt", "policies/remote.md", "policies/handbook.pdf"}
     with world.factory() as session:
@@ -225,7 +234,7 @@ async def test_a_run_prints_added_updated_removed_and_failed_counts(world):
 
 async def test_unsupported_types_and_hidden_files_are_skipped_not_failed(world):
     write(world, "notes.txt")
-    write(world, "slides.pptx", "binary")
+    write(world, "photo.png", "binary")
     write(world, ".hidden.txt")
     write(world, ".git/config.txt")
 
@@ -233,6 +242,41 @@ async def test_unsupported_types_and_hidden_files_are_skipped_not_failed(world):
 
     assert (summary.added, summary.failed, summary.skipped) == (1, 0, 1)
     assert set(documents(world)) == {"notes.txt"}
+
+
+async def test_every_supported_type_is_ingested_and_found_in_the_index(world):
+    write(world, "deck.pptx", make_pptx([("Onboarding", "Welcome to zebrafish onboarding", None)]))
+    write(world, "policy.docx", make_docx([("h1", "Leave"), ("p", "Employees receive twentyfive vacation days")]))
+    write(world, "codes.xlsx", make_xlsx({"Codes": [("Code", "Meaning"), ("W01", "moved")]}))
+    write(world, "codes.csv", make_csv([("Code", "Meaning"), ("E02", "enrolled")]))
+    write(world, "page.html", make_html("Intranet", "Badges are collected at reception"))
+    write(world, "mislabelled.txt", make_pptx([("Safety", "Wear a hardhat on site", None)]))
+
+    summary = await sync(world)
+
+    assert (summary.added, summary.failed, summary.skipped) == (6, 0, 0)
+    text = " ".join(indexed_text(world))
+    for needle in ("zebrafish", "twentyfive", "moved", "enrolled", "reception", "hardhat"):
+        assert needle in text
+
+
+async def test_a_corrupt_file_fails_alone_with_a_reason_and_the_rest_are_ingested(world):
+    write(world, "stub.pptx", b"PK\x03\x04 broken")
+    write(world, "good.txt", "a good file")
+
+    summary = await sync(world)
+
+    assert (summary.added, summary.failed) == (1, 1)
+    assert "PPTX" in summary.files["failed"][0]["error"]
+    assert any("a good file" in t for t in indexed_text(world))
+
+
+async def test_a_file_of_no_supported_type_under_a_supported_name_fails_with_the_types_named(world):
+    write(world, "notes.txt", b"\x89PNG\r\n\x1a\n\x00\x00 pixels")
+
+    summary = await sync(world)
+
+    assert summary.failed == 1 and "Accepted file types" in summary.files["failed"][0]["error"]
 
 
 async def test_links_in_a_folder_are_never_followed(world, tmp_path):

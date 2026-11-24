@@ -38,6 +38,9 @@ class ChatCitation(BaseModel):
     document_id: Optional[str] = None
     title: str = ""
     section_title: Optional[str] = None
+    # Where the passage sits in its source (page, slide, sheet and rows); ``locator_text`` is that in words, e.g. "slide 7".
+    locator: Optional[dict] = None
+    locator_text: Optional[str] = None
     chunk_id: Optional[str] = None
     passage: str = ""
     score: float = 0.0

@@ -156,9 +156,11 @@ class FilteringIndex:
     real query-building code shows up as a document in the results.
     """
 
-    def __init__(self):
+    def __init__(self, lexical: bool = False):
         from opensearchpy.serializer import JSONSerializer
 
+        # With ``lexical``, a text query matches the chunks that contain one of its words (still no ranking).
+        self.lexical = lexical
         self.docs: Dict[str, Dict[str, Any]] = {}
         self.queries: List[Dict[str, Any]] = []
         self.fail_deletes = False
@@ -221,6 +223,9 @@ class FilteringIndex:
             return self.matches(source, inner.get("filter"))
         if kind == "hybrid":
             return any(self.matches(source, q) for q in spec["queries"])
+        if kind == "multi_match" and self.lexical:
+            words = set(spec["query"].lower().split())
+            return bool(words & set(str(source.get("chunk_text", "")).lower().split()))
         return True  # match_all, multi_match, ...: relevance is not modelled
 
     def _hits(self, query):

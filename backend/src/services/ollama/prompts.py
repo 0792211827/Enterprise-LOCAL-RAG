@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from pydantic import ValidationError
+from src.schemas.indexing.elements import locator_label
 from src.schemas.ollama import RAGResponse
 
 
@@ -100,6 +101,9 @@ class RAGPromptBuilder:
                 label += f". {title}"
             if section:
                 label += f" - {section}"
+            position = locator_label(chunk.get("locator"))
+            if position:
+                label += f" ({position})"
 
             prompt += f"[{label}]\n"
             prompt += f"{chunk_text}\n\n"

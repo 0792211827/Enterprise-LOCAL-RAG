@@ -91,6 +91,7 @@ async def _prepare_chunks_and_sources(
                     "document_id": document_id,
                     "title": title,
                     "section_title": hit.get("section_title", ""),
+                    "locator": hit.get("locator"),
                     "chunk_text": hit.get("chunk_text", ""),
                     "chunk_id": hit.get("chunk_id"),
                     "knowledge_base_id": hit.get("knowledge_base_id"),

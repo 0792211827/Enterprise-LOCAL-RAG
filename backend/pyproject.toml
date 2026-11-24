@@ -27,6 +27,8 @@ dependencies = [
     "langchain-openai>=1.7.4",
     "pyyaml>=6.0",
     "boto3>=1.35",
+    "python-pptx>=1.0.2",
+    "openpyxl>=3.1.5",
 ]
 readme = "README.md"
 

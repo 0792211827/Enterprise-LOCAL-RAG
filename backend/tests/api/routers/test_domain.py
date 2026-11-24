@@ -201,7 +201,17 @@ def test_application_ask_respects_configuration(client, app, session_factory):
 
     mock_os = MagicMock()
     mock_os.search_unified = MagicMock(
-        return_value={"hits": [{"chunk_text": "Leave is 25 days.", "title": "Handbook", "score": 0.9, "document_id": "d1"}]}
+        return_value={
+            "hits": [
+                {
+                    "chunk_text": "Leave is 25 days.",
+                    "title": "Handbook",
+                    "score": 0.9,
+                    "document_id": "d1",
+                    "locator": {"kind": "slide", "slide": 7},
+                }
+            ]
+        }
     )
     mock_embeddings = AsyncMock()
     mock_embeddings.embed_query = AsyncMock(return_value=[0.1] * 1024)
@@ -219,6 +229,7 @@ def test_application_ask_respects_configuration(client, app, session_factory):
     assert data["search_mode"] == "hybrid"
     assert data["chunks_used"] == 1
     assert data["sources"][0]["document_title"] == "Handbook"
+    assert data["sources"][0]["locator_text"] == "slide 7"
 
     # Configured top_k=8 and model must be passed through.
     assert mock_os.search_unified.call_args.kwargs["size"] == 8
@@ -808,13 +819,13 @@ def test_stored_filenames_cannot_reach_outside_the_upload_area(client, uploads, 
     assert not list(uploads.root.parent.glob("**/passwd*")) and not list(uploads.root.parent.glob("**/evil*"))
 
 
-def test_an_odd_extension_is_dropped_not_trusted(client, uploads, session_factory):
+def test_an_odd_extension_is_not_trusted_the_stored_one_comes_from_the_content_type(client, uploads, session_factory):
     client.post(
         f"/api/v1/knowledge-bases/{uploads.kb_id}/documents",
         files={"file": ("report.p;df$(rm)", b"%PDF-1.4", "application/pdf")},
     )
     [document] = _stored_documents(session_factory)
-    assert Path(document.file_path).name == document.checksum  # no usable extension, so none
+    assert Path(document.file_path).name == f"{document.checksum}.pdf"  # from what the file is, not what it is called
 
 
 def test_a_reprocess_after_cleanup_says_the_file_is_gone(client, uploads, session_factory):

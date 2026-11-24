@@ -3,6 +3,7 @@ import logging
 import re
 from typing import Dict, List, Optional, Union
 
+from src.schemas.indexing.elements import DocumentElement
 from src.schemas.indexing.models import ChunkMetadata, TextChunk
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,12 @@ class TextChunker:
         # Fallback to traditional word-based chunking
         logger.info(f"Using traditional word-based chunking for {document_id}")
         return self.chunk_text(full_text, document_id)
+
+    def chunk_elements(self, elements: List[DocumentElement], document_id: str) -> List[TextChunk]:
+        """Chunk a parsed Document's elements (slides, tables, sections) so each passage keeps its locator."""
+        from .element_chunker import chunk_elements
+
+        return chunk_elements(elements, document_id, self.chunk_size)
 
     def chunk_text(self, text: str, document_id: str) -> List[TextChunk]:
         """Chunk text into overlapping segments.

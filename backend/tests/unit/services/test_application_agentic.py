@@ -123,6 +123,7 @@ async def test_what_the_graph_retrieved_is_reported_for_audit_and_citations(prov
             "score": 0.9,
             "document_id": "d1",
             "section_title": "Returns",
+            "locator": None,
         }
     ]
 

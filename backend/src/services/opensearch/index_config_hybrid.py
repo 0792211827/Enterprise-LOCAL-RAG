@@ -16,7 +16,22 @@ KNN_ENGINE = "lucene"
 #   conversation_id / owner_subject / attachment_id: the private partition of a Conversation's large Attachments.
 #   A chunk with ``conversation_id`` belongs to a partition; Knowledge Base searches exclude every such chunk.
 #   restriction_principals: the Principals a Document is restricted to (``group:finance``); absent means unrestricted.
+#   locator: where the chunk came from in its source (page, slide, sheet and rows, heading path); absent on chunks
+#   indexed before locators existed or cut from plain text, which a Citation then shows without a position.
 ADDITIVE_FIELDS = {
+    "locator": {
+        "type": "object",
+        "dynamic": "strict",
+        "properties": {
+            "kind": {"type": "keyword"},
+            "page": {"type": "integer"},
+            "slide": {"type": "integer"},
+            "sheet": {"type": "keyword"},
+            "row_start": {"type": "integer"},
+            "row_end": {"type": "integer"},
+            "heading_path": {"type": "keyword"},
+        },
+    },
     "restriction_principals": {"type": "keyword"},
     "conversation_id": {"type": "keyword"},
     "owner_subject": {"type": "keyword"},

@@ -35,6 +35,7 @@ from src.schemas.api.domain import (
     ApplicationUpdate,
     RetrievedSource,
 )
+from src.schemas.indexing.elements import locator_label
 from src.services.applications import answer_for_application, scope_application
 from src.services.audit import AuditContext, audited_query
 from src.services.providers.llm.registry import ProviderConfigurationError, check_endpoint_allowed
@@ -231,6 +232,8 @@ async def ask_application(
             chunk_text=h.get("chunk_text", ""),
             score=float(h.get("score", 0.0)),
             section_title=h.get("section_title"),
+            locator=h.get("locator"),
+            locator_text=locator_label(h.get("locator")),
             retrieval_method=result.mode,
         )
         for h in result.hits

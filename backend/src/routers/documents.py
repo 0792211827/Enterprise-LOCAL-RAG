@@ -38,7 +38,8 @@ from src.schemas.api.domain import (
     IngestionJobResponse,
 )
 from src.services.access import resolve_scope
-from src.services.ingestion.uploads import TEXT_CONTENT_TYPES, decode_text, display_name, read_capped, stored_path
+from src.services.ingestion.types import UnsupportedDocument, sniff_document_type, store_file
+from src.services.ingestion.uploads import display_name, read_capped
 
 logger = logging.getLogger(__name__)
 
@@ -126,29 +127,23 @@ async def upload_document(
     if existing:
         raise HTTPException(status_code=409, detail="Identical document already exists in this knowledge base")
 
-    content_type = file.content_type or "application/octet-stream"
+    try:
+        document_type = sniff_document_type(file.filename, raw, file.content_type)
+    except UnsupportedDocument as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     name = display_name(file.filename)
-    raw_text = None
-    file_path = None
-    if content_type in TEXT_CONTENT_TYPES or name.lower().endswith((".txt", ".md")):
-        raw_text = decode_text(raw)
-    else:
-        # Persist binary uploads (e.g. PDFs) for parsing, under a name nothing in the upload can influence.
-        path = stored_path(settings, kb_id, checksum, file.filename)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(raw)
-        file_path = str(path)
+    stored = store_file(settings, kb_id, checksum, document_type, raw)
 
     document = doc_repo.create(
         Document(
             knowledge_base_id=kb_id,
             title=title or (name if file.filename else "Untitled document"),
             source_uri=name if file.filename else None,
-            content_type=content_type,
-            file_path=file_path,
+            content_type=stored.content_type,
+            file_path=stored.file_path,
             file_size_bytes=len(raw),
             checksum=checksum,
-            raw_text=raw_text,
+            raw_text=stored.raw_text,
             status=IngestionStatus.QUEUED.value,
         )
     )

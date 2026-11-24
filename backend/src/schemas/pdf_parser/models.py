@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+from src.schemas.indexing.elements import DocumentElement
 
 
 class ParserType(str, Enum):
@@ -39,6 +40,7 @@ class PdfContent(BaseModel):
     figures: List[PaperFigure] = Field(default_factory=list, description="Figures")
     tables: List[PaperTable] = Field(default_factory=list, description="Tables")
     raw_text: str = Field(..., description="Full extracted text")
+    elements: List[DocumentElement] = Field(default_factory=list, description="Structure with locators (page, slide, sheet, rows)")
     references: List[str] = Field(default_factory=list, description="References")
     parser_used: ParserType = Field(..., description="Parser used for extraction")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Parser metadata")

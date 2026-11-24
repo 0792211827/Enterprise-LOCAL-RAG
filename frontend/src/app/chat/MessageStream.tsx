@@ -217,7 +217,10 @@ function CitationList({
                   Your file
                 </span>
               ) : (
-                c.section_title && <span className="text-muted"> · {c.section_title}</span>
+                <>
+                  {c.section_title && <span className="text-muted"> · {c.section_title}</span>}
+                  {c.locator_text && <span className="text-muted"> · {c.locator_text}</span>}
+                </>
               )}
             </span>
           </button>

@@ -85,3 +85,23 @@ class DocumentChunk(Base):
     created_at = Column(DateTime, default=_utcnow)
 
     document = relationship("Document", back_populates="chunks")
+    locator = relationship("DocumentChunkLocator", uselist=False, cascade="all, delete-orphan", back_populates="chunk")
+
+
+class DocumentChunkLocator(Base):
+    """Where a chunk came from in its source (page, slide, sheet and rows, heading path).
+
+    A table of its own rather than a column on ``document_chunks`` (ADR-0003: existing tables are never altered). A
+    chunk without a row here predates locators or came from plain text.
+    """
+
+    __tablename__ = "document_chunk_locators"
+
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    chunk_id = Column(GUID(), ForeignKey("document_chunks.id", ondelete="CASCADE"), nullable=False, unique=True)
+    document_id = Column(GUID(), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    locator = Column(JSON, nullable=False)
+
+    created_at = Column(DateTime, default=_utcnow)
+
+    chunk = relationship("DocumentChunk", back_populates="locator")

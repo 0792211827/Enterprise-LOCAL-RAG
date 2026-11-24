@@ -74,6 +74,7 @@ export function TestTab({ app }: { app: Application }) {
                               <Icon icon={FileText} size="sm" className="text-subtle" />
                               {s.document_title || "Untitled document"}
                               {s.section_title ? <span className="font-normal text-muted"> · {s.section_title}</span> : null}
+                              {s.locator_text ? <span className="font-normal text-muted"> · {s.locator_text}</span> : null}
                             </span>
                             <span className="font-mono text-xs text-muted">
                               score {s.score.toFixed(3)}

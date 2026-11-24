@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 from src.config import Settings
 from src.dependencies import get_agentic_rag_service
+from src.schemas.indexing.elements import Locator
 from src.services.agents.factory import make_agentic_rag_service
 from src.services.indexing.text_chunker import TextChunker
 from src.services.langfuse.client import LangfuseTracer
@@ -186,6 +187,7 @@ class TestIndexPayloadMatchesMapping:
         chunk = SimpleNamespace(
             text="chunk text",
             metadata=SimpleNamespace(chunk_index=0, word_count=2, start_char=0, end_char=10, section_title=None),
+            locator=Locator(kind="table", sheet="Codes", row_start=2, row_end=9, heading_path=["A"], page=1, slide=3),
         )
 
         payload = service._build_index_payload(
@@ -194,6 +196,16 @@ class TestIndexPayloadMatchesMapping:
         written = set(payload[0]["chunk_data"]) | {"embedding"}
 
         assert not (written - mapped), f"unmapped fields would be rejected: {sorted(written - mapped)}"
+        locator_fields = set(payload[0]["chunk_data"]["locator"])
+        assert not (locator_fields - set(mapping["properties"]["locator"]["properties"])), "an unmapped locator field is rejected"
+
+    def test_the_ingestion_service_calls_what_the_parser_and_chunker_offer(self):
+        import inspect
+
+        from src.services.pdf_parser.parser import PDFParserService
+
+        assert list(inspect.signature(PDFParserService.parse_document).parameters)[1:] == ["path"]
+        assert list(inspect.signature(TextChunker.chunk_elements).parameters)[1:] == ["elements", "document_id"]
 
 
 class TestTraceCarriesRequestId:

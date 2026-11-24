@@ -10,10 +10,11 @@ chunking strategy is preserved for generic documents.
 """
 
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from src.models.document import Document, DocumentChunk
+from src.models.document import Document, DocumentChunk, DocumentChunkLocator
 from src.models.enums import IngestionStatus
 from src.models.ingestion import IngestionJob
 
@@ -68,19 +69,22 @@ class IngestionService:
         try:
             # Stage 1: parse/extract text.
             mark_stage("parse")
-            text, sections = await self._extract_text(document)
+            text, sections, elements = await self._extract(document)
             if not text or not text.strip():
-                raise ValueError("No extractable text found in document")
+                raise ValueError("No text found in the document. A scan or a file made only of images cannot be searched.")
 
             # Stage 2: chunk (section-aware where sections are available).
             mark_stage("chunk")
-            chunks = self.chunker.chunk_document(
-                title=document.title or "",
-                abstract="",
-                full_text=text,
-                document_id=str(document.id),
-                sections=sections,
-            )
+            if elements:
+                chunks = self.chunker.chunk_elements(elements, str(document.id))
+            else:
+                chunks = self.chunker.chunk_document(
+                    title=document.title or "",
+                    abstract="",
+                    full_text=text,
+                    document_id=str(document.id),
+                    sections=sections,
+                )
             if not chunks:
                 raise ValueError("Chunking produced no chunks")
 
@@ -146,24 +150,22 @@ class IngestionService:
             return {"chunks_created": 0, "chunks_indexed": 0, "embeddings_generated": 0}
 
     # ------------------------------------------------------------------ #
-    async def _extract_text(self, document: Document):
-        """Return ``(text, sections)`` for a document.
+    async def _extract(self, document: Document):
+        """Return ``(text, sections, elements)`` for a document; ``elements`` carry locators and are empty for plain text.
 
-        Uses stored ``raw_text`` when the caller already extracted it (e.g. for
-        plain-text uploads), otherwise delegates to the injected PDF parser.
+        A stored file (PDF, Office, CSV, HTML) is read by the injected parser; plain text kept on the row (TXT, MD)
+        is used as it is. If the stored file has since been removed, the text kept from an earlier run stands in.
         """
-        if document.raw_text:
-            return document.raw_text, document.sections
-        if document.content_type == "application/pdf" and self.pdf_parser and document.file_path:
-            from pathlib import Path
+        from pathlib import Path
 
-            parsed = await self.pdf_parser.parse_pdf(Path(document.file_path))
+        path = Path(document.file_path) if document.file_path else None
+        if path is not None and path.exists() and self.pdf_parser:
+            parsed = await self.pdf_parser.parse_document(path)
             if parsed is None:
-                return "", None
+                raise ValueError("The file is over the parser's size or page limit (PDF_PARSER__MAX_FILE_SIZE_MB, PDF_PARSER__MAX_PAGES).")
             text = getattr(parsed, "text", None) or getattr(parsed, "raw_text", None) or ""
-            sections = getattr(parsed, "sections", None)
-            return text, sections
-        return document.raw_text or "", document.sections
+            return text, getattr(parsed, "sections", None), getattr(parsed, "elements", None) or []
+        return document.raw_text or "", document.sections, []
 
     @staticmethod
     def _restriction_keys(document: Document, document_repo: Any) -> List[str]:
@@ -192,6 +194,8 @@ class IngestionService:
                 "embedding_model": getattr(knowledge_base, "embedding_model", None),
                 "title": document.title or "",
             }
+            if chunk.locator is not None:
+                chunk_data["locator"] = chunk.locator.as_index_field()
             if restriction_keys:
                 chunk_data["restriction_principals"] = restriction_keys
             payload.append({"chunk_data": chunk_data, "embedding": embedding})
@@ -202,6 +206,10 @@ class IngestionService:
         for chunk in chunks:
             rows.append(
                 DocumentChunk(
+                    id=uuid.uuid4(),
+                    locator=None
+                    if chunk.locator is None
+                    else DocumentChunkLocator(document_id=document.id, locator=chunk.locator.as_index_field()),
                     document_id=document.id,
                     knowledge_base_id=document.knowledge_base_id,
                     chunk_index=chunk.metadata.chunk_index,

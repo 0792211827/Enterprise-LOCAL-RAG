@@ -10,6 +10,8 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 from src.exceptions import PDFParsingException, PDFValidationError
 from src.schemas.pdf_parser.models import PaperFigure, PaperSection, PaperTable, ParserType, PdfContent
 
+from .elements import csv_elements, element_text, pptx_notes, section_elements, slide_elements, spreadsheet_elements
+
 logger = logging.getLogger(__name__)
 
 
@@ -136,6 +138,7 @@ class DoclingParser:
                 figures=[],  # Removed: basic metadata not useful
                 tables=[],  # Removed: basic metadata not useful
                 raw_text=doc.export_to_text(),
+                elements=section_elements(doc, paged=True),
                 references=[],
                 parser_used=ParserType.DOCLING,
                 metadata={"source": "docling", "note": "Content extracted from PDF"},
@@ -179,24 +182,42 @@ class DoclingParser:
                 raise PDFParsingException(f"Failed to parse PDF with Docling: {e}")
 
     async def parse_document(self, path: Path) -> Optional[PdfContent]:
-        """Parse a PDF, or an Office document (DOCX, PPTX, XLSX), into plain text.
+        """Parse a PDF, DOCX, PPTX, XLSX, CSV or HTML file into text and structured elements, each with a locator.
 
-        A PDF goes through ``parse_pdf`` unchanged. Anything else is converted by Docling's own readers (no
-        layout models involved), under the same size limit.
+        A PDF goes through ``parse_pdf`` unchanged. The others are read by Docling's own readers (no layout models
+        involved) or, for spreadsheets and CSV, directly, under the same size limit.
 
         :returns: the content, or ``None`` when the file is over the size or page limit.
+        :raises PDFValidationError: the file is empty.
+        :raises PDFParsingException: the file could not be read.
         """
-        if path.suffix.lower() == ".pdf":
+        suffix = path.suffix.lower()
+        if suffix == ".pdf":
             return await self.parse_pdf(path)
+        label = suffix.lstrip(".").upper() or "document"
+        size = path.stat().st_size
+        if size == 0:
+            raise PDFValidationError("The file is empty.")
+        if size > self.max_file_size_bytes:
+            return None
         try:
-            if path.stat().st_size > self.max_file_size_bytes:
-                return None
-            result = await asyncio.to_thread(self._converter.convert, str(path), max_file_size=self.max_file_size_bytes)
-            return PdfContent(
-                raw_text=result.document.export_to_text(),
-                parser_used=ParserType.DOCLING,
-                metadata={"source": "docling", "note": f"Content extracted from {path.suffix.lower()}"},
-            )
+            elements = await asyncio.to_thread(self._read_elements, path, suffix)
         except Exception as e:
-            logger.error(f"Failed to parse {path.suffix} with Docling: {type(e).__name__}")
-            raise PDFParsingException(f"Failed to parse {path.suffix} with Docling: {e}")
+            logger.error(f"Failed to parse {suffix} file: {type(e).__name__}: {e}")
+            raise PDFParsingException(f"The file could not be read as a {label}: it may be corrupt or not really a {label} file.")
+        return PdfContent(
+            raw_text="\n\n".join(filter(None, (element_text(e) for e in elements))),
+            elements=elements,
+            parser_used=ParserType.DOCLING,
+            metadata={"source": "docling", "note": f"Content extracted from {suffix}"},
+        )
+
+    def _read_elements(self, path: Path, suffix: str):
+        if suffix == ".xlsx":
+            return spreadsheet_elements(path)
+        if suffix == ".csv":
+            return csv_elements(path)
+        doc = self._converter.convert(str(path), max_file_size=self.max_file_size_bytes).document
+        if suffix == ".pptx":
+            return slide_elements(doc, pptx_notes(path))
+        return section_elements(doc, paged=False)

@@ -2,6 +2,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from .elements import Locator
+
 
 class ChunkMetadata(BaseModel):
     """Metadata for a text chunk."""
@@ -21,3 +23,4 @@ class TextChunk(BaseModel):
     text: str
     metadata: ChunkMetadata
     document_id: str
+    locator: Optional[Locator] = None  # where it came from, when the parser knew

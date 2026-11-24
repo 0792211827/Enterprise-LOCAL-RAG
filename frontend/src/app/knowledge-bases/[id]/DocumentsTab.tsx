@@ -25,7 +25,8 @@ import { IngestionStage, titleCase, useLatestJobs } from "../ingestion";
 import { RestrictionEditor } from "./RestrictionEditor";
 import type { UploadFailure } from "./useUpload";
 
-export const ACCEPT = ".pdf,.txt,.md,text/plain,text/markdown,application/pdf";
+// The types the backend accepts (backend/src/services/ingestion/types.py); it decides by content, so this only guides the picker.
+export const ACCEPT = ".pdf,.docx,.pptx,.xlsx,.csv,.html,.htm,.txt,.md,.markdown";
 
 export function DocumentsTab({
   kbId,
@@ -93,7 +94,7 @@ export function DocumentsTab({
       >
         <Icon icon={Upload} size="lg" className="text-subtle" />
         <p className="text-sm font-medium text-fg">Drop files here to add them to this Knowledge Base</p>
-        <p className="text-xs text-muted">PDF, plain text or Markdown. They are parsed, split and indexed in turn.</p>
+        <p className="text-xs text-muted">PDF, Word, PowerPoint, Excel, CSV, HTML, plain text or Markdown. They are parsed, split and indexed in turn.</p>
         <input
           ref={fileRef}
           type="file"

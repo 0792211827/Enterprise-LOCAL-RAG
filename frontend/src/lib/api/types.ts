@@ -214,6 +214,8 @@ export interface RetrievedSource {
   chunk_text: string;
   score: number;
   section_title: string | null;
+  /** Where in the source the passage sits, in words ("slide 7", "sheet Codes, rows 12-30"); null for plain text. */
+  locator_text?: string | null;
   retrieval_method: string | null;
 }
 
@@ -303,6 +305,8 @@ export interface ChatCitation {
   document_id: string | null;
   title: string;
   section_title: string | null;
+  /** Where in the source the passage sits, in words ("slide 7", "sheet Codes, rows 12-30"); null for plain text. */
+  locator_text?: string | null;
   chunk_id: string | null;
   passage: string;
   score: number;
