@@ -18,6 +18,7 @@ from .telemetry import NOOP_TELEMETRY, OtelTelemetry, Telemetry
 logger = logging.getLogger(__name__)
 
 METRIC_EXPORT_INTERVAL_MS = 15_000
+MAX_EXPORT_BATCH = 512
 
 
 def make_telemetry(settings: Settings) -> Telemetry:
@@ -42,6 +43,7 @@ def make_telemetry(settings: Settings) -> Telemetry:
         BatchSpanProcessor(
             FailOpenSpanExporter(OTLPSpanExporter(endpoint=f"{base}/v1/traces", timeout=config.export_timeout), health),
             max_queue_size=config.queue_size,
+            max_export_batch_size=min(config.queue_size, MAX_EXPORT_BATCH),
             export_timeout_millis=timeout_ms,
         )
     )

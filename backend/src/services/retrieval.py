@@ -135,6 +135,7 @@ async def retrieve(
         results = results if isinstance(results, dict) else {}
         hits = results.get("hits", [])
 
+        candidates = hits
         outcome = None
         if rerank_in_play:
             if len(hits) > 1:
@@ -146,5 +147,5 @@ async def retrieve(
                     outcome = "skipped"
             hits = hits[:size]
 
-    telemetry.record_retrieval(kb_ids, hits, outcome)
+    telemetry.record_retrieval(kb_ids, hits, outcome, candidates)
     return RetrievalResult(hits=hits, total=results.get("total", 0), mode=mode, decision=decision, rerank=outcome)

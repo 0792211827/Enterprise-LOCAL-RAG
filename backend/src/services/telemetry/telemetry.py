@@ -152,9 +152,17 @@ class Telemetry:
         """Label the current request's metrics with this Application (``None``: an unknown one)."""
 
     def record_retrieval(
-        self, knowledge_base_ids: Optional[Sequence[str]], hits: Sequence[Mapping[str, Any]], rerank: Optional[str]
+        self,
+        knowledge_base_ids: Optional[Sequence[str]],
+        hits: Sequence[Mapping[str, Any]],
+        rerank: Optional[str],
+        candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> None:
-        """One search finished: counted once per Knowledge Base searched (``None``: an unscoped, global search)."""
+        """One search finished: counted once per Knowledge Base searched (``None``: an unscoped, global search).
+
+        :param hits: what was returned, after reranking and the cut
+        :param candidates: what matched before the cut (``hits`` when not given); a Knowledge Base with none is empty
+        """
 
     def record_out_of_scope(self) -> None:
         """The guardrail refused a question as outside the Application's scope."""
@@ -292,24 +300,36 @@ class OtelTelemetry(Telemetry):
 
     @_fail_open
     def record_retrieval(
-        self, knowledge_base_ids: Optional[Sequence[str]], hits: Sequence[Mapping[str, Any]], rerank: Optional[str]
+        self,
+        knowledge_base_ids: Optional[Sequence[str]],
+        hits: Sequence[Mapping[str, Any]],
+        rerank: Optional[str],
+        candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> None:
         if knowledge_base_ids is None:
-            chunks_by_kb = {UNKNOWN: len(hits)}
+            returned = {UNKNOWN: len(hits)}
+            matched = {UNKNOWN: len(hits if candidates is None else candidates)}
         else:
-            chunks_by_kb = {knowledge_base_label(kb): 0 for kb in knowledge_base_ids}
-            for hit in hits:
-                label = knowledge_base_label(hit.get("knowledge_base_id"))
-                if label in chunks_by_kb:
-                    chunks_by_kb[label] += 1
-        for knowledge_base, chunks in chunks_by_kb.items():
+            returned = self._per_knowledge_base(knowledge_base_ids, hits)
+            matched = returned if candidates is None else self._per_knowledge_base(knowledge_base_ids, candidates)
+        for knowledge_base, chunks in returned.items():
             labels = {"knowledge_base": knowledge_base}
             self._add(m.RETRIEVAL_SEARCHES, labels)
             self._add(m.RETRIEVAL_CHUNKS, labels, chunks)
-            if chunks == 0:
+            if matched[knowledge_base] == 0:
                 self._add(m.RETRIEVAL_EMPTY, labels)
             if rerank == "skipped":
                 self._add(m.RETRIEVAL_RERANK_SKIPPED, labels)
+
+    @staticmethod
+    def _per_knowledge_base(knowledge_base_ids: Sequence[str], hits: Sequence[Mapping[str, Any]]) -> Dict[str, int]:
+        """How many ``hits`` each Knowledge Base searched has; hits from any other are not counted."""
+        counts = {knowledge_base_label(kb): 0 for kb in knowledge_base_ids}
+        for hit in hits:
+            label = knowledge_base_label(hit.get("knowledge_base_id"))
+            if label in counts:
+                counts[label] += 1
+        return counts
 
     @_fail_open
     def record_out_of_scope(self) -> None:

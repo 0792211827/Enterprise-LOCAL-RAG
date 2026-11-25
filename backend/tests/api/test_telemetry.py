@@ -167,3 +167,20 @@ class TestAnswerCache:
         assert second.json()["answer"] == "cached"
         assert telemetry.value("rag.cache.lookups", outcome="miss") == 1
         assert telemetry.value("rag.cache.lookups", outcome="hit") == 1
+
+    async def test_a_streamed_ask_counts_its_cache_lookup_too(self, client, telemetry):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from src.dependencies import get_cache_client
+        from src.schemas.api.ask import AskResponse
+
+        cached = AskResponse(query="q", answer="cached", sources=[], chunks_used=1, search_mode="hybrid")
+        cache = MagicMock()
+        cache.find_cached_response = AsyncMock(return_value=cached)
+        app.dependency_overrides[get_cache_client] = lambda: cache
+        try:
+            await client.post("/api/v1/stream", json={"query": "q"})
+        finally:
+            app.dependency_overrides.pop(get_cache_client, None)
+
+        assert telemetry.value("rag.cache.lookups", outcome="hit") == 1

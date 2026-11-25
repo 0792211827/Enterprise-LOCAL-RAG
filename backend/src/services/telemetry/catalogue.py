@@ -64,7 +64,7 @@ CATALOGUE: Tuple[MetricSpec, ...] = (
         ("knowledge_base",),
     ),
     MetricSpec(
-        RETRIEVAL_EMPTY, COUNTER, "{search}", "Knowledge Base searches that returned no chunk at all.", ("knowledge_base",)
+        RETRIEVAL_EMPTY, COUNTER, "{search}", "Knowledge Base searches that matched no chunk at all.", ("knowledge_base",)
     ),
     MetricSpec(
         RETRIEVAL_RERANK_SKIPPED,
@@ -85,7 +85,7 @@ CATALOGUE: Tuple[MetricSpec, ...] = (
         TIME_TO_FIRST_TOKEN,
         HISTOGRAM,
         "s",
-        "Time from the request arriving to the first token of a streamed answer.",
+        "Time from the request arriving to the first token of an answer streamed token by token (not a refusal or an answer produced whole).",
         ("application", "model"),
     ),
 )

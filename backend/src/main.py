@@ -47,7 +47,7 @@ from src.services.pdf_parser.factory import make_pdf_parser_service
 from src.services.providers.llm.factory import make_llm_provider, make_provider_registry
 from src.services.providers.vlm.factory import make_vlm_provider
 from src.services.rerank.factory import make_reranker
-from src.services.telemetry import make_telemetry
+from src.services.telemetry import NOOP_TELEMETRY, make_telemetry
 
 # Setup logging
 logging.basicConfig(
@@ -92,7 +92,11 @@ async def lifespan(app: FastAPI):
     app.state.database = database
     logger.info("Database connected")
 
-    app.state.telemetry = make_telemetry(settings)
+    try:
+        app.state.telemetry = make_telemetry(settings)
+    except Exception:  # noqa: BLE001 - telemetry that cannot start must not stop the API
+        logger.exception("Telemetry could not be set up; running without it")
+        app.state.telemetry = NOOP_TELEMETRY
     logger.info("Telemetry: %s", "enabled" if app.state.telemetry.enabled else "disabled")
 
     app.state.audit_recorder = make_audit_recorder(settings, database)

@@ -265,6 +265,18 @@ class TestRetrievalPerKnowledgeBase:
         assert telemetry.value("rag.retrieval.empty_results") == 1
         assert telemetry.value("rag.retrieval.empty_results", knowledge_base=kb_b) == 1
 
+    async def test_a_knowledge_base_cut_by_the_top_k_is_not_reported_as_empty(self, stack, index, telemetry):
+        ranking = ["a-1", "a-2", "a-3", "a-4", "a-5", "a-6", "a-7", "a-8", "b-1"]
+        app.dependency_overrides[get_reranker] = lambda: reranker_for(FakeEndpoint(ranking=ranking), candidates=30)
+        hr, (kb_a, kb_b) = await make_application(stack, index, kb_count=2)
+        index.passages[kb_a] = ranking[:8]
+        index.passages[kb_b] = ["b-1"]  # matched, but ranked below the eight the Application returns
+
+        await play(stack, hr)
+
+        assert telemetry.value("rag.retrieval.chunks_returned", knowledge_base=kb_b) == 0
+        assert telemetry.value("rag.retrieval.empty_results") == 0
+
     async def test_a_reranker_that_failed_is_counted_per_knowledge_base_searched(self, stack, index, telemetry):
         app.dependency_overrides[get_reranker] = lambda: reranker_for(FakeEndpoint(raises=httpx.ReadTimeout("slow")))
         hr, (kb_a, kb_b) = await make_application(stack, index, kb_count=2)

@@ -436,6 +436,18 @@ class TestTelemetryCollaborators:
         assert telemetry.enabled and telemetry.export_state == "exporting"
         assert {"/v1/traces", "/v1/metrics"} <= set(received)
 
+    def test_a_queue_smaller_than_one_export_batch_is_still_a_valid_setting(self, monkeypatch, collector):
+        from src.services.telemetry import make_telemetry
+
+        endpoint, _ = collector
+        self.enable(monkeypatch, endpoint)
+        monkeypatch.setenv("OTEL__QUEUE_SIZE", "100")
+
+        telemetry = make_telemetry(Settings())
+        telemetry.shutdown()
+
+        assert telemetry.enabled
+
     def test_an_unreachable_collector_costs_a_warning_and_never_an_error(self, monkeypatch, caplog):
         from src.services.telemetry import make_telemetry
 

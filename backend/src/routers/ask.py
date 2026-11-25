@@ -262,6 +262,7 @@ async def ask_question_stream(
                 if cache_client:
                     try:
                         cached_response = await cache_client.find_cached_response(request, scope_token)
+                        telemetry.record_cache_lookup(bool(cached_response))
                         if cached_response:
                             logger.info("Returning cached response for exact streaming query match")
                             _audit_cache_hit(audit, cached_response)
