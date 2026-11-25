@@ -382,3 +382,80 @@ class TestChatCollaborators:
         prompt = RAGPromptBuilder().create_rag_prompt("and EU?", [], history=history)
         assert prompt.index("User: Refund window?") < prompt.index("Assistant: 14 days.") < prompt.index("and EU?")
         assert "Conversation so far" not in RAGPromptBuilder().create_rag_prompt("q", [])
+
+
+class TestTelemetryCollaborators:
+    """Telemetry is built from settings like every other collaborator, and really speaks OTLP/HTTP to a collector."""
+
+    @pytest.fixture
+    def collector(self):
+        import http.server
+        import threading
+
+        received = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                received.append(self.path)
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        yield f"http://127.0.0.1:{server.server_port}", received
+        server.shutdown()
+
+    def enable(self, monkeypatch, endpoint):
+        monkeypatch.setenv("OTEL__ENABLED", "true")
+        monkeypatch.setenv("OTEL__ENDPOINT", endpoint)
+        monkeypatch.setenv("OTEL__EXPORT_TIMEOUT", "1")
+
+    def test_the_factory_is_a_noop_unless_enabled(self):
+        from src.services.telemetry import make_telemetry
+
+        telemetry = make_telemetry(Settings())
+
+        assert telemetry.enabled is False and telemetry.export_state == "disabled"
+
+    def test_an_enabled_factory_sends_metrics_and_traces_to_the_collectors_otlp_paths(self, monkeypatch, collector):
+        from src.services.telemetry import make_telemetry
+
+        endpoint, received = collector
+        self.enable(monkeypatch, endpoint)
+        telemetry = make_telemetry(Settings())
+
+        request = telemetry.start_request("GET", "abc")
+        request.finish("/api/v1/health", 200)
+        telemetry.shutdown()
+
+        assert telemetry.enabled and telemetry.export_state == "exporting"
+        assert {"/v1/traces", "/v1/metrics"} <= set(received)
+
+    def test_an_unreachable_collector_costs_a_warning_and_never_an_error(self, monkeypatch, caplog):
+        from src.services.telemetry import make_telemetry
+
+        self.enable(monkeypatch, "http://127.0.0.1:1")  # nothing listens here
+        telemetry = make_telemetry(Settings())
+
+        with caplog.at_level("WARNING"):
+            request = telemetry.start_request("GET", "abc")
+            request.finish("/api/v1/health", 200)
+            telemetry.shutdown()
+
+        assert telemetry.export_state == "failing"
+        assert len([r for r in caplog.records if "is being dropped" in r.getMessage()]) == 1  # once for the outage, not once per signal
+
+    def test_the_dependency_reads_the_apps_telemetry_and_defaults_to_none_emitted(self):
+        from src.dependencies import get_telemetry
+        from src.services.telemetry import NOOP_TELEMETRY
+
+        built = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(telemetry="the one the lifespan built")))
+        bare = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+
+        assert get_telemetry(built) == "the one the lifespan built"
+        assert get_telemetry(bare) is NOOP_TELEMETRY

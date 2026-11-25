@@ -14,6 +14,7 @@ from src.models.enums import RAGStrategy, RetrievalMode
 from src.services.access import RetrievalScope, ScopeDecision
 from src.services.agents.factory import make_agentic_rag_service
 from src.services.retrieval import retrieve
+from src.services.telemetry import current_telemetry
 
 NO_KNOWLEDGE_BASE_MESSAGE = (
     "This assistant has no knowledge bases attached yet, so there is nothing to "
@@ -125,6 +126,7 @@ async def retrieve_application(
     reranker: Any = None,
 ) -> ApplicationRetrieval:
     """``retrieve_for_application``, keeping whether reranking was applied or skipped."""
+    current_telemetry().observe_application(application)
     retrieval_cfg = application.retrieval_configuration
     model_cfg = application.model_configuration
     mode = retrieval_cfg.mode if retrieval_cfg else RetrievalMode.HYBRID.value
@@ -169,6 +171,7 @@ async def answer_agentic(
     its retriever is scoped exactly as ``retrieve_for_application`` scopes the
     traditional path, so the strategy cannot be used to widen access.
     """
+    current_telemetry().observe_application(application)
     decision = scope_application(application, scope)
     retrieval_cfg = application.retrieval_configuration
     model_cfg = application.model_configuration
@@ -239,12 +242,13 @@ async def answer_for_application(
             answer=blocked_message(application), chunks=[], hits=[], mode=mode, scope_decision=decision, model=model
         )
 
-    generation = await llm.generate_rag_answer(
-        query=query,
-        chunks=chunks,
-        model=model,
-        system_prompt=effective_system_prompt(application, system_prompt_override),
-    )
+    with current_telemetry().stage("generate_answer"):
+        generation = await llm.generate_rag_answer(
+            query=query,
+            chunks=chunks,
+            model=model,
+            system_prompt=effective_system_prompt(application, system_prompt_override),
+        )
     answer = generation.get("answer", "") if isinstance(generation, dict) else str(generation)
 
     return ApplicationAnswer(
@@ -283,12 +287,26 @@ class PreparedStream:
         extra: Dict[str, Any] = {"history": self._history} if self._history else {}
         if self._images:
             extra["images"] = self._images
-        async for chunk in self._llm.generate_rag_answer_stream(
-            query=self._query, chunks=self.chunks, model=self.model, system_prompt=self._system_prompt, **extra
-        ):
-            delta = chunk.get("response", "") if isinstance(chunk, dict) else str(chunk)
-            if delta:
-                yield delta
+        telemetry = current_telemetry()
+        # Not made current: the span stays open across the yields, which the consumer drives from elsewhere.
+        stage = telemetry.begin_stage("generate_answer")
+        first = True
+        failed = False
+        try:
+            async for chunk in self._llm.generate_rag_answer_stream(
+                query=self._query, chunks=self.chunks, model=self.model, system_prompt=self._system_prompt, **extra
+            ):
+                delta = chunk.get("response", "") if isinstance(chunk, dict) else str(chunk)
+                if delta:
+                    if first:
+                        first = False
+                        telemetry.record_first_token(self.model)
+                    yield delta
+        except Exception:
+            failed = True
+            raise
+        finally:
+            stage.end(error=failed)
 
 
 async def prepare_stream(
@@ -314,6 +332,7 @@ async def prepare_stream(
     :param search_query: what to retrieve with when that differs from ``query`` (a follow-up).
     :param images: data URLs sent to the chat model with the question as image content parts.
     """
+    current_telemetry().observe_application(application)
     searching = search_query or query
     if is_agentic(application):
         result = await answer_agentic(

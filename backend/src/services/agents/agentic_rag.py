@@ -25,6 +25,7 @@ from .nodes import (
     continue_after_guardrail,
 )
 from .state import AgentState
+from .telemetry import refusing, traced
 from .tools import RetrievalLog, create_retriever_tool, retrieval_log
 
 logger = logging.getLogger(__name__)
@@ -106,13 +107,14 @@ class AgenticRAGService:
 
         # Add nodes (just function references - no closures needed!)
         logger.info("Adding nodes to workflow graph")
-        workflow.add_node("guardrail", ainvoke_guardrail_step)
-        workflow.add_node("out_of_scope", ainvoke_out_of_scope_step)
+        # Each stage that matters to an operator is a span; the retrieval itself is spanned by the retrieval seam.
+        workflow.add_node("guardrail", traced("guardrail", ainvoke_guardrail_step))
+        workflow.add_node("out_of_scope", refusing(ainvoke_out_of_scope_step))
         workflow.add_node("retrieve", ainvoke_retrieve_step)
         workflow.add_node("tool_retrieve", ToolNode(tools))
-        workflow.add_node("grade_documents", ainvoke_grade_documents_step)
-        workflow.add_node("rewrite_query", ainvoke_rewrite_query_step)
-        workflow.add_node("generate_answer", ainvoke_generate_answer_step)
+        workflow.add_node("grade_documents", traced("grade_documents", ainvoke_grade_documents_step))
+        workflow.add_node("rewrite_query", traced("rewrite_query", ainvoke_rewrite_query_step))
+        workflow.add_node("generate_answer", traced("generate_answer", ainvoke_generate_answer_step))
 
         # Add edges
         logger.info("Configuring graph edges and routing logic")

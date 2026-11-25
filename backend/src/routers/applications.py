@@ -14,6 +14,7 @@ from src.dependencies import (
     ScopeDep,
     SessionDep,
     SettingsDep,
+    TelemetryDep,
 )
 from src.models import AuditAction
 from src.models.application import RAGApplication
@@ -187,6 +188,7 @@ async def ask_application(
     reranker: RerankerDep,
     scope: ScopeDep,
     audit_recorder: AuditDep,
+    telemetry: TelemetryDep,
     request: Request,
 ):
     """Answer a question using the application's stored configuration.
@@ -197,6 +199,7 @@ async def ask_application(
     repo = ApplicationRepository(session)
     application = repo.get_by_id(application_id)
     if not application:
+        telemetry.observe_application(None)
         raise HTTPException(status_code=404, detail="Application not found")
 
     try:

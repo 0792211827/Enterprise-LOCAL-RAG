@@ -33,6 +33,7 @@ from src.services.providers.llm.factory import make_provider_registry
 from src.services.providers.llm.registry import ProviderRegistry
 from src.services.providers.vlm.base import VLMProvider
 from src.services.rerank.client import Reranker
+from src.services.telemetry import NOOP_TELEMETRY, Telemetry
 
 
 @lru_cache
@@ -153,6 +154,11 @@ def get_audit_recorder(request: Request) -> AuditRecorder:
     return getattr(request.app.state, "audit_recorder", None) or NoopAuditRecorder()
 
 
+def get_telemetry(request: Request) -> Telemetry:
+    """The telemetry of the app; apps assembled without the lifespan emit nothing."""
+    return getattr(request.app.state, "telemetry", None) or NOOP_TELEMETRY
+
+
 # Dependency annotations
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DatabaseDep = Annotated[BaseDatabase, Depends(get_database)]
@@ -171,6 +177,7 @@ ProviderRegistryDep = Annotated[ProviderRegistry, Depends(get_provider_registry)
 ChatLimiterDep = Annotated[Optional[ChatLimiter], Depends(get_chat_limiter)]
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 AuditDep = Annotated[AuditRecorder, Depends(get_audit_recorder)]
+TelemetryDep = Annotated[Telemetry, Depends(get_telemetry)]
 SessionOpenerDep = Annotated[Callable[[], ContextManager[Session]], Depends(get_session_opener)]
 
 

@@ -1,3 +1,4 @@
+import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -66,7 +67,19 @@ def _make_llm_for_endpoint(provider_type, endpoint, api_key, model) -> AsyncMock
 
 
 @pytest.fixture
-async def client(monkeypatch, index_dimension):
+def telemetry():
+    """The telemetry every API test runs with: real, in memory, rejecting any label outside the allow-list.
+
+    ``RAG_TEST_TELEMETRY=off`` runs the whole suite with telemetry off instead, to show that instrumentation
+    changes no behaviour; tests that read what was emitted skip themselves then.
+    """
+    from src.services.telemetry import NOOP_TELEMETRY, make_in_memory_telemetry
+
+    return NOOP_TELEMETRY if os.environ.get("RAG_TEST_TELEMETRY", "on") == "off" else make_in_memory_telemetry()
+
+
+@pytest.fixture
+async def client(monkeypatch, index_dimension, telemetry):
     """HTTP client for API testing with the whole platform mocked (offline)."""
     import src.main as main
 
@@ -80,6 +93,7 @@ async def client(monkeypatch, index_dimension):
     embeddings.embed_passages = AsyncMock(return_value=[[0.1] * 1024])
 
     monkeypatch.setattr(main, "make_database", lambda: mock_database)
+    monkeypatch.setattr(main, "make_telemetry", lambda settings: telemetry)
     monkeypatch.setattr(main, "make_opensearch_client", lambda: _make_opensearch_mock(index_dimension))
     monkeypatch.setattr(main, "make_pdf_parser_service", lambda: MagicMock())
     monkeypatch.setattr(main, "make_embeddings_service", lambda: embeddings)

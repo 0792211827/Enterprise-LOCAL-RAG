@@ -419,6 +419,32 @@ class AuditSettings(BaseConfigSettings):
     retention_days: int = Field(default=0, ge=0)
 
 
+class OtelSettings(BaseConfigSettings):
+    """Telemetry: metrics and traces exported over OTLP/HTTP to a self-hosted collector (off by default).
+
+    Telemetry never carries prompt, answer or Document text, nor who asked (ADR-0006), and fails open: a collector
+    that is down or slow never slows, blocks or fails a request.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="OTEL__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    enabled: bool = False
+    endpoint: str = "http://localhost:4318"  # the collector's OTLP/HTTP address
+    service_name: str = "rag-api"
+    # Share of traces kept; metrics are never sampled.
+    trace_sample_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
+    # Seconds one export may take before its batch is dropped.
+    export_timeout: float = Field(default=5.0, gt=0)
+    # Spans waiting to be exported; beyond this new ones are dropped, so an outage cannot exhaust memory.
+    queue_size: int = Field(default=2048, ge=1)
+
+
 class ChatSettings(BaseConfigSettings):
     """Employee chat: retention, follow-up history, privacy, per-user rate limits and Document Attachments."""
 
@@ -493,6 +519,7 @@ class Settings(BaseConfigSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     api_keys: ApiKeySettings = Field(default_factory=ApiKeySettings)
     audit: AuditSettings = Field(default_factory=AuditSettings)
+    otel: OtelSettings = Field(default_factory=OtelSettings)
     chat: ChatSettings = Field(default_factory=ChatSettings)
 
     @property

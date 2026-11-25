@@ -56,3 +56,44 @@ def test_settings_ollama_defaults():
     # In Docker environment, this should be ollama service host
     expected_host = "http://ollama:11434" if "OLLAMA_HOST" not in os.environ else settings.ollama_host
     assert settings.ollama_host in ["http://localhost:11434", "http://ollama:11434"]
+
+
+def test_telemetry_is_off_by_default_and_keeps_every_trace():
+    settings = Settings()
+
+    assert settings.otel.enabled is False
+    assert settings.otel.trace_sample_ratio == 1.0
+    assert settings.otel.service_name == "rag-api"
+
+
+def test_telemetry_settings_come_from_otel_variables(monkeypatch):
+    monkeypatch.setenv("OTEL__ENABLED", "true")
+    monkeypatch.setenv("OTEL__ENDPOINT", "http://collector:4318")
+    monkeypatch.setenv("OTEL__SERVICE_NAME", "rag-api-eu")
+    monkeypatch.setenv("OTEL__TRACE_SAMPLE_RATIO", "0.25")
+    monkeypatch.setenv("OTEL__EXPORT_TIMEOUT", "2.5")
+    monkeypatch.setenv("OTEL__QUEUE_SIZE", "512")
+
+    otel = Settings().otel
+
+    assert (otel.enabled, otel.endpoint, otel.service_name) == (True, "http://collector:4318", "rag-api-eu")
+    assert (otel.trace_sample_ratio, otel.export_timeout, otel.queue_size) == (0.25, 2.5, 512)
+
+
+@pytest.mark.parametrize("ratio", ["-0.1", "1.5"])
+def test_a_trace_sample_ratio_outside_zero_to_one_is_refused(monkeypatch, ratio):
+    monkeypatch.setenv("OTEL__TRACE_SAMPLE_RATIO", ratio)
+
+    with pytest.raises(ValueError):
+        Settings()
+
+
+def test_every_telemetry_setting_is_documented_in_the_env_example():
+    from pathlib import Path
+
+    from src.config import OtelSettings
+
+    documented = (Path(__file__).parents[3] / ".env.example").read_text()
+
+    missing = [name for name in OtelSettings.model_fields if f"OTEL__{name.upper()}=" not in documented]
+    assert missing == []

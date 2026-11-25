@@ -12,6 +12,7 @@ from src.config import get_settings
 from src.db.factory import make_database
 from src.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
 from src.middleware.audit import AuditMiddleware
+from src.middleware.telemetry import TelemetryMiddleware
 from src.routers import (
     agentic_ask,
     api_keys,
@@ -46,6 +47,7 @@ from src.services.pdf_parser.factory import make_pdf_parser_service
 from src.services.providers.llm.factory import make_llm_provider, make_provider_registry
 from src.services.providers.vlm.factory import make_vlm_provider
 from src.services.rerank.factory import make_reranker
+from src.services.telemetry import make_telemetry
 
 # Setup logging
 logging.basicConfig(
@@ -89,6 +91,9 @@ async def lifespan(app: FastAPI):
     database = make_database()
     app.state.database = database
     logger.info("Database connected")
+
+    app.state.telemetry = make_telemetry(settings)
+    logger.info("Telemetry: %s", "enabled" if app.state.telemetry.enabled else "disabled")
 
     app.state.audit_recorder = make_audit_recorder(settings, database)
     logger.info("Audit logging: %s (fail mode %s)", settings.audit.level, settings.audit.fail_mode)
@@ -167,6 +172,7 @@ async def lifespan(app: FastAPI):
         with suppress(asyncio.CancelledError):
             await purge_task
     database.teardown()
+    app.state.telemetry.shutdown()
     logger.info("API shutdown complete")
 
 
@@ -210,6 +216,10 @@ app.add_middleware(
 # Records admin changes and 401/403s (a no-op with AUDIT__LEVEL=off). Inside
 # the request-context middleware, so every event carries the request ID.
 app.add_middleware(AuditMiddleware)
+
+# Counts and times every request and opens its trace (a no-op with OTEL__ENABLED=false). Outside the audit
+# middleware so the time covers the whole request, inside the request-context one for the request ID.
+app.add_middleware(TelemetryMiddleware)
 
 # Added last so it is outermost: every response, including CORS preflights and
 # errors raised by inner middleware, carries the correlation ID.

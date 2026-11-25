@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from src.models.enums import RetrievalMode
 from src.services.access import RetrievalScope, ScopeDecision
 from src.services.rerank.client import Reranker
+from src.services.telemetry import current_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -93,52 +94,57 @@ async def retrieve(
         return RetrievalResult(mode=mode, decision=decision, blocked=True)
     kb_ids = decision.permitted
 
-    rerank_in_play = reranker is not None and from_ == 0
-    fetch_size = max(size, reranker.candidates) if rerank_in_play else size
+    telemetry = current_telemetry()
+    with telemetry.stage("retrieve"):
+        rerank_in_play = reranker is not None and from_ == 0
+        fetch_size = max(size, reranker.candidates) if rerank_in_play else size
 
-    if mode != RetrievalMode.BM25.value and query_embedding is None:
-        try:
-            query_embedding = await embeddings.embed_query(query)
-        except Exception as exc:  # noqa: BLE001 - degrade only when the caller asked for it
-            if not fall_back_to_bm25:
-                raise
-            logger.warning("Failed to generate embeddings, falling back to BM25: %s", exc)
-            mode = RetrievalMode.BM25.value
-    if mode == RetrievalMode.BM25.value:
-        query_embedding = None
-
-    if mode == RetrievalMode.VECTOR.value:
-        results = opensearch.search_chunks_vector(
-            query_embedding=query_embedding,
-            size=fetch_size,
-            categories=categories,
-            knowledge_base_ids=kb_ids,
-            principal_keys=decision.principal_keys,
-        )
-    else:
-        results = opensearch.search_unified(
-            query=query,
-            query_embedding=query_embedding,
-            size=fetch_size,
-            from_=from_,
-            categories=categories,
-            latest=latest,
-            use_hybrid=mode == RetrievalMode.HYBRID.value,
-            min_score=min_score,
-            knowledge_base_ids=kb_ids,
-            principal_keys=decision.principal_keys,
-        )
-
-    results = results if isinstance(results, dict) else {}
-    hits = results.get("hits", [])
-
-    outcome = None
-    if rerank_in_play:
-        if len(hits) > 1:
+        if mode != RetrievalMode.BM25.value and query_embedding is None:
             try:
-                hits, outcome = await reranker.rerank(query, hits), "applied"
-            except Exception as exc:  # noqa: BLE001 - a down or slow reranker must not stop answers
-                logger.warning("Rerank skipped, keeping the original order: %s", exc)
-                outcome = "skipped"
-        hits = hits[:size]
+                query_embedding = await embeddings.embed_query(query)
+            except Exception as exc:  # noqa: BLE001 - degrade only when the caller asked for it
+                if not fall_back_to_bm25:
+                    raise
+                logger.warning("Failed to generate embeddings, falling back to BM25: %s", exc)
+                mode = RetrievalMode.BM25.value
+        if mode == RetrievalMode.BM25.value:
+            query_embedding = None
+
+        if mode == RetrievalMode.VECTOR.value:
+            results = opensearch.search_chunks_vector(
+                query_embedding=query_embedding,
+                size=fetch_size,
+                categories=categories,
+                knowledge_base_ids=kb_ids,
+                principal_keys=decision.principal_keys,
+            )
+        else:
+            results = opensearch.search_unified(
+                query=query,
+                query_embedding=query_embedding,
+                size=fetch_size,
+                from_=from_,
+                categories=categories,
+                latest=latest,
+                use_hybrid=mode == RetrievalMode.HYBRID.value,
+                min_score=min_score,
+                knowledge_base_ids=kb_ids,
+                principal_keys=decision.principal_keys,
+            )
+
+        results = results if isinstance(results, dict) else {}
+        hits = results.get("hits", [])
+
+        outcome = None
+        if rerank_in_play:
+            if len(hits) > 1:
+                try:
+                    with telemetry.stage("rerank"):
+                        hits, outcome = await reranker.rerank(query, hits), "applied"
+                except Exception as exc:  # noqa: BLE001 - a down or slow reranker must not stop answers
+                    logger.warning("Rerank skipped, keeping the original order: %s", exc)
+                    outcome = "skipped"
+            hits = hits[:size]
+
+    telemetry.record_retrieval(kb_ids, hits, outcome)
     return RetrievalResult(hits=hits, total=results.get("total", 0), mode=mode, decision=decision, rerank=outcome)

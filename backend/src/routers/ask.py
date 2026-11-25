@@ -15,6 +15,7 @@ from src.dependencies import (
     PrincipalDep,
     RerankerDep,
     ScopeDep,
+    TelemetryDep,
 )
 from src.models import AuditAction
 from src.schemas.api.ask import AskRequest, AskResponse
@@ -124,6 +125,7 @@ async def ask_question(
     scope: ScopeDep,
     reranker: RerankerDep,
     audit_recorder: AuditDep,
+    telemetry: TelemetryDep,
     http_request: Request,
 ) -> AskResponse:
     """Clean RAG endpoint with essential tracing and exact match caching."""
@@ -146,6 +148,7 @@ async def ask_question(
             if cache_client:
                 try:
                     cached_response = await cache_client.find_cached_response(request, scope_token)
+                    telemetry.record_cache_lookup(bool(cached_response))
                     if cached_response:
                         logger.info("Returning cached response for exact query match")
                         _audit_cache_hit(audit, cached_response)
@@ -232,6 +235,7 @@ async def ask_question_stream(
     scope: ScopeDep,
     reranker: RerankerDep,
     audit_recorder: AuditDep,
+    telemetry: TelemetryDep,
     http_request: Request,
 ) -> StreamingResponse:
     """Clean streaming RAG endpoint."""

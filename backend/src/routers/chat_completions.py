@@ -36,6 +36,7 @@ from src.dependencies import (
     RerankerDep,
     SessionDep,
     SettingsDep,
+    TelemetryDep,
 )
 from src.models import AuditAction
 from src.repositories import ApplicationRepository
@@ -86,6 +87,7 @@ async def create_chat_completion(
     reranker: RerankerDep,
     settings: SettingsDep,
     audit_recorder: AuditDep,
+    telemetry: TelemetryDep,
 ):
     """Answer via a RAG application, addressed by its slug as ``model``."""
     try:
@@ -97,6 +99,8 @@ async def create_chat_completion(
             find_application=lambda: ApplicationRepository(session).get_by_slug(payload.model),
         )
     except CompletionAuthError as exc:
+        # ``model`` is whatever the caller typed, so it is never a label.
+        telemetry.observe_application(None)
         return _openai_error(exc.status_code, exc.message, code=exc.code, err_type=exc.err_type)
 
     try:

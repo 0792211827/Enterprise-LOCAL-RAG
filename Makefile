@@ -1,5 +1,5 @@
 .PHONY: help install infra app app-stop backend frontend pull-model psql start stop restart status logs health setup \
-        format lint test test-cov frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup \
+        format lint test test-telemetry-off test-cov frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup \
         reindex eval eval-compare start-hardened health-hardened connectors connector-sync ingest-samples
 
 # Task runner for Enterprise-LOCAL-RAG.
@@ -153,6 +153,9 @@ lint: ## Lint and type check
 
 test: ## Run tests
 	cd backend && uv run python -m pytest
+
+test-telemetry-off: ## Run the API tests with telemetry off (answers must not change)
+	cd backend && RAG_TEST_TELEMETRY=off uv run python -m pytest tests/api
 
 test-cov: ## Run tests with coverage
 	cd backend && uv run python -m pytest --cov=src --cov-report=html
