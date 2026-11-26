@@ -87,6 +87,17 @@ class InMemoryTelemetry(OtelTelemetry):
         """The sum over the series of a metric whose labels include ``labels``."""
         return sum(value for attributes, value in self.points(name) if labels.items() <= attributes.items())
 
+    def total(self, name: str, **labels: Any) -> float:
+        """The sum of the observed values of a histogram's series whose labels include ``labels``."""
+        data = self.metric_reader.get_metrics_data()
+        total = 0.0
+        for resource_metrics in data.resource_metrics if data else []:
+            for scope_metrics in resource_metrics.scope_metrics:
+                for metric in scope_metrics.metrics:
+                    if metric.name == name:
+                        total += sum(p.sum for p in metric.data.data_points if labels.items() <= dict(p.attributes).items())
+        return total
+
     def spans(self) -> List[ReadableSpan]:
         return list(self.span_exporter.get_finished_spans())
 

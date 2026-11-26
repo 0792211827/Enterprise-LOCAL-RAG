@@ -63,6 +63,13 @@ services:
       - OPENSEARCH__HOST=http://opensearch:9200
       - POSTGRES_DATABASE_URL=postgresql+psycopg2://rag_user:rag_password@postgres:5432/rag_db
       - CONNECTOR__MOUNT_ROOT=/mnt/sources
+      # Telemetry (see .env.example): the same settings as the API, reported as its own service.
+      - OTEL__ENABLED=${OTEL__ENABLED:-false}
+      - OTEL__ENDPOINT=${OTEL__ENDPOINT:-http://localhost:4318}
+      - OTEL__SERVICE_NAME=rag-connector
+      - OTEL__TRACE_SAMPLE_RATIO=${OTEL__TRACE_SAMPLE_RATIO:-1.0}
+      - OTEL__EXPORT_TIMEOUT=${OTEL__EXPORT_TIMEOUT:-5}
+      - OTEL__QUEUE_SIZE=${OTEL__QUEUE_SIZE:-2048}
     volumes:
       - hf_cache:/root/.cache/huggingface
       - rag_uploads:/tmp/rag-uploads

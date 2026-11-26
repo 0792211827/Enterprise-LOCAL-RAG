@@ -240,6 +240,15 @@ class Telemetry:
     def record_first_token(self, model: Optional[str]) -> None:
         """The first token of a streamed answer was produced."""
 
+    def record_ingestion_stage(self, knowledge_base_id: Any, stage: str, outcome: str, seconds: float) -> None:
+        """One ingestion stage of one Document ended, ``succeeded``, ``failed`` or ``interrupted``."""
+
+    def record_ingestion_wait(self, knowledge_base_id: Any, seconds: float) -> None:
+        """A Document waited this long for a free ingestion slot."""
+
+    def record_connector_sync(self, knowledge_base_id: Any, outcome: str, seconds: float, counts: Mapping[str, int]) -> None:
+        """A Connector run ended (``ok``, ``partial`` or ``error``), having added, updated, removed or failed Documents."""
+
     def shutdown(self) -> None:
         """Send what is queued and stop exporting (at the end of the process)."""
 
@@ -247,6 +256,29 @@ class Telemetry:
     def export_state(self) -> str:
         """``disabled``, ``exporting``, or ``failing`` (the collector is not accepting what is sent)."""
         return "disabled"
+
+
+class IngestionStages:
+    """Times the stages of one Document's ingestion, one after another, as they begin.
+
+    ``begin`` ends the stage before it as succeeded; ``end`` closes the one in progress with an outcome and does
+    nothing when none is. Never raises, and costs nothing with the no-op telemetry.
+    """
+
+    def __init__(self, telemetry: Telemetry, knowledge_base_id: Any):
+        self._telemetry = telemetry
+        self._knowledge_base_id = knowledge_base_id
+        self._stage: Optional[str] = None
+        self._started = 0.0
+
+    def begin(self, stage: str) -> None:
+        self.end("succeeded")
+        self._stage, self._started = stage, time.perf_counter()
+
+    def end(self, outcome: str) -> None:
+        stage, self._stage = self._stage, None
+        if stage is not None:
+            self._telemetry.record_ingestion_stage(self._knowledge_base_id, stage, outcome, time.perf_counter() - self._started)
 
 
 class _NoopStage:
@@ -322,7 +354,7 @@ class OtelTelemetry(Telemetry):
                     spec.name,
                     unit=spec.unit,
                     description=spec.description,
-                    explicit_bucket_boundaries_advisory=list(m.DURATION_BUCKETS),
+                    explicit_bucket_boundaries_advisory=list(spec.buckets),
                 )
 
     @property
@@ -472,3 +504,20 @@ class OtelTelemetry(Telemetry):
                 time.perf_counter() - scope.started,
                 {"application": scope.application, "model": self._model_label(model)},
             )
+
+    @_fail_open
+    def record_ingestion_stage(self, knowledge_base_id: Any, stage: str, outcome: str, seconds: float) -> None:
+        labels = {"knowledge_base": knowledge_base_label(knowledge_base_id), "stage": stage, "outcome": outcome}
+        self._observe(m.INGESTION_STAGE_DURATION, seconds, labels)
+
+    @_fail_open
+    def record_ingestion_wait(self, knowledge_base_id: Any, seconds: float) -> None:
+        self._observe(m.INGESTION_QUEUE_WAIT, seconds, {"knowledge_base": knowledge_base_label(knowledge_base_id)})
+
+    @_fail_open
+    def record_connector_sync(self, knowledge_base_id: Any, outcome: str, seconds: float, counts: Mapping[str, int]) -> None:
+        knowledge_base = knowledge_base_label(knowledge_base_id)
+        self._observe(m.CONNECTOR_SYNC_DURATION, seconds, {"knowledge_base": knowledge_base, "outcome": outcome})
+        for kind, number in counts.items():
+            if number > 0:
+                self._add(m.CONNECTOR_DOCUMENTS, {"knowledge_base": knowledge_base, "outcome": kind}, number)

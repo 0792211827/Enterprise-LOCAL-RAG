@@ -38,12 +38,20 @@ def build_sync() -> tuple[ConnectorSync, Any]:
     from src.services.opensearch.factory import make_opensearch_client
     from src.services.pdf_parser.factory import make_pdf_parser_service
     from src.services.providers.vlm.factory import make_vlm_provider
+    from src.services.telemetry import NOOP_TELEMETRY, make_telemetry
 
     settings = get_settings()
+    try:
+        telemetry = make_telemetry(settings)
+    except Exception:  # noqa: BLE001 - telemetry that cannot start must not stop a sync
+        logging.getLogger(__name__).exception("Telemetry could not be set up; running without it")
+        telemetry = NOOP_TELEMETRY
     database = make_database()
     opensearch = make_opensearch_client()
-    ingestion = make_ingestion_service(opensearch, make_embeddings_service(), make_pdf_parser_service(), settings, make_vlm_provider(settings))
-    return ConnectorSync(database.get_session, ingestion, opensearch, settings), database
+    ingestion = make_ingestion_service(
+        opensearch, make_embeddings_service(), make_pdf_parser_service(), settings, make_vlm_provider(settings), telemetry=telemetry
+    )
+    return ConnectorSync(database.get_session, ingestion, opensearch, settings, telemetry=telemetry), database
 
 
 def _guard(sync: ConnectorSync) -> Optional[str]:
@@ -157,6 +165,7 @@ def main(argv: Optional[list] = None, sync: Optional[ConnectorSync] = None) -> i
             sync.opensearch.setup_indices()  # the same idempotent step the API runs at startup
         return asyncio.run(_sync_all(sync, _names(sync) if args.all else args.names, args.dry_run, args.allow_empty))
     finally:
+        sync.telemetry.shutdown()  # sends the run's measurements: this process is about to exit
         if database is not None:
             database.teardown()
 

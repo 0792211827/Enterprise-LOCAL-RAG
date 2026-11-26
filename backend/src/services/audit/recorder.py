@@ -13,6 +13,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 from src.models import AuditEvent
+from src.services.telemetry import current_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -104,11 +105,23 @@ class DatabaseAuditRecorder(AuditRecorder):
         self.level = level
         self.fail_mode = fail_mode
 
+    @staticmethod
+    def _trace_id() -> Optional[str]:
+        """The trace this event belongs to, so an auditor can hand an operator a reference. Telemetry never decides
+        whether an event is written: a trace ID that cannot be read is left out, never an error (ADR-0006)."""
+        try:
+            return current_trace_id()
+        except Exception:  # noqa: BLE001
+            return None
+
     def to_row(self, event: AuditRecord) -> AuditEvent:
         values = asdict(event)
         query_text = values.pop("query_text")
         answer_text = values.pop("answer_text")
         redact_text = values.pop("redact_text")
+        trace_id = self._trace_id()
+        if trace_id:
+            values["details"] = {**(values["details"] or {}), "trace_id": trace_id}
         row = AuditEvent(**values)
         # Digests at every level: an auditor can prove which question was asked
         # (by hashing a candidate) without the platform storing the text.

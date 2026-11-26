@@ -221,7 +221,7 @@ class TestIndexPayloadMatchesMapping:
         from src.services.providers.vlm.base import VLMProvider
 
         assert list(inspect.signature(make_ingestion_service).parameters) == [
-            "opensearch", "embeddings", "pdf_parser", "settings", "vlm_provider", "url_fetcher",
+            "opensearch", "embeddings", "pdf_parser", "settings", "vlm_provider", "url_fetcher", "telemetry",
         ]
         assert list(inspect.signature(VLMProvider.describe_image).parameters)[1:] == ["image_base64", "prompt", "model"]
         assert list(inspect.signature(UrlFetcher.check).parameters)[1:] == ["url"]

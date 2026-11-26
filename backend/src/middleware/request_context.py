@@ -8,7 +8,8 @@ responses pass through untouched. It stores ``request_id`` and ``client_ip`` on
 
 import re
 import uuid
-from typing import Sequence
+from contextvars import ContextVar
+from typing import Optional, Sequence
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -20,6 +21,9 @@ REQUEST_ID_HEADER = "X-Request-ID"
 # Accept a caller-supplied ID only if it is short and inert: it is echoed into
 # response headers and written to logs and audit rows.
 _VALID_REQUEST_ID = re.compile(r"[A-Za-z0-9._\-]{1,128}")
+
+# The ID of the request being handled, for log lines (see ``src.logging_setup``).
+current_request_id: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
 
 
 class RequestContextMiddleware:
@@ -50,4 +54,8 @@ class RequestContextMiddleware:
                 MutableHeaders(scope=message).append(REQUEST_ID_HEADER, request_id)
             await send(message)
 
-        await self.app(scope, receive, send_with_request_id)
+        token = current_request_id.set(request_id)
+        try:
+            await self.app(scope, receive, send_with_request_id)
+        finally:
+            current_request_id.reset(token)

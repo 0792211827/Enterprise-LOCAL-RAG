@@ -14,6 +14,7 @@ import getpass
 import hashlib
 import logging
 import socket
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, ContextManager, Dict, List, Optional
@@ -30,6 +31,7 @@ from src.repositories.connector import ConnectorRepository
 from src.services.ingestion.lifecycle import delete_document, stage_replacement
 from src.services.ingestion.types import sniff_document_type, store_file, type_for_extension
 from src.services.ingestion.uploads import display_name
+from src.services.telemetry import NOOP_TELEMETRY, Telemetry
 
 from .sources import ConnectorError, Source, SourceFile
 
@@ -107,12 +109,14 @@ class ConnectorSync:
         opensearch: Any,
         settings: Settings,
         source_factory: Callable[[Connector, Settings], Source] = build_source,
+        telemetry: Telemetry = NOOP_TELEMETRY,
     ):
         self.open_session = open_session
         self.ingestion = ingestion
         self.opensearch = opensearch
         self.settings = settings
         self.source_factory = source_factory
+        self.telemetry = telemetry
 
     async def run(self, name: str, dry_run: bool = False, allow_empty: bool = False) -> SyncSummary:
         """Sync the Connector called ``name``.
@@ -136,6 +140,8 @@ class ConnectorSync:
 
             summary = SyncSummary(dry_run=dry_run)
             outcome, error = AuditOutcome.OK, None
+            knowledge_base_id = connector.knowledge_base_id
+            started = time.perf_counter()
             try:
                 await self._sync(session, connector, summary, dry_run, allow_empty)
             except Exception as exc:  # noqa: BLE001 - recorded, then re-raised for the caller
@@ -145,6 +151,12 @@ class ConnectorSync:
                 if not dry_run:
                     session.rollback()  # a failed file must not poison the bookkeeping below
                     status = "error" if error else "partial" if summary.failed else "ok"
+                    self.telemetry.record_connector_sync(
+                        knowledge_base_id,
+                        status,
+                        time.perf_counter() - started,
+                        {kind: getattr(summary, kind) for kind in ("added", "updated", "removed", "failed")},
+                    )
                     details = {**summary.as_dict(), **({"error": error} if error else {})}
                     repo.finish(connector, status, details)
                     self._audit(session, connector, outcome, summary, error)

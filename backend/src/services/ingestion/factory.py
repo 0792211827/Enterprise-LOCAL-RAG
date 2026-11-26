@@ -1,12 +1,19 @@
 from typing import Any
 
 from src.config import Settings
+from src.services.telemetry import NOOP_TELEMETRY, Telemetry
 
 from .service import IngestionService
 
 
 def make_ingestion_service(
-    opensearch: Any, embeddings: Any, pdf_parser: Any, settings: Settings, vlm_provider: Any = None, url_fetcher: Any = None
+    opensearch: Any,
+    embeddings: Any,
+    pdf_parser: Any,
+    settings: Settings,
+    vlm_provider: Any = None,
+    url_fetcher: Any = None,
+    telemetry: Telemetry = NOOP_TELEMETRY,
 ) -> IngestionService:
     """The ingestion pipeline over the platform's collaborators; the API and the Connector job build it the same way."""
     from src.services.indexing.text_chunker import TextChunker
@@ -25,4 +32,5 @@ def make_ingestion_service(
         vlm_provider=vlm_provider,
         url_fetcher=url_fetcher,
         settings=settings,
+        telemetry=telemetry,
     )

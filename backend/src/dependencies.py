@@ -188,11 +188,12 @@ def get_ingestion_service(
     pdf_parser: PDFParserDep,
     vlm: VLMDep,
     url_fetcher: UrlFetcherDep,
+    telemetry: TelemetryDep,
 ) -> "IngestionService":
     """Construct the generic ingestion service from platform collaborators."""
     from src.services.ingestion.factory import make_ingestion_service
 
-    return make_ingestion_service(opensearch, embeddings, pdf_parser, settings, vlm, url_fetcher)
+    return make_ingestion_service(opensearch, embeddings, pdf_parser, settings, vlm, url_fetcher, telemetry)
 
 
 IngestionServiceDep = Annotated["IngestionService", Depends(get_ingestion_service)]

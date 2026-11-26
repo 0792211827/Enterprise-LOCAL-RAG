@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from src.auth import Role, make_authenticator, require_role
 from src.config import get_settings
 from src.db.factory import make_database
+from src.logging_setup import configure_logging
 from src.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
 from src.middleware.audit import AuditMiddleware
 from src.middleware.telemetry import TelemetryMiddleware
@@ -50,10 +51,7 @@ from src.services.rerank.factory import make_reranker
 from src.services.telemetry import NOOP_TELEMETRY, make_telemetry
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+configure_logging(json_lines=get_settings().otel.enabled)
 logger = logging.getLogger(__name__)
 
 
@@ -67,6 +65,7 @@ async def _resume_ingestion(app: FastAPI, settings) -> None:
             settings,
             app.state.vlm_provider,
             app.state.url_fetcher,
+            app.state.telemetry,
         )
         await resume_interrupted(app.state.database, service, settings.ingestion.concurrency)
     except Exception:  # noqa: BLE001

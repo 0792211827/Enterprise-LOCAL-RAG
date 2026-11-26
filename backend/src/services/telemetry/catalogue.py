@@ -11,6 +11,8 @@ COUNTER = "counter"
 HISTOGRAM = "histogram"
 
 DURATION_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0)
+# Ingestion stages and Connector runs take minutes, not milliseconds.
+LONG_DURATION_BUCKETS = (0.1, 0.5, 1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0)
 
 
 # A model label comes from the request on the legacy routes, so how many distinct ones are kept is bounded.
@@ -25,6 +27,7 @@ class MetricSpec:
     unit: str
     description: str
     labels: Tuple[str, ...]
+    buckets: Tuple[float, ...] = DURATION_BUCKETS
 
 
 HTTP_REQUESTS = "rag.http.requests"
@@ -41,6 +44,10 @@ DEPENDENCY_CALLS = "rag.dependency.calls"
 DEPENDENCY_DURATION = "rag.dependency.duration"
 TOKENS_IN = "rag.llm.tokens.input"
 TOKENS_OUT = "rag.llm.tokens.output"
+INGESTION_STAGE_DURATION = "rag.ingestion.stage.duration"
+INGESTION_QUEUE_WAIT = "rag.ingestion.queue_wait"
+CONNECTOR_SYNC_DURATION = "rag.connector.sync.duration"
+CONNECTOR_DOCUMENTS = "rag.connector.documents"
 
 CATALOGUE: Tuple[MetricSpec, ...] = (
     MetricSpec(HTTP_REQUESTS, COUNTER, "{request}", "API requests handled.", ("route", "method", "status", "application")),
@@ -124,5 +131,39 @@ CATALOGUE: Tuple[MetricSpec, ...] = (
         "{token}",
         "Completion tokens the model reported producing. Calls whose backend reports no usage add nothing.",
         ("application", "model"),
+    ),
+    MetricSpec(
+        INGESTION_STAGE_DURATION,
+        HISTOGRAM,
+        "s",
+        "Time one ingestion stage (fetch, parse, chunk, embed, index) took for one Document, by outcome "
+        "(succeeded, failed or interrupted). A stage that never started has no observation.",
+        ("knowledge_base", "stage", "outcome"),
+        LONG_DURATION_BUCKETS,
+    ),
+    MetricSpec(
+        INGESTION_QUEUE_WAIT,
+        HISTOGRAM,
+        "s",
+        "Time a Document waited for a free ingestion slot (INGESTION__CONCURRENCY) before its ingestion began.",
+        ("knowledge_base",),
+        LONG_DURATION_BUCKETS,
+    ),
+    MetricSpec(
+        CONNECTOR_SYNC_DURATION,
+        HISTOGRAM,
+        "s",
+        "Time one Connector run took (a dry run is not measured), by outcome (ok, partial when some files failed, "
+        "or error when the run itself failed).",
+        ("knowledge_base", "outcome"),
+        LONG_DURATION_BUCKETS,
+    ),
+    MetricSpec(
+        CONNECTOR_DOCUMENTS,
+        COUNTER,
+        "{document}",
+        "Documents a Connector run changed in its Knowledge Base, by outcome (added, updated, removed or failed). "
+        "Files left alone are not counted.",
+        ("knowledge_base", "outcome"),
     ),
 )

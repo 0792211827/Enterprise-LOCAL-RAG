@@ -20,6 +20,7 @@ from src.models.document import Document, DocumentChunk, DocumentChunkLocator
 from src.models.enums import IngestionStatus
 from src.models.ingestion import IngestionJob
 from src.schemas.indexing.elements import DocumentElement, Locator
+from src.services.telemetry import NOOP_TELEMETRY, IngestionStages, Telemetry
 
 from .images import Described, describe_images
 from .lifecycle import remove_stored_file
@@ -53,6 +54,7 @@ class IngestionService:
         vlm_provider: Any = None,
         url_fetcher: Any = None,
         settings: Any = None,
+        telemetry: Telemetry = NOOP_TELEMETRY,
     ) -> None:
         self.chunker = chunker
         self.embeddings_provider = embeddings_provider
@@ -62,6 +64,7 @@ class IngestionService:
         self.vlm_provider = vlm_provider
         self.url_fetcher = url_fetcher
         self.settings = settings
+        self.telemetry = telemetry
 
     async def ingest_document(
         self,
@@ -116,8 +119,11 @@ class IngestionService:
         except Exception:  # pragma: no cover - defensive, repo may be a mock
             pass
 
+        stages = IngestionStages(self.telemetry, document.knowledge_base_id)
+
         def mark_stage(stage: str) -> None:
-            """Record the current pipeline stage so pollers can observe progress."""
+            """Record the current pipeline stage so pollers can observe progress (and start timing it)."""
+            stages.begin(stage)
             job.stage = stage
             try:
                 ingestion_repo.save(job)
@@ -126,8 +132,11 @@ class IngestionService:
 
         try:
             async with asyncio.timeout(self.timeout_seconds or None) as limit:
-                return await self._pipeline(document, job, document_repo, ingestion_repo, knowledge_base, replacement, mark_stage)
+                result = await self._pipeline(document, job, document_repo, ingestion_repo, knowledge_base, replacement, mark_stage)
+            stages.end("succeeded")
+            return result
         except DocumentGone:
+            stages.end("interrupted")
             logger.info("Document %s was deleted while it was being ingested; its chunks are removed", document.id)
             self._purge_quietly(document, None)
             return dict(NO_STATS)
@@ -139,9 +148,13 @@ class IngestionService:
                 )
             else:
                 reason = str(exc) or exc.__class__.__name__
+            stages.end("failed")
             logger.error("Ingestion failed for document %s: %s", document.id, reason)
             self._fail(document, job, document_repo, ingestion_repo, replacement, reason)
             return dict(NO_STATS)
+        except BaseException:  # a cancellation (shutdown): the stage did not get to finish
+            stages.end("interrupted")
+            raise
 
     async def _pipeline(
         self,

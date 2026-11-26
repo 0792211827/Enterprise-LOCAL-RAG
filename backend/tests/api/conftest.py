@@ -66,8 +66,13 @@ def _make_llm_for_endpoint(provider_type, endpoint, api_key, model) -> AsyncMock
     return client
 
 
+# Test modules that pin an Audit log event's exact ``details``. With telemetry on an event's details also hold the
+# trace ID (by design), so these run with telemetry off; tests/api/test_telemetry_correlation.py covers it on.
+PINS_AUDIT_DETAILS = frozenset({"test_audit_legacy_paths", "test_rerank_paths"})
+
+
 @pytest.fixture
-def telemetry():
+def telemetry(request):
     """The telemetry every API test runs with: real, in memory, rejecting any label outside the allow-list.
 
     ``RAG_TEST_TELEMETRY=off`` runs the whole suite with telemetry off instead, to show that instrumentation
@@ -75,7 +80,8 @@ def telemetry():
     """
     from src.services.telemetry import NOOP_TELEMETRY, make_in_memory_telemetry
 
-    return NOOP_TELEMETRY if os.environ.get("RAG_TEST_TELEMETRY", "on") == "off" else make_in_memory_telemetry()
+    off = os.environ.get("RAG_TEST_TELEMETRY", "on") == "off" or request.module.__name__.rsplit(".", 1)[-1] in PINS_AUDIT_DETAILS
+    return NOOP_TELEMETRY if off else make_in_memory_telemetry()
 
 
 @pytest.fixture
