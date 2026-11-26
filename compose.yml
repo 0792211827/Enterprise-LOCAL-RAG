@@ -31,8 +31,9 @@ services:
       - LANGFUSE__HOST=http://langfuse-web:3000
       - LANGFUSE__DEBUG=true
       - REDIS__HOST=redis
-      # Telemetry goes to the collector of the telemetry profile; .env's localhost address is for a host process.
-      - OTEL__ENDPOINT=http://otel-collector:4318
+      # Telemetry goes to the collector of the telemetry profile (OTEL_COLLECTOR_ENDPOINT points it elsewhere);
+      # .env's OTEL__ENDPOINT is the address for a process on the host.
+      - OTEL__ENDPOINT=${OTEL_COLLECTOR_ENDPOINT:-http://otel-collector:4318}
     volumes:
       # The embedding model (~2.3GB) is downloaded on first use. Without a
       # volume it lives in the container layer and is re-downloaded on every
@@ -67,7 +68,7 @@ services:
       - CONNECTOR__MOUNT_ROOT=/mnt/sources
       # Telemetry (see .env.example): the same settings as the API, reported as its own service.
       - OTEL__ENABLED=${OTEL__ENABLED:-false}
-      - OTEL__ENDPOINT=http://otel-collector:4318
+      - OTEL__ENDPOINT=${OTEL_COLLECTOR_ENDPOINT:-http://otel-collector:4318}
       - OTEL__SERVICE_NAME=rag-connector
       - OTEL__TRACE_SAMPLE_RATIO=${OTEL__TRACE_SAMPLE_RATIO:-1.0}
       - OTEL__EXPORT_TIMEOUT=${OTEL__EXPORT_TIMEOUT:-5}

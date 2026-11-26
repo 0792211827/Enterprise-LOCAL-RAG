@@ -71,7 +71,7 @@ class TestComposeProfile:
 
     def test_the_api_and_the_connector_send_to_the_collector(self, compose):
         for name in ("api", "connector"):
-            assert environment(compose[name])["OTEL__ENDPOINT"] == "http://otel-collector:4318", name
+            assert environment(compose[name])["OTEL__ENDPOINT"] == "${OTEL_COLLECTOR_ENDPOINT:-http://otel-collector:4318}", name
 
     def test_the_connector_reports_as_its_own_service_and_is_off_by_default(self, compose):
         env = environment(compose["connector"])

@@ -519,8 +519,8 @@ network, and everything is off by default.
    ```
 
    `make telemetry-stop` removes the four containers and keeps their data.
-   Plain `make start` never starts them. With the hardened overlay use
-   `docker compose -f compose.yml -f compose.hardened.yml --profile telemetry up -d`.
+   Plain `make start` never starts them. On a hardened stack use
+   `make telemetry-start-hardened` instead (only Grafana is published).
 
 3. Open Grafana at <http://localhost:3002> (`GRAFANA_PORT`), user `admin`. The
    Prometheus and Tempo data sources, three dashboards and four alert rules are
@@ -533,7 +533,7 @@ network, and everything is off by default.
 |-----------|-------|
 | **RAG platform: health** | Request rate, error rate and p95 latency (overall and per route); how many dependencies are failing, each dependency's success ratio and calls by outcome. |
 | **RAG platform: capacity** | Prompt and completion tokens per minute by Application and model; time to first token; dependency latency; ingestion stage duration, queue wait and outcomes; Connector runs, duration and Documents changed. |
-| **RAG platform: usage** | Questions per Application; out-of-scope refusals per Application; searches, chunks returned, empty results and skipped reranks per Knowledge Base (shown by ID); the answer-cache hit rate. |
+| **RAG platform: usage** | Answer requests per Application (failed ones included); out-of-scope refusals per Application; searches, chunks returned, empty results and skipped reranks per Knowledge Base (shown by ID); the answer-cache hit rate. |
 
 **Alert rules.** *High API error rate* (over 5% server errors for 5 minutes),
 *High API p95 latency* (over 60 seconds for 10 minutes; a streamed answer counts
@@ -552,7 +552,7 @@ service). The rules themselves are files in `telemetry/grafana/provisioning/aler
 **Settings.** The API and the `connector` read `OTEL__ENABLED`, `OTEL__ENDPOINT`,
 `OTEL__SERVICE_NAME`, `OTEL__TRACE_SAMPLE_RATIO` (default `1.0`; metrics are
 never sampled), `OTEL__EXPORT_TIMEOUT` and `OTEL__QUEUE_SIZE`, all documented in
-`.env.example`. Retention is set on the stores: `PROMETHEUS_RETENTION` (default
+`.env.example` (containers send to the bundled collector; `OTEL_COLLECTOR_ENDPOINT` points them at another). Retention is set on the stores: `PROMETHEUS_RETENTION` (default
 `15d` for metrics) and `TEMPO_RETENTION` (default `72h`, three days, for
 traces). The names, units and labels of every metric are in
 [`docs/telemetry-metrics.md`](docs/telemetry-metrics.md); the deployment note

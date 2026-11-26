@@ -63,6 +63,12 @@ _Avoid_: Backend, provider URL
 **Rating**:
 A thumbs up or down, with an optional comment, that an End user gives one answer in a Conversation. Admins see ratings without any Conversation text.
 
+**Shared exchange**:
+One question and its answer that an End user explicitly chose to share with admins when rating it; the only Conversation text an admin can read, and exportable as Golden set candidates.
+
+**Citation**:
+A numbered pointer from an answer to the passage of a Document, or of an Attachment, that it drew on. The reader can open it to see the passage in its source.
+_Avoid_: Source, reference, footnote
 
 **Audit log**:
 The compliance record of who did what, kept for the long term and read by auditors. It names people. It holds digests of the prompt and the answer, never their text, unless an operator sets `AUDIT__LEVEL=full`. Each event records the request ID and, when Telemetry is on, the trace ID.
@@ -71,9 +77,3 @@ _Avoid_: Activity log, history
 **Telemetry**:
 Short-lived measurements of how the platform behaves (counts, durations, errors, token totals, per Application and Knowledge Base) read by operators. It never names a person and never holds prompt, answer or document text. The trace of a request carries its request ID, the same ID the Audit log records; the request ID is never a metric label. Telemetry is kept 15 days (metrics) and 3 days (traces) by default, and a collector that is down never affects an answer.
 _Avoid_: Monitoring, analytics, logs
-**Shared exchange**:
-One question and its answer that an End user explicitly chose to share with admins when rating it; the only Conversation text an admin can read, and exportable as Golden set candidates.
-
-**Citation**:
-A numbered pointer from an answer to the passage of a Document, or of an Attachment, that it drew on. The reader can open it to see the passage in its source.
-_Avoid_: Source, reference, footnote

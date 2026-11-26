@@ -164,4 +164,5 @@ class TestAlertRules:
     def test_the_dependency_rule_names_the_failing_dependency(self):
         rule = next(r for r in alert_rules() if r["uid"] == "rag-dependency-failing")
         assert "sum by (dependency)" in _rule_queries(rule)[0]
+        assert ">= 5" in _rule_queries(rule)[0], "a handful of calls must not be enough to fire"
         assert "$labels.dependency" in rule["annotations"]["summary"]

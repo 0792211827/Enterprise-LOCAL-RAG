@@ -33,7 +33,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "Questions per hour, by Application",
-      "description": "Requests to the answer routes, by Application slug.",
+      "description": "Requests to the answer routes, by Application slug; failed requests are included.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

@@ -83,7 +83,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: More than half the calls to {{ $labels.dependency }} failed over the last 5 minutes.
+          summary: More than half of at least five calls to {{ $labels.dependency }} failed over the last 5 minutes.
           description: 'The dependency is one of postgres, opensearch, redis, chat, embedding or rerank. See "Dependency success ratio" on the health dashboard.'
         data:
           - refId: A
@@ -92,7 +92,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: sum by (dependency) (rate(rag_dependency_calls_total{outcome="error"}[5m])) / sum by (dependency) (rate(rag_dependency_calls_total[5m]))
+              expr: (sum by (dependency) (rate(rag_dependency_calls_total{outcome="error"}[5m])) / sum by (dependency) (rate(rag_dependency_calls_total[5m]))) and on (dependency) (sum by (dependency) (increase(rag_dependency_calls_total[5m])) >= 5)
           - refId: B
             datasourceUid: __expr__
             model: { refId: B, type: reduce, expression: A, reducer: last }

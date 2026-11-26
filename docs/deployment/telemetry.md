@@ -4,11 +4,11 @@ Telemetry is optional and off by default. This note is what an operator needs to
 
 ## What runs
 
-The Compose profile `telemetry` adds four containers: the OpenTelemetry Collector, Prometheus (metrics), Tempo (traces) and Grafana. The API and the `connector` send OTLP/HTTP to the Collector at `otel-collector:4318`. Nothing is sent outside your network. Plain `docker compose up` and `make start` start none of them.
+The Compose profile `telemetry` adds four containers: the OpenTelemetry Collector, Prometheus (metrics), Tempo (traces) and Grafana. The API and the `connector` send OTLP/HTTP to the Collector at `otel-collector:4318` (`OTEL_COLLECTOR_ENDPOINT` points the containers at a different collector). Nothing is sent outside your network. Plain `docker compose up` and `make start` start none of them.
 
 ## Localhost-only binding
 
-Every port the stack publishes is bound to `127.0.0.1`:
+In the default stack every port is bound to `127.0.0.1`:
 
 | Service | Host port | Setting |
 |---------|-----------|---------|
@@ -17,7 +17,7 @@ Every port the stack publishes is bound to `127.0.0.1`:
 | OpenTelemetry Collector (OTLP/HTTP, for a backend run on the host with `make app`) | `127.0.0.1:4318` | none |
 | Tempo | not published | |
 
-To reach Grafana from other machines, put a reverse proxy in front of it; do not change the binding to `0.0.0.0`. With `compose.hardened.yml` the Collector, Prometheus and Tempo are not published at all, and Grafana is published on `RAG_BIND_ADDRESS` (loopback unless you set it), keeping the same password and no-anonymous-access settings.
+To reach Grafana from other machines, put a reverse proxy in front of it rather than widening the binding. `make telemetry-start-hardened` (the `compose.hardened.yml` overlay) publishes nothing but Grafana, on `RAG_BIND_ADDRESS` (loopback unless you set it, as for the API), keeping the same password and no-anonymous-access settings.
 
 Prometheus and Tempo have no authentication of their own. They are reachable only on `rag-network` (and, for Prometheus, on loopback), the same trust boundary as OpenSearch and Redis; see "Production hardening" in the README.
 
