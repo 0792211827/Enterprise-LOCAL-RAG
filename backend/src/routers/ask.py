@@ -129,6 +129,7 @@ async def ask_question(
     http_request: Request,
 ) -> AskResponse:
     """Clean RAG endpoint with essential tracing and exact match caching."""
+    telemetry.observe_application(None)  # a global route: no Application, so the series say "unknown"
     scope_token = scope.cache_token()
 
     rag_tracer = RAGTracer(langfuse_tracer)
@@ -193,7 +194,8 @@ async def ask_question(
 
             # Generate answer
             with rag_tracer.trace_generation(trace, request.model, final_prompt) as gen_span:
-                rag_response = await llm.generate_rag_answer(query=request.query, chunks=chunks, model=request.model)
+                with telemetry.stage("generate_answer"):
+                    rag_response = await llm.generate_rag_answer(query=request.query, chunks=chunks, model=request.model)
                 answer = rag_response.get("answer", "Unable to generate answer")
                 audit.answer = answer
                 rag_tracer.end_generation(gen_span, answer, request.model)
@@ -239,6 +241,7 @@ async def ask_question_stream(
     http_request: Request,
 ) -> StreamingResponse:
     """Clean streaming RAG endpoint."""
+    telemetry.observe_application(None)
 
     # Resolved to plain values now: the generator runs after the handler returns.
     subject = principal.subject
@@ -312,19 +315,30 @@ async def ask_question_stream(
                 # Stream generation
                 with rag_tracer.trace_generation(trace, request.model, final_prompt) as gen_span:
                     full_response = ""
-                    async for chunk in llm.generate_rag_answer_stream(
-                        query=request.query, chunks=chunks, model=request.model
-                    ):
-                        if chunk.get("response"):
-                            text_chunk = chunk["response"]
-                            full_response += text_chunk
-                            audit.answer = full_response
-                            yield f"data: {json.dumps({'chunk': text_chunk})}\n\n"
+                    # Not made current: the span stays open across the yields, which the consumer drives from elsewhere.
+                    stage = telemetry.begin_stage("generate_answer")
+                    generation_failed = False
+                    try:
+                        async for chunk in llm.generate_rag_answer_stream(
+                            query=request.query, chunks=chunks, model=request.model
+                        ):
+                            if chunk.get("response"):
+                                text_chunk = chunk["response"]
+                                if not full_response:
+                                    telemetry.record_first_token(request.model)
+                                full_response += text_chunk
+                                audit.answer = full_response
+                                yield f"data: {json.dumps({'chunk': text_chunk})}\n\n"
 
-                        if chunk.get("done", False):
-                            rag_tracer.end_generation(gen_span, full_response, request.model)
-                            yield f"data: {json.dumps({'answer': full_response, 'done': True})}\n\n"
-                            break
+                            if chunk.get("done", False):
+                                rag_tracer.end_generation(gen_span, full_response, request.model)
+                                yield f"data: {json.dumps({'answer': full_response, 'done': True})}\n\n"
+                                break
+                    except Exception:
+                        generation_failed = True
+                        raise
+                    finally:
+                        stage.end(error=generation_failed)
 
                 rag_tracer.end_request(trace, full_response, time.time() - start_time)
 
@@ -346,6 +360,7 @@ async def ask_question_stream(
             except Exception as e:
                 logger.error(f"Streaming error: {e}")
                 audit.fail(e)
+                telemetry.mark_request_failed()  # the status is 200 by now, so the request metric has to be told
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(

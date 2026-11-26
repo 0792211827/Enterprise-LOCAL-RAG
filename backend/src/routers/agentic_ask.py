@@ -1,7 +1,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from src.dependencies import AgenticRAGDep, AuditDep, LangfuseDep, PrincipalDep, ScopeDep
+from src.dependencies import AgenticRAGDep, AuditDep, LangfuseDep, PrincipalDep, ScopeDep, TelemetryDep
 from src.models import AuditAction
 from src.schemas.api.ask import AgenticAskResponse, AskRequest, FeedbackRequest, FeedbackResponse
 from src.services.access import NO_ACCESSIBLE_KNOWLEDGE_MESSAGE
@@ -17,6 +17,7 @@ async def ask_agentic(
     principal: PrincipalDep,
     scope: ScopeDep,
     audit_recorder: AuditDep,
+    telemetry: TelemetryDep,
     http_request: Request,
 ) -> AgenticAskResponse:
     """
@@ -45,6 +46,7 @@ async def ask_agentic(
     Raises:
         HTTPException: If processing fails
     """
+    telemetry.observe_application(None)  # a global route: no Application, so the series say "unknown"
     decision = scope.restrict(None)
     with audited_query(
         audit_recorder,

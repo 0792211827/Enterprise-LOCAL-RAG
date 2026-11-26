@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
-from src.dependencies import AuditDep, EmbeddingsDep, OpenSearchDep, RerankerDep, ScopeDep
+from src.dependencies import AuditDep, EmbeddingsDep, OpenSearchDep, RerankerDep, ScopeDep, TelemetryDep
 from src.models import AuditAction
 from src.schemas.api.search import HybridSearchRequest, SearchHit, SearchResponse
 from src.schemas.indexing.elements import locator_label
@@ -21,6 +21,7 @@ async def hybrid_search(
     scope: ScopeDep,
     reranker: RerankerDep,
     audit_recorder: AuditDep,
+    telemetry: TelemetryDep,
     http_request: Request,
 ) -> SearchResponse:
     """
@@ -28,6 +29,7 @@ async def hybrid_search(
 
     Results are limited to the knowledge bases the caller may read.
     """
+    telemetry.observe_application(None)  # a global route: no Application, so the series say "unknown"
     decision = scope.restrict(None)
     with audited_query(
         audit_recorder,

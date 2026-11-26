@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict, List, Optional, Protocol
 
 import httpx
+from src.services.telemetry import timed_call
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class HTTPReranker:
         if api_key:
             self._headers["Authorization"] = f"Bearer {api_key}"
 
+    @timed_call("rerank")
     async def rerank(self, query: str, hits: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         documents = [hit.get("chunk_text", "") for hit in hits]
         payload: Dict[str, Any] = {"query": query, "documents": documents}

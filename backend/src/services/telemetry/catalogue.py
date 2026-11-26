@@ -13,6 +13,11 @@ HISTOGRAM = "histogram"
 DURATION_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0)
 
 
+# A model label comes from the request on the legacy routes, so how many distinct ones are kept is bounded.
+MAX_MODEL_LABELS = 50
+MAX_MODEL_LABEL_LENGTH = 64
+
+
 @dataclass(frozen=True)
 class MetricSpec:
     name: str
@@ -32,6 +37,10 @@ RETRIEVAL_RERANK_SKIPPED = "rag.retrieval.rerank_skipped"
 GUARDRAIL_OUT_OF_SCOPE = "rag.guardrail.out_of_scope"
 CACHE_LOOKUPS = "rag.cache.lookups"
 TIME_TO_FIRST_TOKEN = "rag.answer.time_to_first_token"
+DEPENDENCY_CALLS = "rag.dependency.calls"
+DEPENDENCY_DURATION = "rag.dependency.duration"
+TOKENS_IN = "rag.llm.tokens.input"
+TOKENS_OUT = "rag.llm.tokens.output"
 
 CATALOGUE: Tuple[MetricSpec, ...] = (
     MetricSpec(HTTP_REQUESTS, COUNTER, "{request}", "API requests handled.", ("route", "method", "status", "application")),
@@ -86,6 +95,34 @@ CATALOGUE: Tuple[MetricSpec, ...] = (
         HISTOGRAM,
         "s",
         "Time from the request arriving to the first token of an answer streamed token by token (not a refusal or an answer produced whole).",
+        ("application", "model"),
+    ),
+    MetricSpec(
+        DEPENDENCY_CALLS,
+        COUNTER,
+        "{call}",
+        "Calls to a dependency (postgres, opensearch, redis, chat, embedding, rerank), by outcome (ok, error or cancelled).",
+        ("dependency", "outcome"),
+    ),
+    MetricSpec(
+        DEPENDENCY_DURATION,
+        HISTOGRAM,
+        "s",
+        "Time a dependency took to answer a call; for a streamed chat answer, until the stream ended.",
+        ("dependency", "outcome"),
+    ),
+    MetricSpec(
+        TOKENS_IN,
+        COUNTER,
+        "{token}",
+        "Prompt tokens the model reported using. Calls whose backend reports no usage add nothing; nothing is estimated.",
+        ("application", "model"),
+    ),
+    MetricSpec(
+        TOKENS_OUT,
+        COUNTER,
+        "{token}",
+        "Completion tokens the model reported producing. Calls whose backend reports no usage add nothing.",
         ("application", "model"),
     ),
 )

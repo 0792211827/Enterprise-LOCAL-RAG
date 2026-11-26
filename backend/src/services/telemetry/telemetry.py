@@ -13,7 +13,7 @@ import logging
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence, Set
 
 from opentelemetry import context as otel_context
 from opentelemetry import trace
@@ -23,6 +23,7 @@ from . import catalogue as m
 from .exporters import ExportHealth
 from .labels import (
     METRIC_LABELS,
+    OTHER,
     SPAN_ATTRIBUTES,
     UNKNOWN,
     TelemetryLabelError,
@@ -43,6 +44,7 @@ class RequestScope:
     telemetry: "Telemetry"
     started: float
     application: Optional[str] = None
+    failed: bool = False
 
 
 _scope: ContextVar[Optional[RequestScope]] = ContextVar("telemetry_request_scope", default=None)
@@ -93,6 +95,57 @@ class Stage:
             self._telemetry.dropped("ending a span")
 
 
+class Call:
+    """One call to a dependency, timed and counted by outcome. Never raises into the caller.
+
+    Its span is never made current (nothing nests under a dependency call), so it can be begun in one frame and
+    ended in another, as a streamed answer needs. As a context manager an exception is an error, and a
+    cancellation (the client went away) is neither a success nor the dependency's fault.
+    """
+
+    def __init__(self, telemetry: "OtelTelemetry", dependency: str):
+        self._telemetry = telemetry
+        self._dependency = dependency
+        self._started: Optional[float] = time.perf_counter()
+        self._span: Optional[trace.Span] = None
+        try:
+            attributes = clean({"dependency": dependency}, SPAN_ATTRIBUTES, strict=telemetry.strict)
+            self._span = telemetry.tracer.start_span(f"dependency.{dependency}", attributes=attributes)
+        except TelemetryLabelError:
+            if telemetry.strict:
+                raise
+        except Exception:  # noqa: BLE001
+            telemetry.dropped("starting a span")
+
+    def __enter__(self) -> "Call":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> bool:
+        failed = exc_type is not None
+        self.end(error=failed and issubclass(exc_type, Exception), cancelled=failed and not issubclass(exc_type, Exception))
+        return False
+
+    def end(self, error: bool = False, cancelled: bool = False) -> bool:
+        """Record the call: ``error`` marks it failed (without the exception, whose text could hold a question).
+
+        :returns: whether this ended the call; a call ends once, so a second ``end`` records nothing
+        """
+        span, self._span = self._span, None
+        started, self._started = self._started, None
+        if started is None:
+            return False
+        outcome = "error" if error else "cancelled" if cancelled else "ok"
+        try:
+            if span is not None:
+                if error:
+                    span.set_status(StatusCode.ERROR)
+                span.end()
+        except Exception:  # noqa: BLE001
+            self._telemetry.dropped("ending a span")
+        self._telemetry.call_finished(self._dependency, outcome, time.perf_counter() - started)
+        return True
+
+
 class RequestHandle:
     """One request being measured; ``finish`` records it."""
 
@@ -122,12 +175,12 @@ class RequestHandle:
             if self._span is not None:
                 self._span.update_name(f"{self._method} {route}")
                 self._span.set_attributes(clean(labels, SPAN_ATTRIBUTES, strict=telemetry.strict))
-                if status >= 500:
+                if status >= 500 or self._scope.failed:
                     self._span.set_status(StatusCode.ERROR)
                 self._span.end()
         except Exception:  # noqa: BLE001
             telemetry.dropped("ending a request span")
-        telemetry.request_finished(labels, time.perf_counter() - self._scope.started, status)
+        telemetry.request_finished(labels, time.perf_counter() - self._scope.started, status, self._scope.failed)
 
 
 class Telemetry:
@@ -147,6 +200,20 @@ class Telemetry:
     def begin_stage(self, name: str, **attributes: Any) -> Any:
         """A span for a stage that outlives the caller's frame (a stream); end it with ``.end()``."""
         return _NOOP_STAGE
+
+    def dependency(self, name: str) -> Any:
+        """A call to a dependency (``postgres``, ``opensearch``, ``redis``, ``chat``, ``embedding``, ``rerank``), as a context manager."""
+        return _NOOP_STAGE
+
+    def begin_dependency(self, name: str) -> Any:
+        """A call to a dependency that outlives the caller's frame (a stream); end it with ``.end()``."""
+        return _NOOP_STAGE
+
+    def record_tokens(self, model: Optional[str], prompt_tokens: Any, completion_tokens: Any) -> None:
+        """Tokens the model reported using for one call; a count the backend did not report (``None``) is not recorded."""
+
+    def mark_request_failed(self) -> None:
+        """The current request failed in a way its status cannot show (a streamed answer that broke after it began)."""
 
     def observe_application(self, application: Any) -> None:
         """Label the current request's metrics with this Application (``None``: an unknown one)."""
@@ -189,8 +256,8 @@ class _NoopStage:
     def __exit__(self, *exc: Any) -> bool:
         return False
 
-    def end(self, error: bool = False) -> None:
-        pass
+    def end(self, error: bool = False, cancelled: bool = False) -> bool:
+        return False
 
 
 _NOOP_STAGE = _NoopStage()
@@ -201,6 +268,20 @@ def current_telemetry() -> Telemetry:
     """The telemetry of the request being handled, or the no-op one outside a request."""
     scope = _scope.get()
     return scope.telemetry if scope is not None else NOOP_TELEMETRY
+
+
+def timed_call(dependency: str):
+    """Decorate an async method that calls ``dependency``: each call is timed and counted by outcome."""
+
+    def decorate(method):
+        @functools.wraps(method)
+        async def timed(*args: Any, **kwargs: Any) -> Any:
+            with current_telemetry().dependency(dependency):
+                return await method(*args, **kwargs)
+
+        return timed
+
+    return decorate
 
 
 def _fail_open(method):
@@ -227,6 +308,7 @@ class OtelTelemetry(Telemetry):
         self.strict = strict
         self.health = health or ExportHealth()
         self._dropped_warned = False
+        self._models_seen: Set[str] = set()
         self._tracer_provider = tracer_provider
         self._meter_provider = meter_provider
         self.tracer = tracer_provider.get_tracer("rag-api")
@@ -280,11 +362,52 @@ class OtelTelemetry(Telemetry):
         return None
 
     @_fail_open
-    def request_finished(self, labels: Dict[str, Any], seconds: float, status: int) -> None:
+    def request_finished(self, labels: Dict[str, Any], seconds: float, status: int, failed: bool = False) -> None:
         self._add(m.HTTP_REQUESTS, labels)
         self._observe(m.HTTP_REQUEST_DURATION, seconds, labels)
-        if status >= 500:
+        if status >= 500 or failed:
             self._add(m.HTTP_REQUEST_ERRORS, labels)
+
+    def dependency(self, name: str) -> Call:
+        return Call(self, name)
+
+    def begin_dependency(self, name: str) -> Call:
+        return Call(self, name)
+
+    @_fail_open
+    def call_finished(self, dependency: str, outcome: str, seconds: float) -> None:
+        labels = {"dependency": dependency, "outcome": outcome}
+        self._add(m.DEPENDENCY_CALLS, labels)
+        self._observe(m.DEPENDENCY_DURATION, seconds, labels)
+
+    @_fail_open
+    def record_tokens(self, model: Optional[str], prompt_tokens: Any, completion_tokens: Any) -> None:
+        scope = _scope.get()
+        labels = {"application": scope.application if scope and scope.application else UNKNOWN, "model": self._model_label(model)}
+        for name, tokens in ((m.TOKENS_IN, prompt_tokens), (m.TOKENS_OUT, completion_tokens)):
+            if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens >= 0:
+                self._add(name, labels, tokens)
+
+    @_fail_open
+    def mark_request_failed(self) -> None:
+        scope = _scope.get()
+        if scope is not None:
+            scope.failed = True
+
+    def _model_label(self, model: Optional[str]) -> str:
+        """The model's name, or ``other`` once so many have been seen that a caller must be minting them.
+
+        A legacy route takes the model from the request, so as a label it could otherwise mint unbounded series.
+        """
+        if not model:
+            return UNKNOWN
+        name = str(model)[: m.MAX_MODEL_LABEL_LENGTH]
+        if name in self._models_seen:
+            return name
+        if len(self._models_seen) >= m.MAX_MODEL_LABELS:
+            return OTHER
+        self._models_seen.add(name)
+        return name
 
     def stage(self, name: str, **attributes: Any) -> Stage:
         return Stage(self, name, attributes, current=True)
@@ -347,5 +470,5 @@ class OtelTelemetry(Telemetry):
             self._observe(
                 m.TIME_TO_FIRST_TOKEN,
                 time.perf_counter() - scope.started,
-                {"application": scope.application, "model": model},
+                {"application": scope.application, "model": self._model_label(model)},
             )

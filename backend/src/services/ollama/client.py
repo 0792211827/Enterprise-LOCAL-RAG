@@ -9,6 +9,7 @@ from src.schemas.ollama import RAGResponse
 from src.services.ollama.prompts import RAGPromptBuilder, ResponseParser
 from src.services.providers.llm.base import LLMProvider
 from src.services.providers.llm.citations import build_citations, build_sources
+from src.services.telemetry import ChatTelemetryCallback, current_telemetry
 
 if TYPE_CHECKING:
     from langchain_ollama import ChatOllama
@@ -50,10 +51,13 @@ class OllamaClient(LLMProvider):
         """
         from langchain_ollama import ChatOllama
 
+        model = model or self.default_model
+        callbacks = [*(kwargs.pop("callbacks", None) or []), ChatTelemetryCallback(model)]
         return ChatOllama(
             base_url=self.base_url,
-            model=model or self.default_model,
+            model=model,
             temperature=temperature,
+            callbacks=callbacks,
             **kwargs,
         )
 
@@ -132,49 +136,52 @@ class OllamaClient(LLMProvider):
                 - latency_ms: Generation latency in milliseconds
         """
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                data = {"model": model, "prompt": prompt, "stream": stream, **kwargs}
+            telemetry = current_telemetry()
+            with telemetry.dependency("chat"):
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    data = {"model": model, "prompt": prompt, "stream": stream, **kwargs}
 
-                logger.info(f"Sending request to Ollama: model={model}, stream={stream}, extra_params={kwargs}")
-                response = await client.post(f"{self.base_url}/api/generate", json=data)
+                    logger.info(f"Sending request to Ollama: model={model}, stream={stream}, extra_params={kwargs}")
+                    response = await client.post(f"{self.base_url}/api/generate", json=data)
 
-                if response.status_code == 200:
-                    result = response.json()
+                    if response.status_code == 200:
+                        result = response.json()
 
-                    # Parse Ollama usage metadata and convert to Langfuse-compatible format
-                    usage_metadata = {}
+                        # Parse Ollama usage metadata and convert to Langfuse-compatible format
+                        usage_metadata = {}
 
-                    # Ollama returns these fields in the response
-                    if "prompt_eval_count" in result:
-                        usage_metadata["prompt_tokens"] = result.get("prompt_eval_count", 0)
-                    if "eval_count" in result:
-                        usage_metadata["completion_tokens"] = result.get("eval_count", 0)
+                        # Ollama returns these fields in the response
+                        if "prompt_eval_count" in result:
+                            usage_metadata["prompt_tokens"] = result.get("prompt_eval_count", 0)
+                        if "eval_count" in result:
+                            usage_metadata["completion_tokens"] = result.get("eval_count", 0)
 
-                    # Calculate total tokens
-                    if usage_metadata:
-                        usage_metadata["total_tokens"] = usage_metadata.get("prompt_tokens", 0) + usage_metadata.get(
-                            "completion_tokens", 0
-                        )
+                        # Calculate total tokens
+                        if usage_metadata:
+                            usage_metadata["total_tokens"] = usage_metadata.get("prompt_tokens", 0) + usage_metadata.get(
+                                "completion_tokens", 0
+                            )
 
-                    # Parse timing information (convert nanoseconds to milliseconds)
-                    if "total_duration" in result:
-                        # Ollama returns duration in nanoseconds
-                        usage_metadata["latency_ms"] = round(result["total_duration"] / 1_000_000, 2)
+                        # Parse timing information (convert nanoseconds to milliseconds)
+                        if "total_duration" in result:
+                            # Ollama returns duration in nanoseconds
+                            usage_metadata["latency_ms"] = round(result["total_duration"] / 1_000_000, 2)
 
-                    # Add timing breakdown if available
-                    if "prompt_eval_duration" in result:
-                        usage_metadata["prompt_eval_duration_ms"] = round(result["prompt_eval_duration"] / 1_000_000, 2)
-                    if "eval_duration" in result:
-                        usage_metadata["eval_duration_ms"] = round(result["eval_duration"] / 1_000_000, 2)
+                        # Add timing breakdown if available
+                        if "prompt_eval_duration" in result:
+                            usage_metadata["prompt_eval_duration_ms"] = round(result["prompt_eval_duration"] / 1_000_000, 2)
+                        if "eval_duration" in result:
+                            usage_metadata["eval_duration_ms"] = round(result["eval_duration"] / 1_000_000, 2)
 
-                    # Attach usage metadata to the response
-                    result["usage_metadata"] = usage_metadata
+                        # Attach usage metadata to the response
+                        result["usage_metadata"] = usage_metadata
 
-                    logger.debug(f"Usage metadata: {usage_metadata}")
+                        logger.debug(f"Usage metadata: {usage_metadata}")
 
-                    return result
-                else:
-                    raise OllamaException(f"Generation failed: {response.status_code}")
+                        telemetry.record_tokens(model, result.get("prompt_eval_count"), result.get("eval_count"))
+                        return result
+                    else:
+                        raise OllamaException(f"Generation failed: {response.status_code}")
 
         except httpx.ConnectError as e:
             raise OllamaConnectionError(f"Cannot connect to Ollama service: {e}")
@@ -197,6 +204,17 @@ class OllamaClient(LLMProvider):
         Yields:
             JSON chunks from streaming response
         """
+        telemetry = current_telemetry()
+        # Begun, not entered: the call lasts as long as the stream, across the consumer's yields.
+        call = telemetry.begin_dependency("chat")
+        failed = cancelled = False
+        usage: Dict[str, Any] = {}
+
+        def finish() -> None:
+            # Idempotent: ended when Ollama says it is done, not when the consumer gets round to closing us.
+            if call.end(error=failed, cancelled=cancelled):
+                telemetry.record_tokens(model, usage.get("prompt_eval_count"), usage.get("eval_count"))
+
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 data = {"model": model, "prompt": prompt, "stream": True, **kwargs}
@@ -211,19 +229,31 @@ class OllamaClient(LLMProvider):
                         if line.strip():
                             try:
                                 chunk = json.loads(line)
-                                yield chunk
                             except json.JSONDecodeError:
                                 logger.warning(f"Failed to parse streaming chunk: {line}")
                                 continue
+                            if chunk.get("done"):
+                                usage = chunk
+                                finish()
+                            yield chunk
 
         except httpx.ConnectError as e:
+            failed = True
             raise OllamaConnectionError(f"Cannot connect to Ollama service: {e}")
         except httpx.TimeoutException as e:
+            failed = True
             raise OllamaTimeoutError(f"Ollama service timeout: {e}")
         except OllamaException:
+            failed = True
             raise
         except Exception as e:
+            failed = True
             raise OllamaException(f"Error in streaming generation: {e}")
+        except BaseException:  # the consumer stopped early, or was cancelled
+            cancelled = True
+            raise
+        finally:
+            finish()
 
     async def generate_rag_answer(
         self,

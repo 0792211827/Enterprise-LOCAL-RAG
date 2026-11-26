@@ -15,6 +15,7 @@ SPAN_ATTRIBUTES = METRIC_LABELS | {"request_id"}
 # The value for an Application or Knowledge Base that is unknown or deleted, so an arbitrary value from a caller
 # can never become a series of its own.
 UNKNOWN = "unknown"
+OTHER = "other"
 
 MAX_VALUE_LENGTH = 128
 

@@ -7,6 +7,7 @@ from typing import Optional
 import redis
 from src.config import RedisSettings
 from src.schemas.api.ask import AskRequest, AskResponse
+from src.services.telemetry import current_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,9 @@ class CacheClient:
         :returns: how many entries were removed; failures are logged, not raised, as for the other cache calls
         """
         try:
-            keys = list(self.redis.scan_iter(match="exact_cache:*"))
-            return self.redis.delete(*keys) if keys else 0
+            with current_telemetry().dependency("redis"):
+                keys = list(self.redis.scan_iter(match="exact_cache:*"))
+                return self.redis.delete(*keys) if keys else 0
         except Exception as e:
             logger.error(f"Error clearing the cache: {e}")
             return 0
@@ -60,7 +62,8 @@ class CacheClient:
             cache_key = self._generate_cache_key(request, scope_token)
 
             # Simple Redis GET operation - O(1)
-            cached_response = self.redis.get(cache_key)
+            with current_telemetry().dependency("redis"):
+                cached_response = self.redis.get(cache_key)
 
             if cached_response:
                 try:
@@ -83,7 +86,8 @@ class CacheClient:
             cache_key = self._generate_cache_key(request, scope_token)
 
             # Simple Redis SET operation with TTL
-            success = self.redis.set(cache_key, response.model_dump_json(), ex=self.ttl)
+            with current_telemetry().dependency("redis"):
+                success = self.redis.set(cache_key, response.model_dump_json(), ex=self.ttl)
 
             if success:
                 logger.info(f"Stored response in exact cache with key {cache_key[:16]}...")

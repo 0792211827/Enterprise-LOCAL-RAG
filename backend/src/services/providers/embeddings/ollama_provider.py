@@ -2,6 +2,7 @@ import logging
 from typing import List
 
 import httpx
+from src.services.telemetry import timed_call
 
 from .base import EmbeddingProvider
 
@@ -28,6 +29,7 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
         self._client = httpx.AsyncClient(timeout=timeout)
         logger.info(f"Ollama embedding provider configured: endpoint={self.endpoint}, model={model_name}")
 
+    @timed_call("embedding")
     async def _embed(self, inputs: List[str]) -> List[List[float]]:
         response = await self._client.post(
             f"{self.endpoint}/api/embed",

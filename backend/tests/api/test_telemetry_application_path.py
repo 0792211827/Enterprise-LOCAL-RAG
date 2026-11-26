@@ -14,6 +14,7 @@ from src.auth import Principal, Role, get_principal
 from src.dependencies import get_db_session, get_embeddings_service, get_llm_provider, get_opensearch_client, get_reranker
 from src.main import app
 from src.services.providers.llm.openai_compatible_provider import OpenAICompatibleLLMProvider
+from src.services.telemetry import instrument_engine
 
 from tests.audit_support import sqlite_session_factory
 from tests.unit.services.test_application_agentic import Backend
@@ -32,6 +33,9 @@ class Index:
     def __init__(self):
         self.passages = {}
         self.search_unified = MagicMock(side_effect=self._search)
+
+    def health_check(self):
+        return True
 
     def _search(self, **kwargs):
         wanted = kwargs.get("knowledge_base_ids") or list(self.passages)
@@ -72,6 +76,7 @@ def llm():
 def stack(client, index, llm):
     """The real app over an in-memory SQLite database, with the index and the model faked."""
     factory = sqlite_session_factory()
+    instrument_engine(factory.kw["bind"])  # as PostgreSQLDatabase does for the real engine
 
     def session():
         db = factory()
@@ -96,6 +101,36 @@ def stack(client, index, llm):
         get_principal,
     ):
         app.dependency_overrides.pop(dependency, None)
+
+
+class GradesTwice(Backend):
+    """Rejects the first retrieval so the graph rewrites the query and retrieves again."""
+
+    def __call__(self, request):
+        body = json.loads(request.content)
+        if ((body.get("response_format") or {}).get("json_schema") or {}).get("name") == "GradeDocuments":
+            self.grades = getattr(self, "grades", 0) + 1
+            if self.grades == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": "x",
+                        "object": "chat.completion",
+                        "created": 1,
+                        "model": body["model"],
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "stop",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": json.dumps({"binary_score": "no", "reasoning": "no"}),
+                                },
+                            }
+                        ],
+                    },
+                )
+        return super().__call__(request)
 
 
 async def make_application(client, index, name="HR Bot", kb_count=1, strategy=None):
@@ -168,10 +203,17 @@ class TestRequestMetricsPerApplication:
 
 class TestStageSpans:
     def children_of(self, telemetry, parent):
-        return {s.name for s in telemetry.spans() if s.parent and s.parent.span_id == parent.context.span_id}
+        return {
+            s.name
+            for s in telemetry.spans()
+            if s.parent and s.parent.span_id == parent.context.span_id and not (s.attributes or {}).get("dependency")
+        }
 
     def trace_of(self, telemetry, root):
-        return [s for s in telemetry.spans() if s.context.trace_id == root.context.trace_id]
+        """The spans of one request's trace, not counting the calls to dependencies made along the way."""
+        return [
+            s for s in telemetry.spans() if s.context.trace_id == root.context.trace_id and not (s.attributes or {}).get("dependency")
+        ]
 
     async def test_a_traditional_answer_has_a_span_per_stage_under_the_request(self, stack, index, telemetry):
         app.dependency_overrides[get_reranker] = lambda: reranker_for(FakeEndpoint(ranking=list(PASSAGES.values())), candidates=5)
@@ -200,35 +242,6 @@ class TestStageSpans:
         assert {s.name for s in self.trace_of(telemetry, root)} == {root.name, "retrieve", "generate_answer"}
 
     async def test_an_agentic_answer_has_a_span_per_stage_that_ran(self, stack, index, telemetry):
-        class GradesTwice(Backend):
-            """Rejects the first retrieval so the graph rewrites the query and retrieves again."""
-
-            def __call__(self, request):
-                body = json.loads(request.content)
-                if ((body.get("response_format") or {}).get("json_schema") or {}).get("name") == "GradeDocuments":
-                    self.grades = getattr(self, "grades", 0) + 1
-                    if self.grades == 1:
-                        return httpx.Response(
-                            200,
-                            json={
-                                "id": "x",
-                                "object": "chat.completion",
-                                "created": 1,
-                                "model": body["model"],
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "finish_reason": "stop",
-                                        "message": {
-                                            "role": "assistant",
-                                            "content": json.dumps({"binary_score": "no", "reasoning": "no"}),
-                                        },
-                                    }
-                                ],
-                            },
-                        )
-                return super().__call__(request)
-
         provider = OpenAICompatibleLLMProvider("http://backend/v1", "m", transport=httpx.MockTransport(GradesTwice()))
         app.dependency_overrides[get_llm_provider] = lambda: provider
         app.dependency_overrides[get_reranker] = lambda: reranker_for(FakeEndpoint(ranking=list(PASSAGES.values())), candidates=5)

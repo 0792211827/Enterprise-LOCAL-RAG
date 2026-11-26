@@ -4,8 +4,9 @@ import logging
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from opensearchpy import OpenSearch
+from opensearchpy import OpenSearch, Transport
 from src.config import Settings
+from src.services.telemetry import current_telemetry
 
 from .index_config_hybrid import ADDITIVE_FIELDS, HYBRID_RRF_PIPELINE, KNN_ENGINE, build_chunks_mapping
 from .query_builder import NOT_IN_A_PARTITION, NOT_STAGED, RESTRICTION_FIELD, QueryBuilder, partition_filters, restriction_filter
@@ -46,6 +47,14 @@ def knn_k(size: int, filter_clause: Any) -> int:
     return min(size * KNN_FILTER_OVERSAMPLE, KNN_MAX_CANDIDATES)
 
 
+class TimedTransport(Transport):
+    """Every call to the cluster goes through here, so each is timed and counted once, whatever method made it."""
+
+    def perform_request(self, *args: Any, **kwargs: Any) -> Any:
+        with current_telemetry().dependency("opensearch"):
+            return super().perform_request(*args, **kwargs)
+
+
 class OpenSearchClient:
     """OpenSearch client supporting BM25 and hybrid search with native RRF."""
 
@@ -59,6 +68,7 @@ class OpenSearchClient:
 
         self.client = OpenSearch(
             hosts=[host],
+            transport_class=TimedTransport,
             use_ssl=False,
             verify_certs=False,
             ssl_show_warn=False,

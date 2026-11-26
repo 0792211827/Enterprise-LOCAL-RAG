@@ -2,6 +2,7 @@ import logging
 from typing import List, Optional
 
 import httpx
+from src.services.telemetry import timed_call
 
 from .base import EmbeddingProvider
 
@@ -33,6 +34,7 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
         self._client = httpx.AsyncClient(timeout=timeout, headers=headers)
         logger.info(f"OpenAI-compatible embedding provider configured: endpoint={self.endpoint}, model={model_name}")
 
+    @timed_call("embedding")
     async def _embed(self, inputs: List[str]) -> List[List[float]]:
         response = await self._client.post(
             f"{self.endpoint}/embeddings",

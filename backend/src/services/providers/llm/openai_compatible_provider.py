@@ -1,10 +1,12 @@
 import json
 import logging
 import time
+from contextlib import aclosing
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 from src.services.ollama.prompts import RAGPromptBuilder, ResponseParser
+from src.services.telemetry import ChatTelemetryCallback, current_telemetry
 
 from .base import LLMProvider, LLMProviderError
 from .citations import build_citations, build_sources
@@ -81,11 +83,14 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         # local servers ignore (falling back to their own, often tiny, default).
         # Send the classic max_tokens field they all understand.
         extra_body = {"max_tokens": self.max_tokens, **(kwargs.pop("extra_body", None) or {})}
+        model = model or self.default_model
+        callbacks = [*(kwargs.pop("callbacks", None) or []), ChatTelemetryCallback(model)]
         return LocalChatOpenAI(
+            callbacks=callbacks,
             base_url=self.endpoint,
             # The client library insists on a key; local servers usually ignore it.
             api_key=self._api_key or "not-needed",
-            model=model or self.default_model,
+            model=model,
             temperature=temperature,
             extra_body=extra_body,
             timeout=self._timeout_seconds,
@@ -129,15 +134,19 @@ class OpenAICompatibleLLMProvider(LLMProvider):
     async def _complete(self, model: str, messages: List[Dict[str, Any]], **kwargs: Any) -> Dict[str, Any]:
         payload = self._payload(model, messages, False, kwargs)
         start = time.perf_counter()
-        async with self._client() as client:
-            response = await client.post(f"{self.endpoint}/chat/completions", json=payload)
-            response.raise_for_status()
-            data = response.json()
-        message = _error_message(data)
-        if message:
-            raise LLMProviderError(message)
-        text = data["choices"][0]["message"].get("content") or ""
+        telemetry = current_telemetry()
+        with telemetry.dependency("chat"):
+            async with self._client() as client:
+                response = await client.post(f"{self.endpoint}/chat/completions", json=payload)
+                response.raise_for_status()
+                data = response.json()
+            message = _error_message(data)
+            if message:
+                raise LLMProviderError(message)
+            text = data["choices"][0]["message"].get("content") or ""
         usage = data.get("usage") or {}
+        # A backend that reports no usage adds no tokens: they are never estimated.
+        telemetry.record_tokens(model, usage.get("prompt_tokens"), usage.get("completion_tokens"))
         return {
             "response": text,
             "usage_metadata": {
@@ -150,29 +159,51 @@ class OpenAICompatibleLLMProvider(LLMProvider):
 
     async def _complete_stream(self, model: str, messages: List[Dict[str, Any]], **kwargs: Any) -> AsyncIterator[Dict[str, Any]]:
         payload = self._payload(model, messages, True, kwargs)
-        async with self._client() as client:
-            async with client.stream("POST", f"{self.endpoint}/chat/completions", json=payload) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    line = line.strip()
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data = line[len("data:") :].strip()
-                    if data == "[DONE]":
-                        yield {"response": "", "done": True}
-                        break
-                    try:
-                        chunk = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    message = _error_message(chunk)
-                    if message:
-                        raise LLMProviderError(message)
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue  # e.g. a trailing usage-only chunk
-                    # content is null on role-only and finish chunks
-                    yield {"response": (choices[0].get("delta") or {}).get("content") or "", "done": False}
+        telemetry = current_telemetry()
+        # Begun, not entered: the call lasts as long as the stream, across the consumer's yields.
+        call = telemetry.begin_dependency("chat")
+        failed = cancelled = False
+        usage: Dict[str, Any] = {}
+
+        def finish() -> None:
+            # Idempotent: ended when the endpoint says it is done, not when the consumer gets round to closing us.
+            if call.end(error=failed, cancelled=cancelled):
+                telemetry.record_tokens(model, usage.get("prompt_tokens"), usage.get("completion_tokens"))
+
+        try:
+            async with self._client() as client:
+                async with client.stream("POST", f"{self.endpoint}/chat/completions", json=payload) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data = line[len("data:") :].strip()
+                        if data == "[DONE]":
+                            finish()
+                            yield {"response": "", "done": True}
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        message = _error_message(chunk)
+                        if message:
+                            raise LLMProviderError(message)
+                        usage = chunk.get("usage") or usage
+                        choices = chunk.get("choices") or []
+                        if not choices:
+                            continue  # e.g. a trailing usage-only chunk
+                        # content is null on role-only and finish chunks
+                        yield {"response": (choices[0].get("delta") or {}).get("content") or "", "done": False}
+        except Exception:
+            failed = True
+            raise
+        except BaseException:  # the consumer stopped early, or was cancelled
+            cancelled = True
+            raise
+        finally:
+            finish()
 
     async def generate(self, model: str, prompt: str, stream: bool = False, **kwargs: Any) -> Optional[Dict[str, Any]]:
         return await self._complete(model, [{"role": "user", "content": prompt}], **kwargs)
@@ -209,5 +240,7 @@ class OpenAICompatibleLLMProvider(LLMProvider):
         messages = self.prompt_builder.create_rag_messages(
             query, chunks, system_prompt=system_prompt, history=history, images=images
         )
-        async for chunk in self._complete_stream(model, messages, temperature=0.7, top_p=0.9):
-            yield chunk
+        # aclosing: closing this generator closes the stream, so an abandoned answer ends its call at once.
+        async with aclosing(self._complete_stream(model, messages, temperature=0.7, top_p=0.9)) as stream:
+            async for chunk in stream:
+                yield chunk

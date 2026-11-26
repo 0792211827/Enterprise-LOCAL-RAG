@@ -21,11 +21,13 @@ def traced(stage: str, node: Callable[..., Awaitable[Any]]) -> Callable[..., Awa
 
 
 def refusing(node: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
-    """The out-of-scope node, also counting the refusal the guardrail made."""
+    """The out-of-scope node, in a span of its own, and counting the refusal the guardrail made."""
 
     @functools.wraps(node)
     async def run(*args: Any, **kwargs: Any) -> Any:
-        current_telemetry().record_out_of_scope()
-        return await node(*args, **kwargs)
+        telemetry = current_telemetry()
+        telemetry.record_out_of_scope()
+        with telemetry.stage("out_of_scope"):
+            return await node(*args, **kwargs)
 
     return run

@@ -8,6 +8,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
 from src.db.interfaces.base import BaseDatabase
 from src.schemas.database.config import PostgreSQLSettings
+from src.services.telemetry import instrument_engine
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class PostgreSQLDatabase(BaseDatabase):
                 pool_pre_ping=True,  # Verify connections before use
             )
 
+            instrument_engine(self.engine)
             self.session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
 
             # Test the connection

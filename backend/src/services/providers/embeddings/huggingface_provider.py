@@ -3,6 +3,8 @@ import logging
 import threading
 from typing import List, Optional
 
+from src.services.telemetry import timed_call
+
 from .base import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
@@ -83,6 +85,7 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
         )
         return [vector.tolist() for vector in vectors]
 
+    @timed_call("embedding")
     async def embed_passages(self, texts: List[str], batch_size: int = 100) -> List[List[float]]:
         if not texts:
             return []
@@ -90,6 +93,7 @@ class HuggingFaceEmbeddingProvider(EmbeddingProvider):
         logger.info(f"Embedded {len(texts)} passages locally with {self.model_name}")
         return embeddings
 
+    @timed_call("embedding")
     async def embed_query(self, query: str) -> List[float]:
         embeddings = await asyncio.to_thread(self._encode_sync, [query], 1, self.query_prompt)
         return embeddings[0]
