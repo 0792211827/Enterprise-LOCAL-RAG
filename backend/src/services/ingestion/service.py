@@ -132,7 +132,9 @@ class IngestionService:
 
         try:
             async with asyncio.timeout(self.timeout_seconds or None) as limit:
-                result = await self._pipeline(document, job, document_repo, ingestion_repo, knowledge_base, replacement, mark_stage)
+                result = await self._pipeline(
+                    document, job, document_repo, ingestion_repo, knowledge_base, replacement, mark_stage
+                )
             stages.end("succeeded")
             return result
         except DocumentGone:

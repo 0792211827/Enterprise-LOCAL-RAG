@@ -518,6 +518,5 @@ class OtelTelemetry(Telemetry):
     def record_connector_sync(self, knowledge_base_id: Any, outcome: str, seconds: float, counts: Mapping[str, int]) -> None:
         knowledge_base = knowledge_base_label(knowledge_base_id)
         self._observe(m.CONNECTOR_SYNC_DURATION, seconds, {"knowledge_base": knowledge_base, "outcome": outcome})
-        for kind, number in counts.items():
-            if number > 0:
-                self._add(m.CONNECTOR_DOCUMENTS, {"knowledge_base": knowledge_base, "outcome": kind}, number)
+        for kind, number in counts.items():  # zeros too: a series that exists at 0 lets "failed" be rated before it first fails
+            self._add(m.CONNECTOR_DOCUMENTS, {"knowledge_base": knowledge_base, "outcome": kind}, number)

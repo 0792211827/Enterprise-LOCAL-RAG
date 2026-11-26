@@ -32,7 +32,9 @@ def stages(telemetry, kb_id):
 
 
 async def run(plant, *queued, concurrency=2):
-    await asyncio.gather(*(run_ingestion(plant.database, plant.service, doc, job, plant.kb_id, concurrency) for doc, job in queued))
+    await asyncio.gather(
+        *(run_ingestion(plant.database, plant.service, doc, job, plant.kb_id, concurrency) for doc, job in queued)
+    )
 
 
 async def test_every_stage_of_a_document_is_timed_as_succeeded_under_its_knowledge_base(plant, telemetry):

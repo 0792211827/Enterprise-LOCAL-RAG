@@ -116,7 +116,9 @@ class TestFailModeIsIndependentOfTelemetry:
 
         assert (await stack.post(ASK, json={"query": QUESTION})).status_code == 200
 
-    async def test_a_trace_id_that_cannot_be_read_is_not_an_audit_write_failure(self, stack, telemetry, audit_factory, monkeypatch):
+    async def test_a_trace_id_that_cannot_be_read_is_not_an_audit_write_failure(
+        self, stack, telemetry, audit_factory, monkeypatch
+    ):
         import src.services.audit.recorder as recorder
 
         def broken_trace_id():
@@ -162,7 +164,9 @@ class TestLogLines:
         return [json.loads(line) for line in lines if "something worth a line" in line]
 
     @reads_telemetry
-    async def test_a_line_logged_during_a_request_carries_its_request_id_and_trace_id(self, client, telemetry, noisy_route, json_lines):
+    async def test_a_line_logged_during_a_request_carries_its_request_id_and_trace_id(
+        self, client, telemetry, noisy_route, json_lines
+    ):
         response = await client.get("/__correlation/noisy", headers={"X-Request-ID": "follow-me-42"})
 
         (line,) = self.ours(json_lines)

@@ -163,7 +163,7 @@ CATALOGUE: Tuple[MetricSpec, ...] = (
         COUNTER,
         "{document}",
         "Documents a Connector run changed in its Knowledge Base, by outcome (added, updated, removed or failed). "
-        "Files left alone are not counted.",
+        "Files left alone are not counted. Every outcome is reported by every run, as 0 when none.",
         ("knowledge_base", "outcome"),
     ),
 )

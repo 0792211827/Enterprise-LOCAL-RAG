@@ -32,12 +32,15 @@ def counts(telemetry, kb_id):
     return {labels["outcome"]: value for labels, value in telemetry.points(DOCUMENTS) if labels["knowledge_base"] == kb_id}
 
 
+ZERO = {"added": 0, "updated": 0, "removed": 0, "failed": 0}
+
+
 async def test_a_sync_reports_its_duration_and_the_documents_it_added_updated_removed_and_failed(world, telemetry):
     write(world, "keep.txt", "text that stays")
     write(world, "change.txt", "text that changes")
     write(world, "withdraw.txt", "text that is withdrawn")
     await sync(world)
-    assert counts(telemetry, world.kb_id) == {"added": 3}
+    assert counts(telemetry, world.kb_id) == {**ZERO, "added": 3}
 
     write(world, "change.txt", "the changed text")
     write(world, "BOOM.txt", "BOOM")
@@ -67,7 +70,7 @@ async def test_a_run_that_could_not_be_made_reports_an_error_outcome_and_no_docu
         await sync(world)
 
     assert telemetry.value(DURATION, outcome="error") == 1
-    assert counts(telemetry, world.kb_id) == {"added": 1}
+    assert counts(telemetry, world.kb_id) == {**ZERO, "added": 1}
 
 
 async def test_a_dry_run_changes_nothing_and_emits_nothing(world, telemetry):

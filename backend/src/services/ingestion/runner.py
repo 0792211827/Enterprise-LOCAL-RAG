@@ -64,7 +64,8 @@ async def run_ingestion(
     """Ingest one Document (or its pending replacement) in its own DB session, once a slot is free. Never raises."""
     queued_at = time.perf_counter()
     async with GATE.slot(concurrency):
-        getattr(ingestion_service, "telemetry", NOOP_TELEMETRY).record_ingestion_wait(knowledge_base_id, time.perf_counter() - queued_at)
+        telemetry = getattr(ingestion_service, "telemetry", NOOP_TELEMETRY)
+        telemetry.record_ingestion_wait(knowledge_base_id, time.perf_counter() - queued_at)
         try:
             with database.get_session() as session:
                 doc_repo = DocumentRepository(session)
