@@ -314,6 +314,21 @@ class TestPostgresCalls:
         retrieve = telemetry.span_named("retrieve")
         assert {s.parent.span_id for s in telemetry.spans() if s.name == "dependency.postgres"} == {retrieve.context.span_id}
 
+    def test_telemetry_that_breaks_never_fails_a_statement(self, monkeypatch):
+        import src.services.telemetry.database as database
+
+        def broken():
+            raise RuntimeError("telemetry is broken")
+
+        monkeypatch.setattr(database, "current_telemetry", broken)
+        engine = create_engine("sqlite://")
+        instrument_engine(engine)
+
+        with engine.connect() as connection:
+            assert connection.execute(text("select 1")).scalar() == 1
+            with pytest.raises(Exception, match="no_such_table"):  # the statement's own error, not telemetry's
+                connection.execute(text("select * from no_such_table"))
+
     def test_a_statement_never_appears_in_telemetry(self, request_scope, telemetry):
         engine = create_engine("sqlite://")
         instrument_engine(engine)
