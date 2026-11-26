@@ -16,6 +16,7 @@ from src.dependencies import (
     OpenSearchDep,
     SessionDep,
     SettingsDep,
+    TelemetryDep,
 )
 from src.repositories import (
     ApplicationRepository,
@@ -36,6 +37,8 @@ from src.schemas.api.domain import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
 
+TELEMETRY_FAILING_DETAIL = "The collector is unreachable or refusing data, so telemetry is being dropped. Answers are unaffected."
+
 
 def _timed(fn):
     start = time.perf_counter()
@@ -54,6 +57,7 @@ async def system_health(
     langfuse: LangfuseDep,
     llm: LLMProviderDep,
     settings: SettingsDep,
+    telemetry: TelemetryDep,
 ):
     components: List[ComponentHealth] = []
 
@@ -144,6 +148,17 @@ async def system_health(
         components.append(ComponentHealth(name="Langfuse", status="disabled"))
 
     overall = "healthy" if all(c.status in ("healthy", "disabled") for c in components) else "degraded"
+
+    # Telemetry is reported but never counted in the overall status: it fails open, so a collector that is
+    # unreachable costs data, not answers.
+    export_state = telemetry.export_state
+    components.append(
+        ComponentHealth(
+            name="Telemetry",
+            status=export_state,
+            detail=TELEMETRY_FAILING_DETAIL if export_state == "failing" else None,
+        )
+    )
     return SystemHealthResponse(status=overall, components=components)
 
 

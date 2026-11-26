@@ -1,0 +1,39 @@
+# OpenTelemetry Collector: receives what the API and the connector send (OTLP/HTTP), hands metrics to Prometheus
+# (which scrapes the exporter below) and traces to Tempo. Sampling happens in the sender (OTEL__TRACE_SAMPLE_RATIO);
+# metrics are never sampled. Nothing here leaves the Compose network.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+  batch: {}
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Keeps service.name as the service_name label, so the API and the connector stay apart.
+    resource_to_telemetry_conversion:
+      enabled: true
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]

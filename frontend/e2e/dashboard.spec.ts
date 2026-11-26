@@ -62,6 +62,26 @@ test("a failing Connector appears in the attention list and links to where it is
   await expect(page.getByRole("tab", { name: "Connectors" })).toHaveAttribute("aria-selected", "true");
 });
 
+test("telemetry that is exporting or off needs no action, and one that is failing is flagged", async ({ page }) => {
+  const health = (telemetry: string) => ({
+    status: "healthy",
+    components: [
+      { name: "postgres", status: "healthy", latency_ms: 3, version: "16", detail: null },
+      { name: "Telemetry", status: telemetry, latency_ms: null, version: null, detail: telemetry === "failing" ? "The collector is unreachable" : null },
+    ],
+  });
+  await openDashboard(page, (a) => a.respond("GET", "/api/v1/system/health", health("exporting")));
+  await expect(page.getByText("Nothing needs action.")).toBeVisible();
+
+  await openDashboard(page, (a) => a.respond("GET", "/api/v1/system/health", health("disabled")));
+  await expect(page.getByText("Nothing needs action.")).toBeVisible();
+
+  await openDashboard(page, (a) => a.respond("GET", "/api/v1/system/health", health("failing")));
+  const item = attention(page).getByRole("link", { name: /Telemetry is failing/ });
+  await expect(item).toContainText("The collector is unreachable");
+  await expect(item).toHaveAttribute("href", "/system");
+});
+
 test("lists failed ingestion, Applications with no Knowledge Base, low-rated answers and unhealthy services, each linking onward", async ({ page }) => {
   await openDashboard(page, (a) => {
     a.respond("GET", "/api/v1/ingestion-jobs", [

@@ -42,10 +42,11 @@ export function attentionItems({ services, jobs, connectors, applications, ratin
   const items: AttentionItem[] = [];
 
   for (const c of services ?? []) {
-    if (["healthy", "ok", "disabled"].includes(c.status.toLowerCase())) continue;
+    if (["healthy", "ok", "disabled", "exporting"].includes(c.status.toLowerCase())) continue;
     items.push({
       id: `service-${c.name}`,
-      tone: "danger",
+      // Telemetry fails open: its trouble costs data, never answers.
+      tone: c.status.toLowerCase() === "failing" ? "warn" : "danger",
       title: `${c.name} is ${c.status.toLowerCase()}`,
       detail: c.detail ?? undefined,
       href: "/system",

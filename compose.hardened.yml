@@ -17,6 +17,7 @@
 #   RAG_BIND_ADDRESS       address to publish on          (default 127.0.0.1)
 #   RAG_API_PORT           host port for the API          (default 8000)
 #   RAG_FRONTEND_PORT      host port for the admin UI     (default 3001)
+#   GRAFANA_PORT           host port for Grafana          (default 3002; telemetry profile only)
 #   RAG_LANGFUSE_PORT      host port for Langfuse's UI    (default 3000)
 # The admin UI calls the API from the browser at NEXT_PUBLIC_API_URL, which is
 # baked in at build time -- set it to the URL your proxy serves the API on.
@@ -57,3 +58,24 @@ services:
   # used only for multimodal trace attachments, which this platform never sends.
   langfuse-minio:
     ports: !reset []
+
+  # Telemetry profile (docker compose --profile telemetry ...): the collector, Prometheus and Tempo are reachable
+  # only over rag-network. Grafana is the one published port, on RAG_BIND_ADDRESS (loopback by default), and
+  # keeps what compose.yml requires of it: an admin password from .env, no anonymous access, no sign-up.
+  # (The API and the connector reach the collector at otel-collector:4318 over rag-network, as always.)
+  otel-collector:
+    ports: !reset []
+  prometheus:
+    ports: !reset []
+  tempo:
+    ports: !reset []
+  grafana:
+    ports: !override
+      - "${RAG_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3002}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false

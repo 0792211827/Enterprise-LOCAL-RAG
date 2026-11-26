@@ -29,6 +29,26 @@ class MetricSpec:
     labels: Tuple[str, ...]
     buckets: Tuple[float, ...] = DURATION_BUCKETS
 
+    @property
+    def prometheus_name(self) -> str:
+        """The base name Prometheus shows: dots as underscores, ``_seconds`` for a time, ``_total`` for a counter.
+
+        A histogram is queried as this name plus ``_bucket``, ``_sum`` or ``_count``.
+        """
+        name = self.name.replace(".", "_")
+        if self.unit == "s":
+            name += "_seconds"
+        if self.kind == COUNTER:
+            name += "_total"
+        return name
+
+    @property
+    def prometheus_series(self) -> Tuple[str, ...]:
+        """Every series name the metric exposes, as a dashboard or an alert rule may query it."""
+        if self.kind == HISTOGRAM:
+            return tuple(f"{self.prometheus_name}{suffix}" for suffix in ("_bucket", "_sum", "_count"))
+        return (self.prometheus_name,)
+
 
 HTTP_REQUESTS = "rag.http.requests"
 HTTP_REQUEST_ERRORS = "rag.http.request.errors"

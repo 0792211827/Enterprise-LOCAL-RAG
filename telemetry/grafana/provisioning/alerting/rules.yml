@@ -1,0 +1,137 @@
+apiVersion: 1
+
+# Four alert rules, evaluated by Grafana. No contact point and no notification policy is shipped, and none is
+# assumed: until you add one (Alerting > Contact points, then Notification policies) a firing rule is visible in
+# Grafana's Alerting page and notifies nobody. See README, "Telemetry".
+#
+# Each rule: A is the PromQL query, B reduces it to a number, C is the threshold that fires it. A rule with no data
+# (nothing has happened in the window) is normal, not firing.
+groups:
+  - orgId: 1
+    name: rag-platform
+    folder: RAG platform
+    interval: 1m
+    rules:
+      - uid: rag-api-error-rate
+        title: High API error rate
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: More than 5% of API requests ended in a server error over the last 5 minutes.
+          description: 'Open the "RAG platform: health" dashboard, then search the trace store for a failing request.'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: (sum(rate(rag_http_request_errors_total[5m])) or vector(0)) / sum(rate(rag_http_requests_total[5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0.05] }
+
+      - uid: rag-api-p95-latency
+        title: High API p95 latency
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 95% of API requests took longer than 60 seconds over the last 5 minutes.
+          description: 'A streamed answer counts until its last byte, so set this above your slowest normal answer. Open "RAG platform: health" and "RAG platform: capacity".'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: histogram_quantile(0.95, sum by (le) (rate(rag_http_request_duration_seconds_bucket[5m])))
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [60] }
+
+      - uid: rag-dependency-failing
+        title: A dependency is failing
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: More than half the calls to {{ $labels.dependency }} failed over the last 5 minutes.
+          description: 'The dependency is one of postgres, opensearch, redis, chat, embedding or rerank. See "Dependency success ratio" on the health dashboard.'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: sum by (dependency) (rate(rag_dependency_calls_total{outcome="error"}[5m])) / sum by (dependency) (rate(rag_dependency_calls_total[5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0.5] }
+
+      - uid: rag-ingestion-failing
+        title: Ingestion is failing
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: More than two Documents failed to ingest in the last 30 minutes.
+          description: 'Open the Knowledge Base in the admin UI for the error of each failed Document, and "RAG platform: capacity" for the stage that is slow or failing.'
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: sum(increase(rag_ingestion_stage_duration_seconds_count{outcome="failed"}[30m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [2] }

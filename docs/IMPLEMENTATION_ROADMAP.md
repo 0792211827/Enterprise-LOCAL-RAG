@@ -131,9 +131,9 @@ H1 is verifiable on this machine (Ollama's own `/v1` and llama.cpp run on a Mac)
 
 - Needs product decisions: supported types, whether images go to a VLM, retention and cleanup, and whether attachments are KB-ephemeral or never stored. `ChatMessage.content` is currently `str`, so the `/v1` schema would need OpenAI-style content parts. All attachment processing must be caller-scoped, size-limited and audited. Do not start before the temp-file lifecycle is designed.
 
-## Phase 11: OpenTelemetry export (S–M, conditional)
+## Phase 11: OpenTelemetry export (S–M, **implemented**)
 
-- Only on a concrete interoperability requirement. Prefer one instrumentation layer over duplicating Langfuse. **Acceptance** is defined by that requirement.
+- Built as the Telemetry feature: spec `.scratch/telemetry/spec.md`, ADR-0006 (`docs/decisions/0006-telemetry-opentelemetry-separate-from-audit.md`), FEATURE_REGISTER 3.12. Metrics and traces over OTLP to an optional Compose profile (Collector, Prometheus, Tempo, Grafana) with provisioned dashboards and alert rules; off by default and fail-open. The remaining non-goals (log store, container and GPU metrics, Grafana SSO) are listed in the spec. Operator docs: README "Telemetry", `docs/telemetry-metrics.md`, `docs/deployment/telemetry.md`.
 
 ## Phase 12: S3a, document-level ACLs (L, **implemented**, ticket 19)
 

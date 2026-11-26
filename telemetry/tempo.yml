@@ -1,0 +1,23 @@
+# Tempo, single binary, traces kept on a local volume. The service starts with -config.expand-env=true so the
+# retention can be set from .env (TEMPO_RETENTION, 72h by default: a Go duration, so hours, not days).
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+compactor:
+  compaction:
+    block_retention: ${TEMPO_RETENTION:-72h}
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks

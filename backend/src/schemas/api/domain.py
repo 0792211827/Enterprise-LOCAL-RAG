@@ -438,7 +438,7 @@ class ApplicationAskResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 class ComponentHealth(BaseModel):
     name: str
-    status: str  # healthy | unhealthy | disabled | unknown
+    status: str  # healthy | unhealthy | disabled | unknown; Telemetry: disabled | exporting | failing
     latency_ms: Optional[float] = None
     version: Optional[str] = None
     detail: Optional[str] = None

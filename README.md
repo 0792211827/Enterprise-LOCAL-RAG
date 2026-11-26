@@ -57,6 +57,7 @@ LangGraph. Everything runs locally with **no external AI APIs** required.
 | **OpenSearch** | http://localhost:9200 | Hybrid search engine |
 | **OpenSearch Dashboards** | http://localhost:5601 | Search engine UI |
 | **Ollama** | http://localhost:11434 | Local LLM / embeddings runtime |
+| **Grafana** (optional, [Telemetry](#-telemetry)) | http://localhost:3002 | Dashboards and alerts; started only with the `telemetry` profile |
 | **PostgreSQL** | localhost:5432 | Application metadata |
 | **Redis** | localhost:6379 | Response cache |
 
@@ -242,6 +243,8 @@ documented list. Key groups:
   allowlist for web pages (`URL_ALLOWED_HOSTS`, empty = adding a URL is refused);
   see [`docs/document-ingestion.md`](docs/document-ingestion.md).
 - **Redis** (`REDIS__*`) and **Langfuse** client (`LANGFUSE__*` — note the
+- **Telemetry** (`OTEL__*`, plus `GRAFANA_ADMIN_PASSWORD` and the retention
+  settings) — see [Telemetry](#-telemetry). Off by default.
   double underscore; single-underscore `LANGFUSE_*` names configure the
   self-hosted Langfuse server in compose, not the backend).
 - **Authentication** (`AUTH__*`) — see below. Off by default.
@@ -488,6 +491,92 @@ GRANT SELECT, INSERT ON audit_events TO rag_app;
 GRANT SELECT, INSERT, DELETE ON audit_events TO rag_retention;  -- purge job only
 ```
 
+## 📈 Telemetry
+
+Metrics and traces for operators: request rate, errors and latency per route and
+per Application, dependency health (PostgreSQL, OpenSearch, Redis, the Inference
+endpoint), tokens per Application and model, ingestion and Connector runs, and
+one trace per request with a step for each stage. It is separate from the
+[Audit log](#-audit-logging) (which says *who* did *what*): telemetry never holds
+a question, an answer, Document text, or who asked. Everything stays on your
+network, and everything is off by default.
+
+**Turn it on.**
+
+1. In `.env`, set a Grafana admin password (there is no default, and Grafana
+   refuses to start without one) and enable export:
+
+   ```bash
+   GRAFANA_ADMIN_PASSWORD=<a long, unique password>
+   OTEL__ENABLED=true
+   ```
+
+2. Start the stack, then restart the API so it picks up `OTEL__ENABLED`:
+
+   ```bash
+   make telemetry-start          # OpenTelemetry Collector, Prometheus, Tempo, Grafana
+   docker compose up -d api      # (and `connector` if you use Connectors)
+   ```
+
+   `make telemetry-stop` removes the four containers and keeps their data.
+   Plain `make start` never starts them. With the hardened overlay use
+   `docker compose -f compose.yml -f compose.hardened.yml --profile telemetry up -d`.
+
+3. Open Grafana at <http://localhost:3002> (`GRAFANA_PORT`), user `admin`. The
+   Prometheus and Tempo data sources, three dashboards and four alert rules are
+   already there, in the **RAG platform** folder. Prometheus itself is at
+   <http://localhost:9090> (`PROMETHEUS_PORT`).
+
+**The dashboards.**
+
+| Dashboard | Shows |
+|-----------|-------|
+| **RAG platform: health** | Request rate, error rate and p95 latency (overall and per route); how many dependencies are failing, each dependency's success ratio and calls by outcome. |
+| **RAG platform: capacity** | Prompt and completion tokens per minute by Application and model; time to first token; dependency latency; ingestion stage duration, queue wait and outcomes; Connector runs, duration and Documents changed. |
+| **RAG platform: usage** | Questions per Application; out-of-scope refusals per Application; searches, chunks returned, empty results and skipped reranks per Knowledge Base (shown by ID); the answer-cache hit rate. |
+
+**Alert rules.** *High API error rate* (over 5% server errors for 5 minutes),
+*High API p95 latency* (over 60 seconds for 10 minutes; a streamed answer counts
+until its last byte, so set it above your slowest normal answer), *A dependency
+is failing* (over half its calls failing for 5 minutes) and *Ingestion is
+failing* (more than two Documents failed in 30 minutes). A rule with no data
+(nothing happened) is normal, not firing.
+
+**Set the alert contact point.** None is shipped and none is assumed: until you
+add one, a firing rule shows in Grafana under **Alerting > Alert rules** and
+tells nobody. Add yours (email, Slack, a webhook) under **Alerting > Contact
+points**, then route to it under **Alerting > Notification policies**. Email
+also needs an SMTP server in Grafana's settings (`GF_SMTP_*` on the `grafana`
+service). The rules themselves are files in `telemetry/grafana/provisioning/alerting/`.
+
+**Settings.** The API and the `connector` read `OTEL__ENABLED`, `OTEL__ENDPOINT`,
+`OTEL__SERVICE_NAME`, `OTEL__TRACE_SAMPLE_RATIO` (default `1.0`; metrics are
+never sampled), `OTEL__EXPORT_TIMEOUT` and `OTEL__QUEUE_SIZE`, all documented in
+`.env.example`. Retention is set on the stores: `PROMETHEUS_RETENTION` (default
+`15d` for metrics) and `TEMPO_RETENTION` (default `72h`, three days, for
+traces). The names, units and labels of every metric are in
+[`docs/telemetry-metrics.md`](docs/telemetry-metrics.md); the deployment note
+(localhost binding, the Grafana password, fail-open) is in
+[`docs/deployment/telemetry.md`](docs/deployment/telemetry.md).
+
+**From an Audit log event to its trace.** Every response carries an
+`X-Request-ID` header, and the Audit log event of that request records the same
+`request_id`, plus the `trace_id` in its `details` (when telemetry is on).
+
+1. In the Audit Log page, or `GET /api/v1/audit/events?request_id=...`, open the
+   event and copy `details.trace_id`.
+2. In Grafana, open **Explore**, choose the **Tempo** data source, and either
+   paste the trace ID (query type *TraceID*) or search by request ID with the
+   TraceQL query `{ span.request_id = "<request id>" }`.
+
+JSON log lines carry the same request ID and trace ID, so a request can also be
+followed through the logs. If the request ID is all you have (from a user's
+bug report, say), the TraceQL search finds the trace.
+
+**Health.** The **System** page lists *Telemetry* as `disabled`, `exporting` or
+`failing` (the collector is unreachable or refusing data). `failing` does not
+make the platform report unhealthy: telemetry fails open.
+
 **Limits.** Reads of the audit log itself are not recorded; exports are. For
 `admin.mutation` events on create endpoints, `resource_id` is empty because the
 new ID is only in the response body. A tamper-evidence hash chain is a planned
@@ -689,6 +778,10 @@ convenient on a laptop and wrong anywhere else. The opt-in
 `compose.hardened.yml` overlay removes that:
 
 ```bash
+| API, admin UI | `0.0.0.0` | `127.0.0.1` only. Put your reverse proxy or ingress in front. |
+| PostgreSQL, Redis, OpenSearch (+ Dashboards), Ollama | `0.0.0.0` | Not published. Reachable only by the other containers on `rag-network`. |
+| Telemetry profile: Collector, Prometheus, Tempo | `127.0.0.1` | Not published. |
+| Telemetry profile: Grafana | `127.0.0.1` | `RAG_BIND_ADDRESS` (loopback by default), still with a required admin password and no anonymous access. |
 make start-hardened   # docker compose -f compose.yml -f compose.hardened.yml up --build -d
 make health-hardened
 ```

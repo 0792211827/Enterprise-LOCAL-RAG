@@ -31,6 +31,8 @@ services:
       - LANGFUSE__HOST=http://langfuse-web:3000
       - LANGFUSE__DEBUG=true
       - REDIS__HOST=redis
+      # Telemetry goes to the collector of the telemetry profile; .env's localhost address is for a host process.
+      - OTEL__ENDPOINT=http://otel-collector:4318
     volumes:
       # The embedding model (~2.3GB) is downloaded on first use. Without a
       # volume it lives in the container layer and is re-downloaded on every
@@ -65,7 +67,7 @@ services:
       - CONNECTOR__MOUNT_ROOT=/mnt/sources
       # Telemetry (see .env.example): the same settings as the API, reported as its own service.
       - OTEL__ENABLED=${OTEL__ENABLED:-false}
-      - OTEL__ENDPOINT=${OTEL__ENDPOINT:-http://localhost:4318}
+      - OTEL__ENDPOINT=http://otel-collector:4318
       - OTEL__SERVICE_NAME=rag-connector
       - OTEL__TRACE_SAMPLE_RATIO=${OTEL__TRACE_SAMPLE_RATIO:-1.0}
       - OTEL__EXPORT_TIMEOUT=${OTEL__EXPORT_TIMEOUT:-5}
@@ -399,6 +401,91 @@ services:
       - rag-network
 
 
+  # ── Telemetry stack (OPTIONAL, off by default) ──────────────────────────────────────────────────────────────
+  # Metrics and traces for operators: the API and the connector send OTLP to the collector, which feeds Prometheus
+  # (metrics) and Tempo (traces); Grafana shows both. Plain `docker compose up` starts none of it.
+  #   docker compose --profile telemetry up -d        (or: make telemetry-start)
+  # and set OTEL__ENABLED=true plus GRAFANA_ADMIN_PASSWORD in .env. Every published port is bound to 127.0.0.1;
+  # Grafana refuses to start without an admin password and has no anonymous access. See README, "Telemetry".
+  otel-collector:
+    profiles: ["telemetry"]
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    container_name: rag-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./telemetry/otel-collector.yml:/etc/otelcol/config.yaml:ro
+    ports:
+      # Where a backend running on the host (`make app`) sends; containers use otel-collector:4318.
+      - "127.0.0.1:4318:4318"
+    depends_on:
+      - tempo
+    restart: unless-stopped
+    networks:
+      - rag-network
+
+  prometheus:
+    profiles: ["telemetry"]
+    image: prom/prometheus:v2.55.1
+    container_name: rag-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+    volumes:
+      - ./telemetry/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - otel-collector
+    restart: unless-stopped
+    networks:
+      - rag-network
+
+  tempo:
+    profiles: ["telemetry"]
+    image: grafana/tempo:2.6.1
+    container_name: rag-tempo
+    command: ["-config.file=/etc/tempo/tempo.yml", "-config.expand-env=true"]
+    environment:
+      - TEMPO_RETENTION=${TEMPO_RETENTION:-72h}
+    volumes:
+      - ./telemetry/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo_data:/var/tempo
+    restart: unless-stopped
+    networks:
+      - rag-network
+
+  grafana:
+    profiles: ["telemetry"]
+    image: grafana/grafana:11.4.0
+    container_name: rag-grafana
+    # Grafana falls back to the well-known password "admin" when none is set, so refuse to start instead.
+    # (A `${VAR:?}` here would break plain `docker compose up` too, which reads every service's variables.)
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'if [ -z "$$GF_SECURITY_ADMIN_PASSWORD" ]; then echo "GRAFANA_ADMIN_PASSWORD is not set in .env: Grafana will not start without an admin password." >&2; exit 1; fi; exec /run.sh'
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+    volumes:
+      - ./telemetry/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./telemetry/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3002}:3000"
+    depends_on:
+      - prometheus
+      - tempo
+    restart: unless-stopped
+    networks:
+      - rag-network
+
 volumes:
   hf_cache:
   rag_uploads:
@@ -407,6 +494,9 @@ volumes:
   ollama_data:
   clickhouse_data:
   redis_data:
+  prometheus_data:
+  tempo_data:
+  grafana_data:
   langfuse_v3_postgres_data:
   langfuse_v3_minio_data:
 

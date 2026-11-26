@@ -1,6 +1,6 @@
 .PHONY: help install infra app app-stop backend frontend pull-model psql start stop restart status logs health setup \
         format lint test test-telemetry-off test-cov frontend-setup frontend-dev frontend-build clean audit-purge chat-purge uploads-cleanup \
-        reindex eval eval-compare start-hardened health-hardened connectors connector-sync ingest-samples
+        reindex eval eval-compare start-hardened health-hardened telemetry-start telemetry-stop connectors connector-sync ingest-samples
 
 # Task runner for Enterprise-LOCAL-RAG.
 #
@@ -106,6 +106,12 @@ start: ## Start all services
 
 start-hardened: ## Start with only the API/UIs published, on 127.0.0.1 (see compose.hardened.yml)
 	docker compose -f compose.yml -f compose.hardened.yml up --build -d
+
+telemetry-start: ## Start the optional telemetry stack (collector, Prometheus, Tempo, Grafana); see README, "Telemetry"
+	docker compose --profile telemetry up -d otel-collector prometheus tempo grafana
+
+telemetry-stop: ## Stop and remove the telemetry stack (its data volumes are kept)
+	docker compose --profile telemetry rm -sf grafana otel-collector prometheus tempo
 
 stop: ## Stop all services
 	docker compose down

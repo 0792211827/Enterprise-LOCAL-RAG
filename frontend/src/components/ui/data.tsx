@@ -40,11 +40,13 @@ const STATUS_TONE: Record<string, Tone> = {
   healthy: "ok",
   completed: "ok",
   ok: "ok",
+  exporting: "ok",
   active: "ok",
   processing: "info",
   running: "info",
   queued: "neutral",
   degraded: "warn",
+  failing: "warn",
   denied: "warn",
   disabled: "neutral",
   failed: "danger",
@@ -66,7 +68,13 @@ export function StatusBadge({ status, tone }: { status: string; tone?: Tone }) {
 
 export function HealthIndicator({ status }: { status: string }) {
   const key = status?.toLowerCase();
-  const color = ["healthy", "ok"].includes(key) ? "bg-ok" : key === "disabled" ? "bg-line-strong" : "bg-danger";
+  const color = ["healthy", "ok", "exporting"].includes(key)
+    ? "bg-ok"
+    : key === "disabled"
+      ? "bg-line-strong"
+      : key === "failing"
+        ? "bg-warn"
+        : "bg-danger";
   return (
     <span className={`inline-block h-2.5 w-2.5 rounded-full ${color}`}>
       <span className="sr-only">{status}</span>
