@@ -1,7 +1,7 @@
 from .api_key import ApiKeyRepository
 from .application import ApplicationRepository
 from .audit import AuditEventRepository, AuditFilters
-from .chat import AttachmentRepository, ConversationRepository, FeedbackRepository
+from .chat import AttachmentRepository, ConversationRepository
 from .connector import ConnectorRepository
 from .document import DocumentRepository
 from .grants import GrantRepository
@@ -25,6 +25,5 @@ __all__ = [
     "AuditEventRepository",
     "AuditFilters",
     "ConversationRepository",
-    "FeedbackRepository",
     "AttachmentRepository",
 ]

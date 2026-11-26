@@ -11,7 +11,6 @@ import dataclasses
 import hashlib
 import json
 import logging
-import time
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -21,7 +20,6 @@ from src.dependencies import (
     AuditDep,
     ChatLimiterDep,
     EmbeddingsDep,
-    LangfuseDep,
     LLMProviderDep,
     OpenSearchDep,
     PDFParserDep,
@@ -40,7 +38,6 @@ from src.repositories import (
     AttachmentRepository,
     ConversationRepository,
     DocumentRepository,
-    FeedbackRepository,
     RestrictionRepository,
 )
 from src.schemas.api.chat import (
@@ -55,13 +52,11 @@ from src.schemas.api.chat import (
     ConversationDetail,
     ConversationRename,
     ConversationSummary,
-    MessageFeedbackInput,
-    MessageFeedbackView,
 )
 from src.schemas.indexing.elements import locator_label
 from src.services.applications import is_agentic, is_offered_to, prepare_stream, scope_application
 from src.services.audit import AuditContext, QueryAudit, audited_stream
-from src.services.audit.events import elapsed_ms, record_event
+from src.services.audit.events import record_event
 from src.services.chat import (
     IMAGE_KINDS,
     IMAGE_MEDIA_TYPES,
@@ -80,7 +75,6 @@ from src.services.chat import (
     retrieval_query,
     sniff_image,
     sniff_kind,
-    trace_chat_exchange,
 )
 from src.services.ingestion.uploads import display_name, read_capped
 from src.services.providers.llm.registry import ProviderConfigurationError
@@ -172,10 +166,6 @@ def _summary(conversation: Conversation, message_count: int) -> ConversationSumm
     )
 
 
-def _feedback_view(feedback) -> MessageFeedbackView:
-    return MessageFeedbackView(rating=feedback.rating, comment=feedback.comment, share_with_admins=feedback.shared)
-
-
 def _attachment_view(attachment: ConversationAttachment, searched: bool = False) -> AttachmentView:
     return AttachmentView(
         searched=searched,
@@ -244,14 +234,12 @@ def open_conversation(conversation_id: UUID, principal: PrincipalDep, session: S
     repo = ConversationRepository(session)
     conversation = _owned_conversation(repo, conversation_id, principal)
     messages = repo.messages(conversation.id)
-    feedback = FeedbackRepository(session).for_messages([m.id for m in messages])
     attachments = AttachmentRepository(session)
     searched = attachments.partitioned_ids(conversation.id)
     by_message = attachments.for_messages([m.id for m in messages])
     pending = [a for a in attachments.list(conversation.id) if a.message_id is None]
     views = []
     for message in messages:
-        rating = feedback.get(message.id)
         views.append(
             ChatMessageView(
                 id=str(message.id),
@@ -259,7 +247,6 @@ def open_conversation(conversation_id: UUID, principal: PrincipalDep, session: S
                 content=message.content,
                 citations=message.citations or [],
                 created_at=message.created_at,
-                feedback=_feedback_view(rating) if rating else None,
                 attachments=[_attachment_view(a, a.id in searched) for a in by_message.get(message.id, [])],
             )
         )
@@ -461,36 +448,6 @@ def remove_attachment(
     return Response(status_code=204)
 
 
-def _rated_message(repo: ConversationRepository, conversation_id: UUID, message_id: UUID, principal):
-    """The caller's own answer to rate; anything else -- someone else's, another conversation's, unknown -- is a 404."""
-    conversation = _owned_conversation(repo, conversation_id, principal)
-    message = repo.get_owned_message(conversation, message_id)
-    if message is None:
-        raise HTTPException(status_code=404, detail="Message not found")
-    return message
-
-
-@router.put("/conversations/{conversation_id}/messages/{message_id}/feedback", response_model=MessageFeedbackView)
-def rate_message(
-    conversation_id: UUID, message_id: UUID, payload: MessageFeedbackInput, principal: PrincipalDep, session: SessionDep
-):
-    """Rate one answer. ``share_with_admins`` lets admins see that one exchange (question and answer); without
-    it they see only that a rating exists."""
-    message = _rated_message(ConversationRepository(session), conversation_id, message_id, principal)
-    if message.role != "assistant":
-        raise HTTPException(status_code=400, detail="Only answers can be rated")
-    comment = (payload.comment or "").strip() or None
-    feedback = FeedbackRepository(session).upsert(message.id, payload.rating, comment, payload.share_with_admins)
-    return _feedback_view(feedback)
-
-
-@router.delete("/conversations/{conversation_id}/messages/{message_id}/feedback", status_code=204)
-def withdraw_rating(conversation_id: UUID, message_id: UUID, principal: PrincipalDep, session: SessionDep):
-    message = _rated_message(ConversationRepository(session), conversation_id, message_id, principal)
-    FeedbackRepository(session).clear(message.id)
-    return Response(status_code=204)
-
-
 @router.post("/conversations/{conversation_id}/messages")
 async def send_message(
     conversation_id: UUID,
@@ -507,7 +464,6 @@ async def send_message(
     providers: ProviderRegistryDep,
     reranker: RerankerDep,
     audit_recorder: AuditDep,
-    langfuse: LangfuseDep,
     limiter: ChatLimiterDep,
 ):
     """Ask in a Conversation; the answer streams as server-sent events.
@@ -616,7 +572,6 @@ async def send_message(
     audit.note_rerank(prepared.rerank)
 
     saved: Dict[str, Optional[str]] = {"message_id": None}
-    started = time.perf_counter()
 
     def save_exchange(answer: str, citations: List[Dict[str, Any]]) -> None:
         with open_session() as own_session:
@@ -654,23 +609,6 @@ async def send_message(
             yield _error_frame(STREAM_FAILED_MESSAGE)
         finally:
             audit.answer = "".join(answer)
-            _trace(audit, application.id, "".join(answer))
-
-    def _trace(audit, application_id, answer_text):
-        metadata = {
-            "request_id": audit.context.request_id,
-            "application_id": str(application_id),
-            "conversation_id": str(conversation_id),
-            "model": audit.model,
-            "retrieved": len(audit.hits or []),
-            "outcome": audit.outcome or "ok",
-            "latency_ms": elapsed_ms(started),
-            **{k: v for k, v in (audit.details or {}).items() if k in ("reranked", "rerank_skipped", "agentic")},
-        }
-        content = settings.chat.trace_content
-        trace_chat_exchange(
-            langfuse, metadata, question=payload.query if content else None, answer=answer_text if content else None
-        )
 
     async def body():
         # The slot is freed however the stream ends: finished, failed, or the client went away.

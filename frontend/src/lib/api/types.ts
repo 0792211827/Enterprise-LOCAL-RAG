@@ -1,6 +1,5 @@
 // Types mirroring the backend OpenAPI contract (src/schemas/api/domain.py).
 
-export type RetrievalMode = "bm25" | "vector" | "hybrid";
 export type RAGStrategy = "traditional" | "agentic";
 export type ProviderKind = "llm" | "embedding" | "vlm";
 export type ProviderType = "ollama" | "openai-compatible" | "huggingface";
@@ -14,8 +13,6 @@ export interface KnowledgeBase {
   embedding_provider: string;
   embedding_model: string;
   embedding_dimension: number;
-  retrieval_mode: string;
-  default_top_k: number;
   document_count: number;
   chunk_count: number;
   created_at: string | null;
@@ -28,11 +25,9 @@ export interface KnowledgeBaseCreate {
   embedding_provider?: string;
   embedding_model?: string;
   embedding_dimension?: number;
-  retrieval_mode?: RetrievalMode;
-  default_top_k?: number;
 }
 
-export type KnowledgeBaseUpdate = Partial<Pick<KnowledgeBaseCreate, "name" | "description" | "retrieval_mode" | "default_top_k">>;
+export type KnowledgeBaseUpdate = Partial<Pick<KnowledgeBaseCreate, "name" | "description">>;
 
 export type ConnectorSourceType = "path" | "s3";
 
@@ -152,17 +147,6 @@ export interface ProviderTestResult {
   detail: string | null;
 }
 
-export interface RetrievalConfig {
-  id: string;
-  name: string;
-  mode: string;
-  top_k: number;
-  hybrid_size_multiplier: number;
-  rrf_rank_constant: number;
-  score_threshold: number | null;
-  filters: Record<string, unknown> | null;
-}
-
 export interface ModelConfiguration {
   id: string;
   llm_provider: string;
@@ -189,7 +173,6 @@ export interface Application {
   citations_enabled: boolean;
   knowledge_bases: KnowledgeBase[];
   model_configuration: ModelConfiguration | null;
-  retrieval_configuration: RetrievalConfig | null;
   created_at: string | null;
   updated_at: string | null;
   /** Present only on the create response; the plaintext is shown once. */
@@ -212,9 +195,6 @@ export interface ApplicationCreate {
   vlm_enabled?: boolean;
   vlm_provider?: string;
   vlm_model?: string;
-  retrieval_mode?: RetrievalMode;
-  top_k?: number;
-  score_threshold?: number;
   temperature?: number;
   max_tokens?: number;
   streaming_enabled?: boolean;
@@ -231,14 +211,12 @@ export interface RetrievedSource {
   locator_text?: string | null;
   /** The page of a URL Document, which the Citation links to. */
   source_url?: string | null;
-  retrieval_method: string | null;
 }
 
 export interface ApplicationAskResponse {
   query: string;
   answer: string;
   sources: RetrievedSource[];
-  search_mode: string;
   chunks_used: number;
 }
 
@@ -362,14 +340,6 @@ export interface ConversationSummary {
   message_count: number;
 }
 
-export type Rating = "up" | "down";
-
-export interface MessageFeedback {
-  rating: Rating;
-  comment: string | null;
-  share_with_admins: boolean;
-}
-
 /** A document attached to a Conversation. `attached_to` is null until the next message is sent. */
 export interface ChatAttachment {
   id: string;
@@ -389,46 +359,12 @@ export interface ConversationMessage {
   content: string;
   citations: ChatCitation[];
   created_at: string;
-  feedback: MessageFeedback | null;
   attachments: ChatAttachment[];
 }
 
 export interface ConversationDetail extends ConversationSummary {
   messages: ConversationMessage[];
   pending_attachments: ChatAttachment[];
-}
-
-// What admins see of chat: counts, ratings, and only the exchanges users chose to share.
-export interface ChatCounts {
-  conversations: number;
-  messages: number;
-  by_application: { application_id: string; application_name: string; conversations: number; messages: number }[];
-}
-
-export interface ApplicationRatings {
-  application_id: string;
-  application_name: string;
-  up: number;
-  down: number;
-}
-
-export interface RatingItem {
-  message_id: string;
-  application_id: string;
-  rating: Rating;
-  comment: string | null;
-  shared: boolean;
-  rated_at: string;
-}
-
-export interface SharedExchange {
-  message_id: string;
-  application_id: string;
-  rating: Rating;
-  comment: string | null;
-  question: string;
-  answer: string;
-  sources: string[];
 }
 
 export interface Principal {

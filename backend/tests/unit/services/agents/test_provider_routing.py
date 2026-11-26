@@ -88,7 +88,6 @@ def _runtime(provider, ollama) -> Runtime:
         ollama_client=ollama,
         opensearch_client=Mock(),
         embeddings_client=Mock(),
-        langfuse_tracer=None,
         model_name="served-model",
         llm_provider=provider,
     )
@@ -196,7 +195,7 @@ class TestProviderContract:
 class TestContextAndWiring:
     def test_context_prefers_the_provider_and_falls_back_to_ollama(self):
         ollama, provider = Mock(), Mock()
-        kwargs = dict(opensearch_client=Mock(), embeddings_client=Mock(), langfuse_tracer=None)
+        kwargs = dict(opensearch_client=Mock(), embeddings_client=Mock())
         assert Context(ollama_client=ollama, llm_provider=provider, **kwargs).chat_model_source is provider
         assert Context(ollama_client=ollama, **kwargs).chat_model_source is ollama
 
@@ -210,7 +209,7 @@ class TestContextAndWiring:
     def test_dependency_passes_the_provider_and_its_model_default(self):
         provider = Mock()
         settings = Settings(llm=LLMSettings(provider="vllm", endpoint="http://x/v1", model="qwen"))
-        service = get_agentic_rag_service(Mock(), Mock(), Mock(), Mock(), settings, None, provider)
+        service = get_agentic_rag_service(Mock(), Mock(), Mock(), settings, None, provider)
         assert service.llm_provider is provider
         assert service.graph_config.model == "qwen"
 

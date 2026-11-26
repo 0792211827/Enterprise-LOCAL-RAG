@@ -1,10 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
-import { application, kb, provider, retrievalProfile, security } from "./support/admin-fixtures";
+import { application, kb, provider, security } from "./support/admin-fixtures";
 import { stubApi, type CallerKind } from "./support/api-stub";
 
 // The whole-app pass: what must hold on every page, whichever ticket built it.
 
-const ADMIN_PAGES = ["/", "/applications", "/applications/new", "/knowledge-bases", "/documents", "/retrieval", "/providers", "/system", "/feedback"];
+const ADMIN_PAGES = ["/", "/applications", "/applications/new", "/knowledge-bases", "/documents", "/providers", "/system"];
 const PHONE = { width: 390, height: 844 };
 const TABLET = { width: 820, height: 1180 };
 
@@ -16,12 +16,8 @@ async function open(page: Page, caller: CallerKind, path: string) {
   api.respond("GET", "/api/v1/knowledge-bases", [kb()]);
   api.respond("GET", "/api/v1/applications", [application()]);
   api.respond("GET", "/api/v1/providers", [provider()]);
-  api.respond("GET", "/api/v1/retrieval-configurations", [retrievalProfile()]);
   api.respond("GET", "/api/v1/system/security", security());
   api.respond("GET", "/api/v1/documents", []);
-  api.respond("GET", "/api/v1/chat-admin/conversation-counts", { conversations: 0, messages: 0, by_application: [] });
-  api.respond("GET", "/api/v1/chat-admin/ratings", []);
-  api.respond("GET", "/api/v1/chat-admin/shared-exchanges", []);
   await page.goto(path);
   await page.waitForLoadState("networkidle");
 }

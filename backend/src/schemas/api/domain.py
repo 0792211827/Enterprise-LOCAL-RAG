@@ -6,12 +6,12 @@ returns a typed model rather than an arbitrary dictionary.
 """
 
 from datetime import datetime
-from typing import Dict, List, Literal, Optional
+from typing import ClassVar, Dict, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from src.config import get_settings
-from src.models.enums import ProviderKind, ProviderType, RAGStrategy, RetrievalMode
+from src.models.enums import ProviderKind, ProviderType, RAGStrategy
 from src.models.provider import LLM_API_KEY_REF
 from src.services.providers.llm.registry import ENV_REFERENCE_PREFIX
 
@@ -32,24 +32,39 @@ def _default_embedding_dimension() -> int:
     return get_settings().embedding.dimension
 
 
+class RejectsServerControlled(BaseModel):
+    """Input that refuses settings the server controls (retrieval strategy), so a stale client fails loudly."""
+
+    server_controlled: ClassVar[tuple] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_server_controlled(cls, data):
+        if isinstance(data, dict):
+            found = sorted(name for name in cls.server_controlled if name in data)
+            if found:
+                raise ValueError(f"{', '.join(found)} cannot be set: the server controls it")
+        return data
+
+
 # --------------------------------------------------------------------------- #
 # Knowledge bases
 # --------------------------------------------------------------------------- #
-class KnowledgeBaseCreate(BaseModel):
+class KnowledgeBaseCreate(RejectsServerControlled):
+    server_controlled = ("retrieval_mode", "default_top_k")
+
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=2000)
     embedding_provider: str = Field(default_factory=_default_embedding_provider)
     embedding_model: str = Field(default_factory=_default_embedding_model)
     embedding_dimension: int = Field(default_factory=_default_embedding_dimension, ge=1, le=8192)
-    retrieval_mode: RetrievalMode = RetrievalMode.HYBRID
-    default_top_k: int = Field(10, ge=1, le=100)
 
 
-class KnowledgeBaseUpdate(BaseModel):
+class KnowledgeBaseUpdate(RejectsServerControlled):
+    server_controlled = ("retrieval_mode", "default_top_k")
+
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=2000)
-    retrieval_mode: Optional[RetrievalMode] = None
-    default_top_k: Optional[int] = Field(None, ge=1, le=100)
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -63,8 +78,6 @@ class KnowledgeBaseResponse(BaseModel):
     embedding_provider: str
     embedding_model: str
     embedding_dimension: int
-    retrieval_mode: str
-    default_top_k: int
     document_count: int
     chunk_count: int
     created_at: Optional[datetime]
@@ -284,35 +297,11 @@ class ProviderTestResult(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Retrieval configuration
-# --------------------------------------------------------------------------- #
-class RetrievalConfigCreate(BaseModel):
-    name: str = Field(..., min_length=1)
-    mode: RetrievalMode = RetrievalMode.HYBRID
-    top_k: int = Field(10, ge=1, le=100)
-    hybrid_size_multiplier: int = Field(2, ge=1, le=10)
-    rrf_rank_constant: int = Field(60, ge=1, le=1000)
-    score_threshold: Optional[float] = None
-    filters: Optional[dict] = None
-
-
-class RetrievalConfigResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    name: str
-    mode: str
-    top_k: int
-    hybrid_size_multiplier: int
-    rrf_rank_constant: int
-    score_threshold: Optional[float]
-    filters: Optional[dict]
-
-
-# --------------------------------------------------------------------------- #
 # RAG applications
 # --------------------------------------------------------------------------- #
-class ApplicationCreate(BaseModel):
+class ApplicationCreate(RejectsServerControlled):
+    server_controlled = ("retrieval_mode", "top_k", "score_threshold")
+
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
     system_prompt: Optional[str] = None
@@ -332,11 +321,6 @@ class ApplicationCreate(BaseModel):
     vlm_enabled: bool = False
     vlm_provider: Optional[str] = None
     vlm_model: Optional[str] = None
-
-    # Retrieval configuration (inline; a RetrievalConfiguration row is created).
-    retrieval_mode: RetrievalMode = RetrievalMode.HYBRID
-    top_k: int = Field(8, ge=1, le=100)
-    score_threshold: Optional[float] = None
 
     # Generation parameters.
     temperature: float = Field(0.0, ge=0.0, le=2.0)
@@ -400,7 +384,6 @@ class ApplicationResponse(BaseModel):
     citations_enabled: bool
     knowledge_bases: List[KnowledgeBaseResponse] = Field(default_factory=list)
     model_configuration: Optional[ModelConfigurationResponse] = None
-    retrieval_configuration: Optional[RetrievalConfigResponse] = None
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
     # Populated only on the create response, where the auto-provisioned key's
@@ -408,9 +391,10 @@ class ApplicationResponse(BaseModel):
     api_key: Optional[str] = None
 
 
-class ApplicationAskRequest(BaseModel):
+class ApplicationAskRequest(RejectsServerControlled):
+    server_controlled = ("top_k",)
+
     query: str = Field(..., min_length=1, max_length=4000)
-    top_k: Optional[int] = Field(None, ge=1, le=100)
 
 
 class RetrievedSource(BaseModel):
@@ -422,14 +406,12 @@ class RetrievedSource(BaseModel):
     locator: Optional[dict] = None
     locator_text: Optional[str] = None  # where in the source, in words ("slide 7")
     source_url: Optional[str] = None  # the page of a URL Document, which the Citation links to
-    retrieval_method: Optional[str] = None
 
 
 class ApplicationAskResponse(BaseModel):
     query: str
     answer: str
     sources: List[RetrievedSource] = Field(default_factory=list)
-    search_mode: str
     chunks_used: int
 
 

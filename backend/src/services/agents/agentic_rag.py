@@ -3,10 +3,8 @@ import time
 from typing import Dict, List, Optional
 
 from langchain_core.messages import HumanMessage
-from langfuse.langchain import CallbackHandler
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
-from src.services.langfuse.client import LangfuseTracer
 from src.services.ollama.client import OllamaClient
 from src.services.opensearch.client import OpenSearchClient
 from src.services.providers.embeddings.base import EmbeddingProvider
@@ -46,7 +44,6 @@ class AgenticRAGService:
         opensearch_client: OpenSearchClient,
         ollama_client: OllamaClient,
         embeddings_client: EmbeddingProvider,
-        langfuse_tracer: Optional[LangfuseTracer] = None,
         graph_config: Optional[GraphConfig] = None,
         llm_provider: Optional[LLMProvider] = None,
         reranker: Optional[Reranker] = None,
@@ -56,7 +53,6 @@ class AgenticRAGService:
         :param opensearch_client: Client for document search
         :param ollama_client: Ollama client; used for the nodes' LLM when no ``llm_provider`` is given
         :param embeddings_client: Client for embeddings
-        :param langfuse_tracer: Optional Langfuse tracer
         :param graph_config: Configuration for graph execution
         :param llm_provider: The configured LLM provider; when set, every node uses it
         :param reranker: Optional reranker applied to the retriever's candidates
@@ -66,7 +62,6 @@ class AgenticRAGService:
         self.llm_provider = llm_provider
         self.reranker = reranker
         self.embeddings = embeddings_client
-        self.langfuse_tracer = langfuse_tracer
         self.graph_config = graph_config or GraphConfig()
 
         logger.info("Initializing AgenticRAGService with configuration:")
@@ -199,42 +194,10 @@ class AgenticRAGService:
             logger.error("Empty query received")
             raise ValueError("Query cannot be empty")
 
-        # Create trace if Langfuse is enabled (v3 SDK)
-        trace = None
-        if self.langfuse_tracer and self.langfuse_tracer.client:
-            logger.info("Creating Langfuse trace (v3 SDK)")
-            metadata = {
-                "env": self.graph_config.settings.environment,
-                "service": "agentic_rag",
-                "top_k": self.graph_config.top_k,
-                "use_hybrid": self.graph_config.use_hybrid,
-                "model": model_to_use,
-            }
-            # V3 SDK: Use start_as_current_span - will be used with 'with' statement
-            trace = self.langfuse_tracer.client.start_as_current_span(
-                name="agentic_rag_request",
-            )
-
-        # Use proper context manager pattern
-        async def _execute_with_trace():
-            """Execute the workflow with or without tracing context."""
-            if trace is not None:
-                with trace as trace_obj:
-                    trace_obj.update(
-                        input={"query": query},
-                        metadata=metadata,
-                        user_id=user_id,
-                        session_id=f"session_{user_id}",
-                    )
-                    logger.debug(f"Trace created: {trace_obj}")
-                    return await self._run_workflow(query, model_to_use, user_id, trace_obj)
-            else:
-                return await self._run_workflow(query, model_to_use, user_id, None)
-
         log = RetrievalLog()
         token = retrieval_log.set(log)
         try:
-            result = await _execute_with_trace()
+            result = await self._run_workflow(query, model_to_use, user_id)
         except Exception as e:
             logger.error(f"Error in Agentic RAG execution: {str(e)}")
             logger.exception("Full traceback:")
@@ -248,8 +211,8 @@ class AgenticRAGService:
         result["rerank"] = log.rerank
         return result
 
-    async def _run_workflow(self, query: str, model_to_use: str, user_id: str, trace) -> dict:
-        """Execute the workflow with the given trace context."""
+    async def _run_workflow(self, query: str, model_to_use: str, user_id: str) -> dict:
+        """Execute the workflow."""
         try:
             start_time = time.time()
 
@@ -276,9 +239,6 @@ class AgenticRAGService:
                 llm_provider=self.llm_provider,
                 opensearch_client=self.opensearch,
                 embeddings_client=self.embeddings,
-                langfuse_tracer=self.langfuse_tracer,
-                trace=trace,
-                langfuse_enabled=self.langfuse_tracer is not None and self.langfuse_tracer.client is not None,
                 model_name=model_to_use,
                 temperature=self.graph_config.temperature,
                 top_k=self.graph_config.top_k,
@@ -286,21 +246,7 @@ class AgenticRAGService:
                 guardrail_threshold=self.graph_config.guardrail_threshold,
             )
 
-            # Create config with CallbackHandler if Langfuse is enabled (v3 SDK)
             config = {"thread_id": f"user_{user_id}_session_{int(time.time())}"}
-
-            # Add CallbackHandler for automatic LLM tracing
-            # IMPORTANT: CallbackHandler automatically inherits the current span context
-            # Since we're inside start_as_current_span, it will be linked automatically
-            if self.langfuse_tracer and trace:
-                try:
-                    # V3 SDK: CallbackHandler() automatically uses current trace context
-                    # No need to pass trace explicitly - it's handled by context propagation
-                    callback_handler = CallbackHandler()
-                    config["callbacks"] = [callback_handler]
-                    logger.info("✓ CallbackHandler added (will auto-link to current trace)")
-                except Exception as e:
-                    logger.warning(f"Failed to create CallbackHandler: {e}")
 
             result = await self.graph.ainvoke(
                 state_input,
@@ -316,20 +262,6 @@ class AgenticRAGService:
             sources = self._extract_sources(result)
             retrieval_attempts = result.get("retrieval_attempts", 0)
             reasoning_steps = self._extract_reasoning_steps(result)
-
-            # Update trace (cleanup handled by context manager)
-            if trace:
-                trace.update(
-                    output={
-                        "answer": answer,
-                        "sources_count": len(sources),
-                        "retrieval_attempts": retrieval_attempts,
-                        "reasoning_steps": reasoning_steps,
-                        "execution_time": execution_time,
-                    }
-                )
-                trace.end()
-                self.langfuse_tracer.flush()
 
             logger.info("=" * 80)
             logger.info("Agentic RAG Request Completed Successfully")
@@ -353,12 +285,6 @@ class AgenticRAGService:
         except Exception as e:
             logger.error(f"Error in workflow execution: {str(e)}")
             logger.exception("Full traceback:")
-
-            # Update trace with error (cleanup handled by context manager)
-            if trace:
-                trace.update(output={"error": str(e)}, level="ERROR")
-                trace.end()
-                self.langfuse_tracer.flush()
 
             raise
 

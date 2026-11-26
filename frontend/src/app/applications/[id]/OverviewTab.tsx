@@ -66,6 +66,7 @@ export function OverviewTab({ app, onDelete }: { app: Application; onDelete: () 
   const qc = useQueryClient();
   const toast = useToast();
   const mc = app.model_configuration;
+  const gen = mc?.generation_params ?? {};
   const [name, setName] = useState(app.name);
   const [description, setDescription] = useState(app.description ?? "");
   const [systemPrompt, setSystemPrompt] = useState(app.system_prompt ?? "");
@@ -159,6 +160,18 @@ export function OverviewTab({ app, onDelete }: { app: Application; onDelete: () 
           Delete Application
         </button>
       </section>
+
+      <dl className="card max-w-2xl divide-y divide-line">
+        <div className="flex justify-between gap-4 px-5 py-3 text-sm">
+          <dt className="text-muted">Temperature</dt>
+          <dd className="font-medium text-fg">{String(gen.temperature ?? "—")}</dd>
+        </div>
+        <div className="flex justify-between gap-4 px-5 py-3 text-sm">
+          <dt className="text-muted">Maximum answer length</dt>
+          <dd className="font-medium text-fg">{String(gen.max_tokens ?? "—")}</dd>
+        </div>
+        <p className="px-5 py-3 text-xs text-muted">Fixed when the Application is created.</p>
+      </dl>
 
       {!app.knowledge_bases.length && (
         <Callout tone="warn" title="No Knowledge Base attached">

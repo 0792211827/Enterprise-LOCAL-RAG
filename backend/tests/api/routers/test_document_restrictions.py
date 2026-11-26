@@ -12,7 +12,7 @@ import pytest
 from fastapi import Depends
 from src.auth import Role, require_role
 from src.config import AuthSettings, Settings
-from src.dependencies import get_agentic_rag_service, get_langfuse_tracer, get_opensearch_client, get_retrieval_scope
+from src.dependencies import get_agentic_rag_service, get_opensearch_client, get_retrieval_scope
 from src.models import AuditEvent
 from src.models.document import Document
 from src.repositories import RestrictionRepository
@@ -83,7 +83,6 @@ def index(stack, world, engine):
     app = stack.app
     app.dependency_overrides[get_opensearch_client] = lambda: client
     app.state.ollama_client = stack.llm
-    app.dependency_overrides[get_langfuse_tracer] = lambda: MagicMock()  # the legacy routes trace through Langfuse
     stack.llm.generate_rag_answer = AsyncMock(return_value={"answer": "An answer.", "sources": [], "confidence": "low", "citations": []})
     querier, admin = [Depends(require_role(Role.QUERIER))], [Depends(require_role(Role.ADMIN))]
     app.include_router(hybrid_search.router, prefix="/api/v1", dependencies=querier)
@@ -189,7 +188,7 @@ class TestNoLeakage:
         with world.factory() as session:
             scope = resolve_scope(ALICE, session, Settings(auth=AuthSettings(mode="jwt")))
 
-        get_agentic_rag_service(restricted.client, MagicMock(), restricted.embeddings, MagicMock(), Settings(), scope)
+        get_agentic_rag_service(restricted.client, MagicMock(), restricted.embeddings, Settings(), scope)
 
         import asyncio
 

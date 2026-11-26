@@ -27,8 +27,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
-# Recorded by the handlers themselves (query events, chat attachments), or not a
-# control-plane change (feedback on an answer).
+# Recorded by the handlers themselves (query events, chat attachments).
 SELF_AUDITED_ROUTES = frozenset(
     {
         "/api/v1/ask",
@@ -36,7 +35,6 @@ SELF_AUDITED_ROUTES = frozenset(
         "/api/v1/ask-agentic",
         "/api/v1/hybrid-search/",
         "/api/v1/applications/{application_id}/ask",
-        "/api/v1/feedback",
         "/api/v1/knowledge-bases/{kb_id}/documents",
         "/api/v1/documents/{document_id}",
         "/api/v1/documents/{document_id}/replace",

@@ -8,7 +8,6 @@ async function openDashboard(page: Page, setup?: (api: ApiStub) => void) {
   api.respond("GET", "/api/v1/applications", [application()]);
   api.respond("GET", "/api/v1/connectors", [connector()]);
   api.respond("GET", "/api/v1/ingestion-jobs", [job()]);
-  api.respond("GET", "/api/v1/chat-admin/ratings/summary", [{ application_id: "app-policies", application_name: "HR policies", up: 9, down: 1 }]);
   api.respond("GET", "/api/v1/system/health", {
     status: "healthy",
     components: [
@@ -82,16 +81,12 @@ test("telemetry that is exporting or off needs no action, and one that is failin
   await expect(item).toHaveAttribute("href", "/system");
 });
 
-test("lists failed ingestion, Applications with no Knowledge Base, low-rated answers and unhealthy services, each linking onward", async ({ page }) => {
+test("lists failed ingestion, Applications with no Knowledge Base and unhealthy services, each linking onward", async ({ page }) => {
   await openDashboard(page, (a) => {
     a.respond("GET", "/api/v1/ingestion-jobs", [
       job({ id: "job-bad", document_id: "doc-a", status: "FAILED", error: "Docling could not parse the file", created_at: "2026-11-14T09:00:00Z" }),
     ]);
     a.respond("GET", "/api/v1/applications", [application({ knowledge_bases: [] })]);
-    a.respond("GET", "/api/v1/chat-admin/ratings/summary", [
-      { application_id: "app-policies", application_name: "HR policies", up: 1, down: 4 },
-      { application_id: "app-finance", application_name: "Finance desk", up: 8, down: 1 },
-    ]);
     a.respond("GET", "/api/v1/system/health", {
       status: "degraded",
       components: [
@@ -100,7 +95,7 @@ test("lists failed ingestion, Applications with no Knowledge Base, low-rated ans
       ],
     });
   });
-  await expect(page.getByRole("status", { name: "Overall status" })).toContainText("4 things need action");
+  await expect(page.getByRole("status", { name: "Overall status" })).toContainText("3 things need action");
   const list = attention(page);
   const link = (name: RegExp) => list.getByRole("link", { name });
   await expect(link(/opensearch is unhealthy/)).toHaveAttribute("href", "/system");
@@ -108,9 +103,6 @@ test("lists failed ingestion, Applications with no Knowledge Base, low-rated ans
   await expect(link(/1 Document failed to ingest/)).toHaveAttribute("href", "/knowledge-bases/kb-hr");
   await expect(link(/1 Document failed to ingest/)).toContainText("Docling could not parse the file");
   await expect(link(/HR policies has no Knowledge Base/)).toHaveAttribute("href", "/applications/app-policies?tab=knowledge-bases");
-  await expect(link(/HR policies has 4 low-rated answers/)).toHaveAttribute("href", "/feedback");
-  // Finance desk is rated well, so it is not flagged.
-  await expect(list).not.toContainText("Finance desk");
   // The most urgent come first.
   const titles = await list.getByRole("listitem").allTextContents();
   expect(titles[0]).toContain("opensearch");

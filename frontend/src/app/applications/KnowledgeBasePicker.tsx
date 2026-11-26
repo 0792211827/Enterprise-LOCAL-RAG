@@ -39,7 +39,7 @@ export function KnowledgeBasePicker({ selected, onChange }: { selected: string[]
             <span className="min-w-0">
               <span className="block text-sm font-medium text-fg">{kb.name}</span>
               <span className="block text-xs text-muted">
-                {kb.document_count} Document{kb.document_count === 1 ? "" : "s"} · {kb.chunk_count} chunks
+                {kb.document_count} Document{kb.document_count === 1 ? "" : "s"}
                 {kb.description ? ` · ${kb.description}` : ""}
               </span>
             </span>

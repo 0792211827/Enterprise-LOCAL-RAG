@@ -82,8 +82,8 @@ test.describe("creating an Application", () => {
     await expect(summary).toContainText("finance-desk");
     await page.getByRole("checkbox", { name: /Finance rules/ }).check();
     await expect(summary).toContainText("5 Documents in 1 Knowledge Base");
-    await page.getByLabel("Passages used (top K)").fill("12");
-    await expect(summary).toContainText("top 12");
+    await expect(page.getByLabel("Retrieval mode")).toHaveCount(0);
+    await expect(page.getByLabel("Passages used (top K)")).toHaveCount(0);
     await page.getByLabel("System prompt (optional)").fill("Answer briefly.");
     await expect(summary).toContainText("Custom");
     await captureAll(page, "applications-new");
@@ -91,7 +91,9 @@ test.describe("creating an Application", () => {
     await summary.getByRole("button", { name: "Create Application" }).click();
     await expect(page.getByTestId("new-api-key")).toHaveText("rag_live_TESTKEY_once_only");
     await expect(page.getByText("It is shown only once")).toBeVisible();
-    expect(posted).toMatchObject({ name: "Finance desk", knowledge_base_ids: ["kb-fin"], top_k: 12, system_prompt: "Answer briefly.", retrieval_mode: "hybrid" });
+    expect(posted).toMatchObject({ name: "Finance desk", knowledge_base_ids: ["kb-fin"], system_prompt: "Answer briefly." });
+    expect(posted).not.toHaveProperty("retrieval_mode");
+    expect(posted).not.toHaveProperty("top_k");
   });
 
   test("refuses a name that is already taken", async ({ page }) => {
@@ -103,18 +105,17 @@ test.describe("creating an Application", () => {
 });
 
 test.describe("an Application's detail page", () => {
-  test("has Overview, Knowledge Bases, Retrieval, Test and API access tabs", async ({ page }) => {
+  test("has Overview, Knowledge Bases, Test and API access tabs, and no Retrieval tab", async ({ page }) => {
     await openAdmin(page, "/applications/app-policies");
     await expect(page.getByRole("heading", { name: "HR policies" })).toBeVisible();
-    for (const name of ["Overview", "Knowledge Bases", "Retrieval", "Test", "API access"]) {
+    for (const name of ["Overview", "Knowledge Bases", "Test", "API access"]) {
       await expect(page.getByRole("tab", { name })).toBeVisible();
     }
     await expect(page.getByRole("heading", { name: "Readiness" })).toBeVisible();
     await captureAll(page, "application-overview");
 
-    await page.getByRole("tab", { name: "Retrieval" }).click();
-    await expect(page.getByText("Hybrid (keyword and meaning)")).toBeVisible();
-    await captureAll(page, "application-retrieval");
+    await expect(page.getByRole("tab", { name: "Retrieval" })).toHaveCount(0);
+    await expect(page.getByText("Hybrid (keyword and meaning)")).toHaveCount(0);
   });
 
   test("saves a changed name and attached Knowledge Bases", async ({ page }) => {
@@ -142,8 +143,7 @@ test.describe("an Application's detail page", () => {
       a.respond("POST", "/api/v1/applications/:id/ask", {
         query: "How much leave?",
         answer: "You get **25 days** of leave.",
-        sources: [{ document_id: "doc-leave", document_title: "Leave policy", chunk_text: "Full-time employees receive 25 days.", score: 0.8123, section_title: "Annual leave", retrieval_method: "hybrid" }],
-        search_mode: "hybrid",
+        sources: [{ document_id: "doc-leave", document_title: "Leave policy", chunk_text: "Full-time employees receive 25 days.", score: 0.8123, section_title: "Annual leave" }],
         chunks_used: 1,
       }),
     );
@@ -154,7 +154,7 @@ test.describe("an Application's detail page", () => {
     await expect(detail).toContainText("Leave policy");
     await expect(detail).toContainText("Annual leave");
     await expect(detail).toContainText("score 0.812");
-    await expect(page.getByText(/Retrieval detail: 1 source, hybrid search/)).toBeVisible();
+    await expect(page.getByText(/Retrieval detail: 1 source, 1 passage used/)).toBeVisible();
     await captureAll(page, "application-test");
   });
 

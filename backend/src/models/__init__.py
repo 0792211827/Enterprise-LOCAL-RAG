@@ -2,7 +2,7 @@ from .access import DocumentRestriction, GrantPrincipalType, KnowledgeBaseGrant
 from .api_key import ApplicationApiKey, generate_api_key, hash_api_key
 from .application import RAGApplication, application_knowledge_bases
 from .audit import AuditAction, AuditEvent, AuditOutcome
-from .chat import AttachmentImage, AttachmentPartition, Conversation, ConversationAttachment, ConversationMessage, MessageFeedback
+from .chat import AttachmentImage, AttachmentPartition, Conversation, ConversationAttachment, ConversationMessage
 from .connector import Connector, ConnectorFileState, ConnectorSourceType, FileSyncStatus
 from .document import Document, DocumentChunk, DocumentChunkLocator
 from .enums import (
@@ -31,7 +31,6 @@ __all__ = [
     "AttachmentPartition",
     "ConversationAttachment",
     "ConversationMessage",
-    "MessageFeedback",
     "Document",
     "DocumentChunk",
     "DocumentChunkLocator",

@@ -2,10 +2,9 @@
 import { FileText, OctagonAlert, RotateCw } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 import { CopyButton, Icon } from "@/components/ui";
-import type { ChatApplication, ChatAttachment, ChatCitation, MessageFeedback } from "@/lib/api/types";
+import type { ChatApplication, ChatAttachment, ChatCitation } from "@/lib/api/types";
 import { AttachmentChips } from "./AttachmentChips";
 import { CitationOpenContext, Markdown } from "./Markdown";
-import { RatingControl } from "./RatingControl";
 import type { Turn } from "./useConversation";
 
 /** The reading column: a question as a heading, its answer as prose beneath, no bubbles and no avatars. */
@@ -18,7 +17,6 @@ export function MessageStream({
   onCite,
   onRetry,
   onDetach,
-  onRated,
 }: {
   turns: Turn[];
   conversationId: string | null;
@@ -29,7 +27,6 @@ export function MessageStream({
   onCite: (citations: ChatCitation[], index: number, opener: HTMLElement) => void;
   onRetry: () => void;
   onDetach: (attachment: ChatAttachment) => void;
-  onRated: (messageId: string, feedback: MessageFeedback | null) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   // Follow the answer as it grows, but only while the reader is at the bottom: scrolling up to reread
@@ -65,11 +62,9 @@ export function MessageStream({
             <Answer
               key={`${resetKey}-${i}`}
               turn={turn}
-              conversationId={conversationId}
               canRetry={i === turns.length - 1 && !busy}
               onCite={onCite}
               onRetry={onRetry}
-              onRated={onRated}
             />
           ),
         )}
@@ -116,18 +111,14 @@ function Question({
 
 function Answer({
   turn,
-  conversationId,
   canRetry,
   onCite,
   onRetry,
-  onRated,
 }: {
   turn: Turn;
-  conversationId: string | null;
   canRetry: boolean;
   onCite: (citations: ChatCitation[], index: number, opener: HTMLElement) => void;
   onRetry: () => void;
-  onRated: (messageId: string, feedback: MessageFeedback | null) => void;
 }) {
   const thinking = turn.streaming && !turn.text && !turn.error;
   const settled = !turn.streaming;
@@ -176,14 +167,6 @@ function Answer({
       {settled && turn.text && (
         <div className="mt-4 flex flex-wrap items-start gap-x-2 gap-y-1 font-sans">
           <CopyButton quiet label="Copy answer" value={turn.text} />
-          {turn.id && conversationId && (
-            <RatingControl
-              conversationId={conversationId}
-              messageId={turn.id}
-              feedback={turn.feedback ?? null}
-              onRated={(feedback) => onRated(turn.id!, feedback)}
-            />
-          )}
         </div>
       )}
     </div>

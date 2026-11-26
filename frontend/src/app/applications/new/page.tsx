@@ -4,25 +4,16 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ErrorState, PageHeader, Toggle } from "@/components/ui";
 import { applicationsApi, knowledgeBasesApi } from "@/lib/api/resources";
-import type { ApplicationCreate, RetrievalMode } from "@/lib/api/types";
+import type { ApplicationCreate } from "@/lib/api/types";
 import { slugify } from "@/lib/slug";
 import { KnowledgeBasePicker } from "../KnowledgeBasePicker";
 import { ModelFields, type ModelValue } from "../ModelFields";
-
-const MODES: Record<RetrievalMode, string> = {
-  hybrid: "Hybrid (keyword and meaning)",
-  bm25: "Keyword only",
-  vector: "Meaning only",
-};
 
 interface Form extends ModelValue {
   name: string;
   description: string;
   systemPrompt: string;
   kbIds: string[];
-  retrievalMode: RetrievalMode;
-  topK: number;
-  scoreThreshold: string;
   temperature: number;
   maxTokens: number;
   citationsEnabled: boolean;
@@ -39,9 +30,6 @@ const INITIAL: Form = {
   llmEndpoint: "",
   llmApiKeyRef: "",
   llmModel: "llama3.2:1b",
-  retrievalMode: "hybrid",
-  topK: 8,
-  scoreThreshold: "",
   temperature: 0,
   maxTokens: 1024,
   citationsEnabled: true,
@@ -85,9 +73,6 @@ export default function NewApplicationPage() {
         llm_endpoint: form.llmEndpoint || undefined,
         llm_api_key_ref: form.llmApiKeyRef || undefined,
         llm_model: form.llmModel,
-        retrieval_mode: form.retrievalMode,
-        top_k: form.topK,
-        score_threshold: form.scoreThreshold ? Number(form.scoreThreshold) : undefined,
         temperature: form.temperature,
         max_tokens: form.maxTokens,
         citations_enabled: form.citationsEnabled,
@@ -146,35 +131,6 @@ export default function NewApplicationPage() {
             <KnowledgeBasePicker selected={form.kbIds} onChange={(kbIds) => patch({ kbIds })} />
           </Section>
 
-          <Section title="Retrieval profile" hint="How passages are found before the model writes an answer.">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div>
-                <label className="label" htmlFor="app-mode">
-                  Retrieval mode
-                </label>
-                <select id="app-mode" className="input" value={form.retrievalMode} onChange={(e) => patch({ retrievalMode: e.target.value as RetrievalMode })}>
-                  {Object.entries(MODES).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="label" htmlFor="app-topk">
-                  Passages used (top K)
-                </label>
-                <input id="app-topk" className="input" type="number" min={1} max={100} value={form.topK} onChange={(e) => patch({ topK: Number(e.target.value) })} />
-              </div>
-              <div>
-                <label className="label" htmlFor="app-threshold">
-                  Score threshold
-                </label>
-                <input id="app-threshold" className="input" type="number" step="0.01" value={form.scoreThreshold} placeholder="None" onChange={(e) => patch({ scoreThreshold: e.target.value })} />
-              </div>
-            </div>
-          </Section>
-
           <Section title="Prompt and model">
             <div>
               <label className="label" htmlFor="app-prompt">
@@ -229,7 +185,6 @@ export default function NewApplicationPage() {
               {[
                 ["Model name (API)", named ? slug : "—"],
                 ["Knowledge Bases", attached.length ? attached.map((kb) => kb.name).join(", ") : "None"],
-                ["Retrieval", `${MODES[form.retrievalMode]}, top ${form.topK}${form.scoreThreshold ? `, score ≥ ${form.scoreThreshold}` : ""}`],
                 ["Model", form.llmModel || "—"],
                 ["Prompt", form.systemPrompt.trim() ? "Custom" : "Default"],
                 ["Citations", form.citationsEnabled ? "On" : "Off"],

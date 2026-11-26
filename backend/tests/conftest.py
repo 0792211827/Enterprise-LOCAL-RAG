@@ -72,8 +72,6 @@ def test_context(mock_opensearch_client, mock_ollama_client, mock_embeddings_cli
         ollama_client=mock_ollama_client,
         opensearch_client=mock_opensearch_client,
         embeddings_client=mock_embeddings_client,
-        langfuse_tracer=None,
-        langfuse_enabled=False,
         model_name="llama3.2:1b",
         temperature=0.0,
         top_k=3,

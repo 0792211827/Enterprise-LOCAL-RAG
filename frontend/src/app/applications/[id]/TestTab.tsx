@@ -59,7 +59,7 @@ export function TestTab({ app }: { app: Application }) {
                 </div>
                 <details open className="rounded-panel border border-line bg-surface text-sm">
                   <summary className="cursor-pointer select-none px-4 py-2.5 font-medium">
-                    Retrieval detail: {turn.response.sources.length} source{turn.response.sources.length === 1 ? "" : "s"}, {turn.response.search_mode} search, {turn.response.chunks_used} passage
+                    Retrieval detail: {turn.response.sources.length} source{turn.response.sources.length === 1 ? "" : "s"}, {turn.response.chunks_used} passage
                     {turn.response.chunks_used === 1 ? "" : "s"} used
                   </summary>
                   {turn.response.sources.length === 0 ? (
@@ -84,7 +84,6 @@ export function TestTab({ app }: { app: Application }) {
                             </span>
                             <span className="font-mono text-xs text-muted">
                               score {s.score.toFixed(3)}
-                              {s.retrieval_method ? ` · ${s.retrieval_method}` : ""}
                             </span>
                           </div>
                           <p className="mt-1.5 line-clamp-4 text-muted">{s.chunk_text}</p>

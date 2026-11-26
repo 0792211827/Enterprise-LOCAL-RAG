@@ -1,5 +1,5 @@
 """Shared fixtures for the employee chat tests: real grants over in-memory SQLite, the chat routers wired like main.py
-wires them, a switchable caller, and fakes for the search index, the model and Langfuse. Offline.
+wires them, a switchable caller, and fakes for the search index and the model. Offline.
 
 Test modules import the fixtures they use (``world``, ``stack``) from here.
 """
@@ -17,7 +17,6 @@ from src.config import AuthSettings, Settings
 from src.dependencies import (
     get_db_session,
     get_embeddings_service,
-    get_langfuse_tracer,
     get_llm_provider,
     get_opensearch_client,
     get_pdf_parser,
@@ -40,35 +39,6 @@ DOC_TEXT = "Employees get 25 days of annual leave. Unused days carry over."
 
 def caller(subject, *groups, roles=(Role.QUERIER,)):
     return Principal(subject=subject, roles=frozenset(roles), auth_method="jwt", groups=frozenset(groups))
-
-
-class FakeSpan:
-    def __init__(self, sink, kwargs):
-        self.sink = sink
-        sink.append(("start", kwargs))
-
-    def update(self, **kwargs):
-        self.sink.append(("update", kwargs))
-
-    def update_trace(self, **kwargs):
-        self.sink.append(("trace", kwargs))
-
-    def end(self, **kwargs):
-        self.sink.append(("end", kwargs))
-
-
-class FakeTracer:
-    """What Langfuse would be sent: every span call is recorded."""
-
-    def __init__(self):
-        self.sent = []
-        self.client = SimpleNamespace(start_span=lambda **kwargs: FakeSpan(self.sent, kwargs))
-
-    def flush(self):
-        pass
-
-    def everything_sent(self) -> str:
-        return json.dumps(self.sent, default=str)
 
 
 class FakeParser:
@@ -169,7 +139,6 @@ def stack(world):
     embeddings.embed_query = AsyncMock(return_value=[0.1])
     settings = {"value": Settings(auth=AuthSettings(mode="jwt"))}
     current = {"principal": caller("alice", "staff")}
-    tracer = FakeTracer()
 
     parser = FakeParser()
     app = FastAPI()
@@ -189,7 +158,6 @@ def stack(world):
     app.dependency_overrides[get_opensearch_client] = lambda: index
     app.dependency_overrides[get_embeddings_service] = lambda: embeddings
     app.dependency_overrides[get_llm_provider] = lambda: llm
-    app.dependency_overrides[get_langfuse_tracer] = lambda: tracer
     app.dependency_overrides[get_pdf_parser] = lambda: parser
     app.state.audit_recorder = DatabaseAuditRecorder(opener(world.factory), level="full")
     app.state.chat_limiter = ChatLimiter(per_minute=1000, max_concurrent=100)  # generous, as by default
@@ -200,7 +168,6 @@ def stack(world):
         index=index,
         llm=llm,
         embeddings=embeddings,
-        tracer=tracer,
         parser=parser,
         act_as=lambda principal: current.update(principal=principal),
         use_settings=lambda value: settings.update(value=value),

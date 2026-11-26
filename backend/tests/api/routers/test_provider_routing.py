@@ -59,7 +59,6 @@ class TestAnswerPathsUseTheProvider:
             main.app.state.opensearch_client,
             main.app.state.ollama_client,
             main.app.state.embeddings_service,
-            main.app.state.langfuse_tracer,
             Settings(),
             None,
             separate_provider,

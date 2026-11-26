@@ -4,7 +4,7 @@ Audited at branch `feature/owui-gap-analysis`, commit `4ce0a6b` (41 commits, cle
 
 ## 1. Architecture overview
 
-A local-first RAG platform. **Backend:** FastAPI, Python 3.12, `uv` (`backend/`). **Admin UI:** Next.js 14 App Router, TanStack Query (`frontend/`). **Data/services (Docker Compose):** PostgreSQL, OpenSearch 2.19 (single shared hybrid index), Ollama 0.11.2, Redis, Langfuse v3 (with ClickHouse, MinIO, its own Postgres/Redis). No external AI APIs are required.
+A local-first RAG platform. **Backend:** FastAPI, Python 3.12, `uv` (`backend/`). **Admin UI:** Next.js 14 App Router, TanStack Query (`frontend/`). **Data/services (Docker Compose):** PostgreSQL, OpenSearch 2.19 (single shared hybrid index), Ollama 0.11.2, Redis. No external AI APIs are required.
 
 ```
 Browser (admin UI :3001) ─┐                    ┌─ PostgreSQL  (KBs, docs, chunks, apps, providers,
@@ -12,8 +12,7 @@ Host apps / OpenAI SDKs ──┤                    │               api keys,
                           ▼                    │
                      FastAPI (:8000) ──────────┼─ OpenSearch  (BM25 + kNN + RRF; chunks tagged knowledge_base_id)
    middleware: RequestContext → Audit → CORS   ├─ Ollama      (LLM, and embeddings when EMBEDDING__PROVIDER=ollama)
-   auth: per-router role deps (+ handler auth) ├─ Redis       (answer cache, scope-keyed)
-                                               └─ Langfuse    (optional tracing)
+   auth: per-router role deps (+ handler auth) └─ Redis       (answer cache, scope-keyed)
 ```
 
 ### Layers
@@ -22,11 +21,11 @@ Host apps / OpenAI SDKs ──┤                    │               api keys,
 
 ### Service lifecycle / DI
 
-`src/main.py` `lifespan` builds each collaborator through a `make_*` factory onto `app.state` (DB, OpenSearch, PDF parser, embeddings, Ollama, LLM provider, optional VLM, Langfuse, Redis cache, audit recorder, authenticator) and creates the OpenSearch index if missing. `src/dependencies.py` exposes them as `Annotated` deps (`OpenSearchDep`, `SessionDep`, `LLMProviderDep`, `OllamaDep`, `AuditDep`, `PrincipalDep`, …). Per-request services (`IngestionService`, agentic RAG) are assembled there. `tests/api/conftest.py` patches every `make_*` factory so API tests are offline.
+`src/main.py` `lifespan` builds each collaborator through a `make_*` factory onto `app.state` (DB, OpenSearch, PDF parser, embeddings, Ollama, LLM provider, optional VLM, Redis cache, audit recorder, authenticator) and creates the OpenSearch index if missing. `src/dependencies.py` exposes them as `Annotated` deps (`OpenSearchDep`, `SessionDep`, `LLMProviderDep`, `OllamaDep`, `AuditDep`, `PrincipalDep`, …). Per-request services (`IngestionService`, agentic RAG) are assembled there. `tests/api/conftest.py` patches every `make_*` factory so API tests are offline.
 
 ### Configuration
 
-`src/config.py`: nested pydantic-settings groups with `__` prefixes: `EMBEDDING__`, `LLM__`, `VLM__`, `PDF_PARSER__`, `CHUNKING__`, `OPENSEARCH__`, `LANGFUSE__`, `REDIS__`, `AUTH__`, `API_KEYS__`, `AUDIT__`. Reads `.env` from repo root and `backend/`. Documented in `.env.example` and the README. **Defaults are open:** `AUTH__MODE=disabled`, `API_KEYS__ENFORCE=false`, `AUDIT__LEVEL=off`.
+`src/config.py`: nested pydantic-settings groups with `__` prefixes: `EMBEDDING__`, `LLM__`, `VLM__`, `PDF_PARSER__`, `CHUNKING__`, `OPENSEARCH__`, `REDIS__`, `AUTH__`, `API_KEYS__`, `AUDIT__`. Reads `.env` from repo root and `backend/`. Documented in `.env.example` and the README. **Defaults are open:** `AUTH__MODE=disabled`, `API_KEYS__ENFORCE=false`, `AUDIT__LEVEL=off`.
 
 ## 2. Important modules
 
@@ -41,7 +40,6 @@ Host apps / OpenAI SDKs ──┤                    │               api keys,
 | Ingestion | `routers/documents.py`, `services/ingestion/service.py`, `services/pdf_parser/*`, `services/indexing/text_chunker.py` | Upload → parse → chunk → embed → index |
 | Providers | `services/providers/{llm,embeddings,vlm}/*`, `services/ollama/client.py` | Interface + implementations + factory per kind |
 | Audit | `models/audit.py`, `services/audit/*`, `middleware/audit.py`, `routers/audit.py`, `cli/audit_purge.py` | Append-only trail, export, purge |
-| Observability | `services/langfuse/*` | Optional tracing with caller attribution |
 | Cache | `services/cache/client.py` | Redis answer cache; key includes scope digest |
 | Deploy | `compose.yml`, `compose.hardened.yml`, `compose.localports.yml`, `Makefile` | See §6 |
 | Frontend | `frontend/src/app/*`, `frontend/src/lib/api/{client,resources,types}.ts` | Components never call `fetch` directly |
@@ -55,13 +53,12 @@ Enumerated programmatically from `app.routes`; the policy is pinned by `tests/un
 | Public | `GET /api/v1/health` | - (liveness) |
 | Any authenticated | `GET /api/v1/auth/me` | `get_principal` (401 if unauthenticated) |
 | OpenAI-compatible | `POST /v1/chat/completions` | in-handler: app API key and/or user token; key required when `API_KEYS__ENFORCE=true` |
-| Query | `POST /api/v1/{ask, stream, ask-agentic, feedback}`, `POST /api/v1/hybrid-search/` | querier |
+| Query | `POST /api/v1/{ask, stream, ask-agentic}`, `POST /api/v1/hybrid-search/` | querier |
 | Knowledge bases | `GET,POST /api/v1/knowledge-bases`; `GET /knowledge-bases/access-check`; `GET,PATCH,DELETE /knowledge-bases/{kb_id}`; `GET,PUT /knowledge-bases/{kb_id}/grants`; `GET,POST /knowledge-bases/{kb_id}/documents` | admin |
 | Documents/jobs | `GET /documents`; `GET,DELETE /documents/{id}`; `POST /documents/{id}/reprocess`; `GET /ingestion-jobs`; `GET /documents/{id}/ingestion-job` | admin |
 | Applications | `GET,POST /applications`; `GET,PATCH,DELETE /applications/{id}`; `POST /applications/{id}/ask` | admin |
 | API keys | `GET,POST /applications/{id}/api-keys`; `POST …/{key_id}/rotate`; `DELETE …/{key_id}` | admin |
 | Providers | `GET,POST /providers`; `GET,PATCH,DELETE /providers/{id}`; `POST …/test`; `GET …/models` | admin (note: server-side calls to admin-supplied URLs) |
-| Retrieval configs | `GET,POST /retrieval-configurations`; `GET,DELETE /retrieval-configurations/{id}` | admin (no update route) |
 | System | `GET /system/{health,stats,security,gpu}` | admin |
 | Audit | `GET /audit/{status,events,events/{id},export}` | auditor (admin included unless `AUTH__ADMIN_CAN_READ_AUDIT=false`) |
 
@@ -105,8 +102,8 @@ Every search path calls `resolve_scope(principal, session, settings)` and inters
 ## 6. Deployment and runtime configuration
 
 - `compose.yml`: all services with host ports; GPU **not** configured for any service.
-- `compose.localports.yml`: machine-specific remap (API→8020, Postgres→5442, Langfuse→3010) and Ollama embeddings for `bge-m3`. Not for upstream.
-- `compose.hardened.yml`: removes host ports from data stores; binds API/UI/Langfuse to `RAG_BIND_ADDRESS` (default `127.0.0.1`). OpenSearch/Redis still unauthenticated inside `rag-network`.
+- `compose.localports.yml`: machine-specific remap (API→8020, Postgres→5442) and Ollama embeddings for `bge-m3`. Not for upstream.
+- `compose.hardened.yml`: removes host ports from data stores; binds API/UI to `RAG_BIND_ADDRESS` (default `127.0.0.1`). OpenSearch/Redis still unauthenticated inside `rag-network`.
 - Makefile targets: `setup`, `test`, `lint`, `format`, `start`, `stop`, `start-hardened`, `health`, `health-hardened`, `audit-purge`.
 - Frontend `NEXT_PUBLIC_API_URL` is baked at build time (compose build arg).
 
@@ -135,7 +132,7 @@ Test layout: `tests/unit/` (auth, providers, services incl. scope/audit/OpenSear
 | `npm run lint` (frontend) | **BLOCKED**: no ESLint config, so `next lint` starts an interactive setup wizard |
 | `tests/integration/` | **not run**: needs live services and a model |
 | Live stack smoke | `api`+`postgres`+`opensearch`+`redis`+`ollama` up; `/health` healthy; 44 live checks in JWT mode (see the register). Real behavioural differences: no-role tokens get 401 not 403, and admin can call `/ask`. Both are by design |
-| Frontend/Langfuse/Dashboards containers | **not started** (not needed for the API checks) |
+| Frontend/Dashboards containers | **not started** (not needed for the API checks) |
 | GPU, vLLM, TGI, real IdP/JWKS, OIDC browser flow, hardened overlay live | **BLOCKED**: no hardware, no endpoints, no IdP, port overlap |
 
 The live checks changed state in the developer's existing stack volumes: two temporary KBs and their documents were created and deleted through the API, and metadata-level audit events remain (append-only). The containers were stopped afterwards to restore the prior state.
@@ -168,6 +165,6 @@ The earlier `docs/audit/` set (Phases 1–4: current-architecture gaps, Open Web
 
 - **Audit status** is `GET /api/v1/audit/status` (auditor role), not a field on `/system/security`, which is admin-only and would hide it from a non-admin auditor.
 - **Extra audit actions:** `access.denied` (recorded by the middleware), `audit.export` (recorded *before* data is sent, so `deny` mode can refuse an unauditable export) and `audit.purge` (written in the same transaction as the delete, even at level `off`). A `details` JSON column holds action-specific extras.
-- **Cache hits** record `retrieved = NULL` with cited titles in `details`, rather than claiming chunks were retrieved. Admin-mutation audit failures are log-only because the change has already committed. The Langfuse request ID is attached on `/ask` and `/stream`, but not on the agentic service, which builds its own traces.
-- **Hardened overlay:** published ports come from `RAG_BIND_ADDRESS`, `RAG_API_PORT`, `RAG_FRONTEND_PORT`, `RAG_LANGFUSE_PORT`. Removed ports use `!reset []`. `make health-hardened` checks OpenSearch and Ollama from inside the network through the API container. The README checklist covers default credentials, Redis having no password, and the Langfuse media-upload endpoint.
+- **Cache hits** record `retrieved = NULL` with cited titles in `details`, rather than claiming chunks were retrieved. Admin-mutation audit failures are log-only because the change has already committed.
+- **Hardened overlay:** published ports come from `RAG_BIND_ADDRESS`, `RAG_API_PORT`, `RAG_FRONTEND_PORT`. Removed ports use `!reset []`. `make health-hardened` checks OpenSearch and Ollama from inside the network through the API container. The README checklist covers default credentials, Redis having no password.
 - **Accepted behaviours:** `knowledge_base_ids=[]` means "match nothing" (a mode-independent semantic change made in S3); `AUTH__UNGRANTED_KB_ACCESS` defaults to `deny`; `AUDIT__FAIL_MODE` defaults to `log`. New dependencies added by the track: `pyjwt[crypto]` (backend) and an OIDC client (frontend). `langchain-openai` is planned for roadmap Phase 4.

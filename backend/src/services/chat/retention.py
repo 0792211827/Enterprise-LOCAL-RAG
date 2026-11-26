@@ -1,7 +1,7 @@
 """Purging Conversations past retention.
 
 Retention counts from a Conversation's last message. The purge removes the Conversation and everything attached
-to it (messages, ratings), is safe to run repeatedly, and works in batches so a long backlog does not hold one
+to it (messages), is safe to run repeatedly, and works in batches so a long backlog does not hold one
 huge transaction. Run daily by the API process (see ``run_daily``) and on demand by ``make chat-purge``.
 """
 

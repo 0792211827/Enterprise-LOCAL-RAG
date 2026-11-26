@@ -49,7 +49,7 @@ export default function KnowledgeBasesPage() {
     <div>
       <PageHeader title="Knowledge Bases" description="Collections of Documents. Each is indexed on its own, and each Application draws on the ones you attach." action={create} />
 
-      {list.isLoading && <TableSkeleton columns={5} label="Loading Knowledge Bases" />}
+      {list.isLoading && <TableSkeleton columns={4} label="Loading Knowledge Bases" />}
       {list.isError && <ErrorState title="Could not load Knowledge Bases" message={(list.error as Error).message} onRetry={() => list.refetch()} />}
       {list.data && list.data.length === 0 && (
         <EmptyState
@@ -65,7 +65,6 @@ export default function KnowledgeBasesPage() {
             <tr>
               <Th>Name</Th>
               <Th align="right">Documents</Th>
-              <Th align="right">Size</Th>
               <Th>Last updated</Th>
               <Th />
             </tr>
@@ -80,7 +79,6 @@ export default function KnowledgeBasesPage() {
                   <div className="font-mono text-xs text-subtle">{kb.slug}</div>
                 </Td>
                 <Td align="right">{kb.document_count}</Td>
-                <Td align="right">{kb.chunk_count.toLocaleString()} chunks</Td>
                 <Td>{timeAgo(kb.updated_at ?? kb.created_at)}</Td>
                 <Td align="right">
                   <button type="button" className="btn btn-ghost btn-sm" aria-label={`Delete ${kb.name}`} onClick={() => setDeleting(kb)}>

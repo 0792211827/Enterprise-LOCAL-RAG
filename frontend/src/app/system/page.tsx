@@ -1,12 +1,10 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, Server } from "lucide-react";
+import { Server } from "lucide-react";
 import { Callout, EmptyState, ErrorState, HealthIndicator, Icon, PageHeader, Skeleton, StatusBadge, TBody, Table, TableSkeleton, Td, Th, THead, Tr } from "@/components/ui";
 import { systemApi } from "@/lib/api/resources";
 import type { SecurityStatus } from "@/lib/api/types";
 import { titleCase } from "../knowledge-bases/ingestion";
-
-const LANGFUSE_URL = process.env.NEXT_PUBLIC_LANGFUSE_URL || "http://localhost:3000";
 
 type Tone = "ok" | "warn" | "danger" | "info" | "neutral";
 
@@ -178,19 +176,6 @@ export default function SystemPage() {
             </div>
           </>
         )}
-      </section>
-
-      <section aria-labelledby="observability-title" className="space-y-3">
-        <h2 id="observability-title" className="font-display text-lg font-semibold">
-          Observability
-        </h2>
-        <a href={LANGFUSE_URL} target="_blank" rel="noreferrer" className="card flex items-center justify-between gap-3 p-5 hover:border-accent">
-          <span>
-            <span className="block text-sm font-semibold text-accent-text">Open Langfuse</span>
-            <span className="mt-1 block text-sm text-muted">Traces of each answer, model calls and timings.</span>
-          </span>
-          <Icon icon={ExternalLink} className="text-subtle" />
-        </a>
       </section>
     </div>
   );

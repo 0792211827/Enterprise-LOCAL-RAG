@@ -11,7 +11,6 @@ from sqlalchemy import text
 from src.dependencies import (
     CacheDep,
     DatabaseDep,
-    LangfuseDep,
     LLMProviderDep,
     OpenSearchDep,
     SessionDep,
@@ -54,7 +53,6 @@ async def system_health(
     database: DatabaseDep,
     opensearch: OpenSearchDep,
     cache: CacheDep,
-    langfuse: LangfuseDep,
     llm: LLMProviderDep,
     settings: SettingsDep,
     telemetry: TelemetryDep,
@@ -126,26 +124,6 @@ async def system_health(
                 detail=str(exc),
             )
         )
-
-    # Langfuse (monitoring). A constructed client object only proves that keys
-    # were supplied at startup -- it says nothing about the collector being up.
-    # Probe the server so a stopped Langfuse isn't reported as healthy.
-    if langfuse is not None and getattr(langfuse, "client", None) is not None:
-        auth_check = getattr(langfuse.client, "auth_check", None)
-        if callable(auth_check):
-            ok, latency, err = _timed(auth_check)
-            components.append(
-                ComponentHealth(
-                    name="Langfuse",
-                    status="healthy" if ok else "unhealthy",
-                    latency_ms=latency,
-                    detail=err,
-                )
-            )
-        else:
-            components.append(ComponentHealth(name="Langfuse", status="healthy"))
-    else:
-        components.append(ComponentHealth(name="Langfuse", status="disabled"))
 
     overall = "healthy" if all(c.status in ("healthy", "disabled") for c in components) else "degraded"
 

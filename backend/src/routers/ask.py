@@ -1,6 +1,5 @@
 import json
 import logging
-import time
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -9,7 +8,6 @@ from src.dependencies import (
     AuditDep,
     CacheDep,
     EmbeddingsDep,
-    LangfuseDep,
     LLMProviderDep,
     OpenSearchDep,
     PrincipalDep,
@@ -21,7 +19,6 @@ from src.models import AuditAction
 from src.schemas.api.ask import AskRequest, AskResponse
 from src.services.access import RetrievalScope
 from src.services.audit import AuditContext, QueryAudit, audited_query, audited_stream
-from src.services.langfuse.tracer import RAGTracer
 from src.services.retrieval import embed_or_none, retrieve
 
 logger = logging.getLogger(__name__)
@@ -35,13 +32,11 @@ async def _prepare_chunks_and_sources(
     request: AskRequest,
     opensearch_client,
     embeddings_service,
-    rag_tracer: RAGTracer,
-    trace=None,
     scope: Optional[RetrievalScope] = None,
     reranker=None,
     audit: Optional[QueryAudit] = None,
 ) -> tuple[List[Dict], List[str], List[str]]:
-    """Retrieve and prepare chunks for RAG with clean tracing.
+    """Retrieve and prepare chunks for RAG.
 
     These legacy endpoints search globally; with a restricted ``scope`` the
     search is limited to the knowledge bases the caller may read, and an
@@ -53,62 +48,53 @@ async def _prepare_chunks_and_sources(
     # Handle embeddings for hybrid search
     query_embedding = None
     if request.use_hybrid:
-        with rag_tracer.trace_embedding(trace, request.query) as embedding_span:
-            query_embedding = await embed_or_none(embeddings_service, request.query)
-            if query_embedding is None and embedding_span:
-                rag_tracer.tracer.update_span(embedding_span, output={"success": False})
+        query_embedding = await embed_or_none(embeddings_service, request.query)
 
-    # Search with tracing
-    with rag_tracer.trace_search(trace, request.query, request.top_k) as search_span:
-        retrieval = await retrieve(
-            opensearch_client,
-            embeddings_service,
-            request.query,
-            scope=scope,
-            mode="hybrid" if query_embedding is not None else "bm25",
-            size=request.top_k,
-            categories=request.categories,
-            query_embedding=query_embedding,
-            reranker=reranker,
+    retrieval = await retrieve(
+        opensearch_client,
+        embeddings_service,
+        request.query,
+        scope=scope,
+        mode="hybrid" if query_embedding is not None else "bm25",
+        size=request.top_k,
+        categories=request.categories,
+        query_embedding=query_embedding,
+        reranker=reranker,
+    )
+    if audit is not None:
+        audit.note_rerank(retrieval.rerank)
+
+    # Extract essential data for LLM
+    chunks = []
+    document_ids = []
+    sources_set = set()
+
+    for hit in retrieval.hits:
+        document_id = hit.get("document_id", "")
+        title = hit.get("title", "")
+
+        # Minimal chunk data for LLM. The title is what the prompt cites,
+        # so it must travel with the text. The IDs and score are for the
+        # audit trail; the prompt builder ignores them.
+        chunks.append(
+            {
+                "document_id": document_id,
+                "title": title,
+                "section_title": hit.get("section_title", ""),
+                "locator": hit.get("locator"),
+                "chunk_text": hit.get("chunk_text", ""),
+                "chunk_id": hit.get("chunk_id"),
+                "knowledge_base_id": hit.get("knowledge_base_id"),
+                "score": hit.get("score"),
+            }
         )
-        search_results = {"total": retrieval.total, "hits": retrieval.hits}
-        if audit is not None:
-            audit.note_rerank(retrieval.rerank)
 
-        # Extract essential data for LLM
-        chunks = []
-        document_ids = []
-        sources_set = set()
-
-        for hit in search_results.get("hits", []):
-            document_id = hit.get("document_id", "")
-            title = hit.get("title", "")
-
-            # Minimal chunk data for LLM. The title is what the prompt cites,
-            # so it must travel with the text. The IDs and score are for the
-            # audit trail; the prompt builder ignores them.
-            chunks.append(
-                {
-                    "document_id": document_id,
-                    "title": title,
-                    "section_title": hit.get("section_title", ""),
-                    "locator": hit.get("locator"),
-                    "chunk_text": hit.get("chunk_text", ""),
-                    "chunk_id": hit.get("chunk_id"),
-                    "knowledge_base_id": hit.get("knowledge_base_id"),
-                    "score": hit.get("score"),
-                }
-            )
-
-            if document_id:
-                document_ids.append(document_id)
-            # Sources are human-facing: prefer the document title, falling back
-            # to its id. Never synthesise an external URL.
-            if title or document_id:
-                sources_set.add(title or document_id)
-
-        # End search span with essential metadata
-        rag_tracer.end_search(search_span, chunks, document_ids, search_results.get("total", 0))
+        if document_id:
+            document_ids.append(document_id)
+        # Sources are human-facing: prefer the document title, falling back
+        # to its id. Never synthesise an external URL.
+        if title or document_id:
+            sources_set.add(title or document_id)
 
     return chunks, list(sources_set), document_ids
 
@@ -119,7 +105,6 @@ async def ask_question(
     opensearch_client: OpenSearchDep,
     embeddings_service: EmbeddingsDep,
     llm: LLMProviderDep,
-    langfuse_tracer: LangfuseDep,
     cache_client: CacheDep,
     principal: PrincipalDep,
     scope: ScopeDep,
@@ -128,12 +113,9 @@ async def ask_question(
     telemetry: TelemetryDep,
     http_request: Request,
 ) -> AskResponse:
-    """Clean RAG endpoint with essential tracing and exact match caching."""
-    telemetry.observe_application(None)  # a global route: no Application, so the series say "unknown"
+    """Clean RAG endpoint with exact match caching."""
     scope_token = scope.cache_token()
-
-    rag_tracer = RAGTracer(langfuse_tracer)
-    start_time = time.time()
+    telemetry.observe_application(None)  # a global route: no Application, so the series say "unknown"
 
     with audited_query(
         audit_recorder,
@@ -141,7 +123,7 @@ async def ask_question(
         action=AuditAction.QUERY_ANSWER.value,
         query=request.query,
         decision=scope.restrict(None),
-    ) as audit, rag_tracer.trace_request(principal.subject, request.query, audit.context.request_id) as trace:
+    ) as audit:
         audit.model, audit.cache_hit = request.model, (False if cache_client else None)
         try:
             # Check exact cache first
@@ -162,7 +144,7 @@ async def ask_question(
 
             # Retrieve chunks
             chunks, sources, _ = await _prepare_chunks_and_sources(
-                request, opensearch_client, embeddings_service, rag_tracer, trace, scope=scope, reranker=reranker, audit=audit
+                request, opensearch_client, embeddings_service, scope=scope, reranker=reranker, audit=audit
             )
 
             audit.hits = chunks
@@ -175,30 +157,13 @@ async def ask_question(
                     search_mode="bm25" if not request.use_hybrid else "hybrid",
                 )
                 audit.answer = response.answer
-                rag_tracer.end_request(trace, response.answer, time.time() - start_time)
                 return response
 
-            # Build prompt
-            with rag_tracer.trace_prompt_construction(trace, chunks) as prompt_span:
-                from src.services.ollama.prompts import RAGPromptBuilder
-
-                prompt_builder = RAGPromptBuilder()
-
-                try:
-                    prompt_data = prompt_builder.create_structured_prompt(request.query, chunks)
-                    final_prompt = prompt_data["prompt"]
-                except Exception:
-                    final_prompt = prompt_builder.create_rag_prompt(request.query, chunks)
-
-                rag_tracer.end_prompt(prompt_span, final_prompt)
-
             # Generate answer
-            with rag_tracer.trace_generation(trace, request.model, final_prompt) as gen_span:
-                with telemetry.stage("generate_answer"):
-                    rag_response = await llm.generate_rag_answer(query=request.query, chunks=chunks, model=request.model)
-                answer = rag_response.get("answer", "Unable to generate answer")
-                audit.answer = answer
-                rag_tracer.end_generation(gen_span, answer, request.model)
+            with telemetry.stage("generate_answer"):
+                rag_response = await llm.generate_rag_answer(query=request.query, chunks=chunks, model=request.model)
+            answer = rag_response.get("answer", "Unable to generate answer")
+            audit.answer = answer
 
             # Prepare response
             response = AskResponse(
@@ -208,8 +173,6 @@ async def ask_question(
                 chunks_used=len(chunks),
                 search_mode="bm25" if not request.use_hybrid else "hybrid",
             )
-
-            rag_tracer.end_request(trace, answer, time.time() - start_time)
 
             # Store response in exact match cache
             if cache_client:
@@ -231,7 +194,6 @@ async def ask_question_stream(
     opensearch_client: OpenSearchDep,
     embeddings_service: EmbeddingsDep,
     llm: LLMProviderDep,
-    langfuse_tracer: LangfuseDep,
     cache_client: CacheDep,
     principal: PrincipalDep,
     scope: ScopeDep,
@@ -244,7 +206,6 @@ async def ask_question_stream(
     telemetry.observe_application(None)
 
     # Resolved to plain values now: the generator runs after the handler returns.
-    subject = principal.subject
     scope_token = scope.cache_token()
     audit = QueryAudit(
         audit_recorder,
@@ -256,112 +217,93 @@ async def ask_question_stream(
     audit.model, audit.cache_hit = request.model, (False if cache_client else None)
 
     async def generate_stream():
-        rag_tracer = RAGTracer(langfuse_tracer)
-        start_time = time.time()
+        try:
+            # Check exact cache first
+            if cache_client:
+                try:
+                    cached_response = await cache_client.find_cached_response(request, scope_token)
+                    telemetry.record_cache_lookup(bool(cached_response))
+                    if cached_response:
+                        logger.info("Returning cached response for exact streaming query match")
+                        _audit_cache_hit(audit, cached_response)
 
-        with rag_tracer.trace_request(subject, request.query, audit.context.request_id) as trace:
+                        # Send metadata first (same format as non-cached)
+                        metadata_response = {
+                            "sources": cached_response.sources,
+                            "chunks_used": cached_response.chunks_used,
+                            "search_mode": cached_response.search_mode,
+                        }
+                        yield f"data: {json.dumps(metadata_response)}\n\n"
+
+                        # Stream the cached response in chunks
+                        for chunk in cached_response.answer.split():
+                            yield f"data: {json.dumps({'chunk': chunk + ' '})}\n\n"
+
+                        # Send completion signal with just the final answer
+                        yield f"data: {json.dumps({'answer': cached_response.answer, 'done': True})}\n\n"
+                        return
+                except Exception as e:
+                    logger.warning(f"Cache check failed, proceeding with normal flow: {e}")
+
+            # Retrieve chunks
+            chunks, sources, _ = await _prepare_chunks_and_sources(
+                request, opensearch_client, embeddings_service, scope=scope, reranker=reranker, audit=audit
+            )
+
+            audit.hits = chunks
+            if not chunks:
+                audit.answer = "No relevant information found."
+                yield f"data: {json.dumps({'answer': 'No relevant information found.', 'sources': [], 'done': True})}\n\n"
+                return
+
+            # Send metadata first
+            search_mode = "bm25" if not request.use_hybrid else "hybrid"
+            metadata_response = {"sources": sources, "chunks_used": len(chunks), "search_mode": search_mode}
+            yield f"data: {json.dumps(metadata_response)}\n\n"
+
+            # Stream generation
+            full_response = ""
+            # Not made current: the span stays open across the yields, which the consumer drives from elsewhere.
+            stage = telemetry.begin_stage("generate_answer")
+            generation_failed = False
             try:
-                # Check exact cache first
-                if cache_client:
-                    try:
-                        cached_response = await cache_client.find_cached_response(request, scope_token)
-                        telemetry.record_cache_lookup(bool(cached_response))
-                        if cached_response:
-                            logger.info("Returning cached response for exact streaming query match")
-                            _audit_cache_hit(audit, cached_response)
+                async for chunk in llm.generate_rag_answer_stream(query=request.query, chunks=chunks, model=request.model):
+                    if chunk.get("response"):
+                        text_chunk = chunk["response"]
+                        if not full_response:
+                            telemetry.record_first_token(request.model)
+                        full_response += text_chunk
+                        audit.answer = full_response
+                        yield f"data: {json.dumps({'chunk': text_chunk})}\n\n"
 
-                            # Send metadata first (same format as non-cached)
-                            metadata_response = {
-                                "sources": cached_response.sources,
-                                "chunks_used": cached_response.chunks_used,
-                                "search_mode": cached_response.search_mode,
-                            }
-                            yield f"data: {json.dumps(metadata_response)}\n\n"
+                    if chunk.get("done", False):
+                        yield f"data: {json.dumps({'answer': full_response, 'done': True})}\n\n"
+                        break
+            except Exception:
+                generation_failed = True
+                raise
+            finally:
+                stage.end(error=generation_failed)
 
-                            # Stream the cached response in chunks
-                            for chunk in cached_response.answer.split():
-                                yield f"data: {json.dumps({'chunk': chunk + ' '})}\n\n"
+            # Store response in exact match cache
+            if cache_client and full_response:
+                try:
+                    response_to_cache = AskResponse(
+                        query=request.query,
+                        answer=full_response,
+                        sources=sources,
+                        chunks_used=len(chunks),
+                        search_mode=search_mode,
+                    )
+                    await cache_client.store_response(request, response_to_cache, scope_token)
+                except Exception as e:
+                    logger.warning(f"Failed to store streaming response in cache: {e}")
 
-                            # Send completion signal with just the final answer
-                            yield f"data: {json.dumps({'answer': cached_response.answer, 'done': True})}\n\n"
-                            return
-                    except Exception as e:
-                        logger.warning(f"Cache check failed, proceeding with normal flow: {e}")
-
-                # Retrieve chunks
-                chunks, sources, _ = await _prepare_chunks_and_sources(
-                    request, opensearch_client, embeddings_service, rag_tracer, trace, scope=scope, reranker=reranker, audit=audit
-                )
-
-                audit.hits = chunks
-                if not chunks:
-                    audit.answer = "No relevant information found."
-                    yield f"data: {json.dumps({'answer': 'No relevant information found.', 'sources': [], 'done': True})}\n\n"
-                    return
-
-                # Send metadata first
-                search_mode = "bm25" if not request.use_hybrid else "hybrid"
-                metadata_response = {"sources": sources, "chunks_used": len(chunks), "search_mode": search_mode}
-                yield f"data: {json.dumps(metadata_response)}\n\n"
-
-                # Build prompt
-                with rag_tracer.trace_prompt_construction(trace, chunks) as prompt_span:
-                    from src.services.ollama.prompts import RAGPromptBuilder
-
-                    prompt_builder = RAGPromptBuilder()
-                    final_prompt = prompt_builder.create_rag_prompt(request.query, chunks)
-                    rag_tracer.end_prompt(prompt_span, final_prompt)
-
-                # Stream generation
-                with rag_tracer.trace_generation(trace, request.model, final_prompt) as gen_span:
-                    full_response = ""
-                    # Not made current: the span stays open across the yields, which the consumer drives from elsewhere.
-                    stage = telemetry.begin_stage("generate_answer")
-                    generation_failed = False
-                    try:
-                        async for chunk in llm.generate_rag_answer_stream(
-                            query=request.query, chunks=chunks, model=request.model
-                        ):
-                            if chunk.get("response"):
-                                text_chunk = chunk["response"]
-                                if not full_response:
-                                    telemetry.record_first_token(request.model)
-                                full_response += text_chunk
-                                audit.answer = full_response
-                                yield f"data: {json.dumps({'chunk': text_chunk})}\n\n"
-
-                            if chunk.get("done", False):
-                                rag_tracer.end_generation(gen_span, full_response, request.model)
-                                yield f"data: {json.dumps({'answer': full_response, 'done': True})}\n\n"
-                                break
-                    except Exception:
-                        generation_failed = True
-                        raise
-                    finally:
-                        stage.end(error=generation_failed)
-
-                rag_tracer.end_request(trace, full_response, time.time() - start_time)
-
-                # Store response in exact match cache
-                if cache_client and full_response:
-                    try:
-                        search_mode = "bm25" if not request.use_hybrid else "hybrid"
-                        response_to_cache = AskResponse(
-                            query=request.query,
-                            answer=full_response,
-                            sources=sources,
-                            chunks_used=len(chunks),
-                            search_mode=search_mode,
-                        )
-                        await cache_client.store_response(request, response_to_cache, scope_token)
-                    except Exception as e:
-                        logger.warning(f"Failed to store streaming response in cache: {e}")
-
-            except Exception as e:
-                logger.error(f"Streaming error: {e}")
-                audit.fail(e)
-                telemetry.mark_request_failed()  # the status is 200 by now, so the request metric has to be told
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception as e:
+            logger.error(f"Streaming error: {e}")
+            audit.fail(e)
+            telemetry.mark_request_failed()  # the status is 200 by now, so the request metric has to be told
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
         audited_stream(generate_stream(), audit, error_frame=lambda message: f"data: {json.dumps({'error': message})}\n\n"),

@@ -202,8 +202,8 @@ test.describe("Conversations", () => {
   const detail = {
     ...history[0],
     messages: [
-      { id: "m1", role: "user", content: "Can I carry leave over?", citations: [], created_at: history[0].created_at, feedback: null, attachments: [] },
-      { id: "m2", role: "assistant", content: "Up to five days carry over.", citations: [], created_at: history[0].created_at, feedback: null, attachments: [] },
+      { id: "m1", role: "user", content: "Can I carry leave over?", citations: [], created_at: history[0].created_at, attachments: [] },
+      { id: "m2", role: "assistant", content: "Up to five days carry over.", citations: [], created_at: history[0].created_at, attachments: [] },
     ],
     pending_attachments: [],
   };

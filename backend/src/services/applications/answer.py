@@ -190,7 +190,6 @@ async def answer_agentic(
         opensearch_client=opensearch,
         ollama_client=llm,
         embeddings_client=embeddings,
-        langfuse_tracer=None,
         model=model,
         top_k=top_k,
         use_hybrid=mode != RetrievalMode.BM25.value,

@@ -134,8 +134,6 @@ class SampleIngest:
                 embedding_provider=defaults.embedding_provider,
                 embedding_model=defaults.embedding_model,
                 embedding_dimension=defaults.embedding_dimension,
-                retrieval_mode=defaults.retrieval_mode.value,
-                default_top_k=defaults.default_top_k,
             )
         )
 

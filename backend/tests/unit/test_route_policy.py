@@ -21,7 +21,6 @@ QUERY_PREFIXES = (
     "/api/v1/ask",
     "/api/v1/stream",
     "/api/v1/ask-agentic",
-    "/api/v1/feedback",
     "/api/v1/hybrid-search",
     "/api/v1/chat",
 )
@@ -32,7 +31,6 @@ ADMIN_PREFIXES = (
     "/api/v1/ingestion-jobs",
     "/api/v1/applications",
     "/api/v1/providers",
-    "/api/v1/retrieval-configurations",
     "/api/v1/system",
     "/api/v1/chat-admin",
 )

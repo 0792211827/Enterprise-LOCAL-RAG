@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { provider, retrievalProfile, security } from "./support/admin-fixtures";
+import { provider, security } from "./support/admin-fixtures";
 import { stubApi, type ApiStub } from "./support/api-stub";
 import { captureAll, VIEWPORTS } from "./support/screenshots";
 
@@ -13,96 +13,6 @@ async function open(page: Page, path: string, setup?: (api: ApiStub) => void) {
 }
 
 const noHorizontalOverflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
-
-test.describe("Retrieval profiles", () => {
-  const PROFILES = [retrievalProfile(), retrievalProfile({ id: "rc-2", name: "Exact terms", mode: "bm25", top_k: 5, score_threshold: 0.3 })];
-
-  test("lists profiles, showing the merge settings only where they apply", async ({ page }) => {
-    await open(page, "/retrieval", (a) => a.respond("GET", "/api/v1/retrieval-configurations", PROFILES));
-    const table = page.getByRole("table", { name: "Retrieval profiles" });
-    const hybrid = table.getByRole("row", { name: /Careful search/ });
-    await expect(hybrid).toContainText("Hybrid");
-    await expect(hybrid).toContainText("60");
-    const keyword = table.getByRole("row", { name: /Exact terms/ });
-    await expect(keyword).toContainText("Keyword only");
-    await expect(keyword).toContainText("0.3");
-    await expect(keyword).not.toContainText("60");
-    await captureAll(page, "retrieval-list");
-  });
-
-  test("scrolls its table at tablet width instead of breaking the page", async ({ page }) => {
-    await open(page, "/retrieval", (a) => a.respond("GET", "/api/v1/retrieval-configurations", PROFILES));
-    await page.setViewportSize(VIEWPORTS.phone);
-    await expect(page.getByRole("table", { name: "Retrieval profiles" })).toBeVisible();
-    expect(await noHorizontalOverflow(page)).toBe(true);
-  });
-
-  test("creates a profile with the values entered", async ({ page }) => {
-    let posted: Record<string, unknown> = {};
-    await open(page, "/retrieval", (a) => {
-      a.respond("GET", "/api/v1/retrieval-configurations", []);
-      a.respondWith("POST", "/api/v1/retrieval-configurations", (_url, req) => {
-        posted = req.body as Record<string, unknown>;
-        return retrievalProfile({ name: "Wide net" });
-      }, 201);
-    });
-    await expect(page.getByText("No retrieval profiles yet")).toBeVisible();
-    await page.getByRole("button", { name: "New retrieval profile" }).first().click();
-    const dialog = page.getByRole("dialog", { name: "New retrieval profile" });
-    const create = dialog.getByRole("button", { name: "Create profile" });
-    await expect(create).toBeDisabled();
-    await dialog.getByLabel("Name").fill("Wide net");
-    await dialog.getByLabel("Passages to use (top K)").fill("500");
-    await expect(dialog).toContainText("A whole number from 1 to 100");
-    await expect(create).toBeDisabled();
-    await dialog.getByLabel("Passages to use (top K)").fill("12");
-    await dialog.getByLabel("Minimum score (optional)").fill("0.25");
-    await dialog.getByText("Tuning the merge").click();
-    await dialog.getByLabel("Fusion constant").fill("40");
-    await captureAll(page, "retrieval-new");
-    await create.click();
-    await expect.poll(() => posted).toEqual({ name: "Wide net", mode: "hybrid", top_k: 12, score_threshold: 0.25, hybrid_size_multiplier: 2, rrf_rank_constant: 40 });
-  });
-
-  test("leaves the merge settings out of a keyword-only profile", async ({ page }) => {
-    let posted: Record<string, unknown> = {};
-    await open(page, "/retrieval", (a) => {
-      a.respond("GET", "/api/v1/retrieval-configurations", []);
-      a.respondWith("POST", "/api/v1/retrieval-configurations", (_url, req) => {
-        posted = req.body as Record<string, unknown>;
-        return retrievalProfile();
-      }, 201);
-    });
-    await page.getByRole("button", { name: "New retrieval profile" }).first().click();
-    const dialog = page.getByRole("dialog", { name: "New retrieval profile" });
-    await dialog.getByLabel("Name").fill("Exact");
-    await dialog.getByLabel("How passages are found").selectOption("bm25");
-    await expect(dialog.getByText("Tuning the merge")).toHaveCount(0);
-    await dialog.getByRole("button", { name: "Create profile" }).click();
-    await expect.poll(() => posted).toEqual({ name: "Exact", mode: "bm25", top_k: 8 });
-  });
-
-  test("names what will happen before deleting a profile", async ({ page }) => {
-    let deleted = "";
-    await open(page, "/retrieval", (a) => {
-      a.respond("GET", "/api/v1/retrieval-configurations", PROFILES);
-      a.intercept("DELETE", "/api/v1/retrieval-configurations/:id", (route, url) => {
-        deleted = url.pathname;
-        return route.fulfill(NO_CONTENT);
-      });
-    });
-    await page.getByRole("button", { name: "Delete Careful search" }).click();
-    const dialog = page.getByRole("dialog", { name: "Delete Careful search?" });
-    await expect(dialog).toContainText("left with no retrieval profile");
-    await dialog.getByRole("button", { name: "Delete profile" }).click();
-    await expect.poll(() => deleted).toBe("/api/v1/retrieval-configurations/rc-1");
-  });
-
-  test("says what failed when profiles cannot be loaded", async ({ page }) => {
-    await open(page, "/retrieval", (a) => a.respond("GET", "/api/v1/retrieval-configurations", { detail: "Profiles unavailable" }, 500));
-    await expect(page.getByRole("alert").filter({ hasText: "Profiles unavailable" })).toBeVisible();
-  });
-});
 
 test.describe("Models and Providers", () => {
   const withProviders = (a: ApiStub, list: unknown[] = [provider()]) => a.respond("GET", "/api/v1/providers", list);

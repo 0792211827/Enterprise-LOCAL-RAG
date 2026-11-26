@@ -10,12 +10,10 @@ import type {
   Application,
   ApplicationAskResponse,
   ApplicationCreate,
-  ApplicationRatings,
   ChatApplication,
   ChatAttachment,
   ChatConfig,
   ChatCompletionResponse,
-  ChatCounts,
   ChatDocument,
   ChatMessage,
   ChatStreamEvent,
@@ -34,15 +32,11 @@ import type {
   Connector,
   ConnectorCreate,
   ConnectorUpdate,
-  MessageFeedback,
   Provider,
   ProviderCreate,
   ProviderModelsResponse,
   ProviderTestResult,
   ProviderUpdate,
-  RatingItem,
-  RetrievalConfig,
-  SharedExchange,
   SystemHealth,
   SecurityStatus,
   Principal,
@@ -130,11 +124,7 @@ export const applicationsApi = {
   create: (payload: ApplicationCreate) =>
     apiSend<Application>("/api/v1/applications", "POST", payload),
   remove: (id: string) => apiSend<void>(`/api/v1/applications/${id}`, "DELETE"),
-  ask: (id: string, query: string, topK?: number) =>
-    apiSend<ApplicationAskResponse>(`/api/v1/applications/${id}/ask`, "POST", {
-      query,
-      top_k: topK,
-    }),
+  ask: (id: string, query: string) => apiSend<ApplicationAskResponse>(`/api/v1/applications/${id}/ask`, "POST", { query }),
   update: (id: string, payload: Partial<ApplicationCreate>) =>
     apiSend<Application>(`/api/v1/applications/${id}`, "PATCH", payload),
   keys: (id: string) => apiGet<ApiKey[]>(`/api/v1/applications/${id}/api-keys`),
@@ -195,14 +185,6 @@ export const providersApi = {
     apiGet<ProviderModelsResponse>(`/api/v1/providers/${id}/models`),
 };
 
-export const retrievalApi = {
-  list: () => apiGet<RetrievalConfig[]>("/api/v1/retrieval-configurations"),
-  create: (payload: Partial<RetrievalConfig> & { name: string }) =>
-    apiSend<RetrievalConfig>("/api/v1/retrieval-configurations", "POST", payload),
-  remove: (id: string) =>
-    apiSend<void>(`/api/v1/retrieval-configurations/${id}`, "DELETE"),
-};
-
 function auditQuery(params: Record<string, string | number | undefined>): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -256,34 +238,6 @@ export const chatApi = {
   },
   removeAttachment: (conversationId: string, attachmentId: string) =>
     apiSend<void>(`/api/v1/chat/conversations/${conversationId}/attachments/${attachmentId}`, "DELETE"),
-  rate: (
-    conversationId: string,
-    messageId: string,
-    feedback: { rating: "up" | "down"; comment: string | null; share_with_admins: boolean },
-  ) =>
-    apiSend<MessageFeedback>(
-      `/api/v1/chat/conversations/${conversationId}/messages/${messageId}/feedback`,
-      "PUT",
-      feedback,
-    ),
-  withdrawRating: (conversationId: string, messageId: string) =>
-    apiSend<void>(`/api/v1/chat/conversations/${conversationId}/messages/${messageId}/feedback`, "DELETE"),
-};
-
-/** The admin view of chat: counts, ratings and the exchanges users chose to share. Never Conversation text. */
-export const chatAdminApi = {
-  counts: () => apiGet<ChatCounts>("/api/v1/chat-admin/conversation-counts"),
-  summary: () => apiGet<ApplicationRatings[]>("/api/v1/chat-admin/ratings/summary"),
-  ratings: (applicationId?: string) =>
-    apiGet<RatingItem[]>(
-      `/api/v1/chat-admin/ratings${applicationId ? `?application_id=${applicationId}` : ""}`,
-    ),
-  shared: (applicationId?: string) =>
-    apiGet<SharedExchange[]>(
-      `/api/v1/chat-admin/shared-exchanges${applicationId ? `?application_id=${applicationId}` : ""}`,
-    ),
-  exportGolden: (applicationId: string) =>
-    apiDownload(`/api/v1/chat-admin/shared-exchanges/export?application_id=${applicationId}`),
 };
 
 export const authApi = {

@@ -1,8 +1,6 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
-from langfuse._client.span import LangfuseSpan
-from src.services.langfuse.client import LangfuseTracer
 from src.services.ollama.client import OllamaClient
 from src.services.opensearch.client import OpenSearchClient
 from src.services.providers.embeddings.base import EmbeddingProvider
@@ -18,9 +16,6 @@ class Context:
     :param ollama_client: Ollama client; the LLM for nodes when no ``llm_provider`` is set
     :param opensearch_client: Client for document search
     :param embeddings_client: Client for embeddings
-    :param langfuse_tracer: Optional tracer for observability
-    :param trace: Current Langfuse trace object (if enabled)
-    :param langfuse_enabled: Whether Langfuse tracing is enabled
     :param model_name: Model to use for LLM calls
     :param temperature: Temperature for generation
     :param top_k: Number of documents to retrieve
@@ -33,9 +28,6 @@ class Context:
     ollama_client: OllamaClient
     opensearch_client: OpenSearchClient
     embeddings_client: EmbeddingProvider
-    langfuse_tracer: Optional[LangfuseTracer]
-    trace: Optional["LangfuseSpan"] = None
-    langfuse_enabled: bool = False
     model_name: str = "llama3.2:1b"
     temperature: float = 0.0
     top_k: int = 3

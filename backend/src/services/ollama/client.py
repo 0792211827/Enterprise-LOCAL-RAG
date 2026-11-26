@@ -147,7 +147,7 @@ class OllamaClient(LLMProvider):
                     if response.status_code == 200:
                         result = response.json()
 
-                        # Parse Ollama usage metadata and convert to Langfuse-compatible format
+                        # Parse Ollama usage metadata
                         usage_metadata = {}
 
                         # Ollama returns these fields in the response

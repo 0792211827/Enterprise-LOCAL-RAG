@@ -38,34 +38,11 @@ async def ainvoke_rewrite_query_step(
     :returns: Dictionary with rewritten_query and updated messages
     """
     logger.info("NODE: rewrite_query")
-    start_time = time.time()
 
     # Get original query
     original_question = state.get("original_query") or state["messages"][0].content
-    current_attempt = state.get("retrieval_attempts", 0)
 
     logger.debug(f"Rewriting query using LLM: {original_question[:100]}...")
-
-    # Create span for query rewriting
-    span = None
-    if runtime.context.langfuse_enabled and runtime.context.trace:
-        try:
-            span = runtime.context.langfuse_tracer.create_span(
-                trace=runtime.context.trace,
-                name="query_rewriting",
-                input_data={
-                    "original_query": original_question,
-                    "attempt": current_attempt,
-                },
-                metadata={
-                    "node": "rewrite_query",
-                    "strategy": "llm_based_expansion",
-                    "model": runtime.context.model_name,
-                },
-            )
-            logger.debug("Created Langfuse span for query rewriting")
-        except Exception as e:
-            logger.warning(f"Failed to create span for rewrite_query node: {e}")
 
     # Use LLM to rewrite the query intelligently
     try:
@@ -108,24 +85,6 @@ async def ainvoke_rewrite_query_step(
         # Fallback to simple expansion if LLM fails
         rewritten_query = original_question
         reasoning = "Fallback: reusing the original question due to LLM error"
-
-    # Update span with rewriting result
-    if span:
-        execution_time = (time.time() - start_time) * 1000
-        runtime.context.langfuse_tracer.end_span(
-            span,
-            output={
-                "rewritten_query": rewritten_query,
-                "reasoning": reasoning,
-                "original_query": original_question,
-            },
-            metadata={
-                "execution_time_ms": execution_time,
-                "original_length": len(original_question),
-                "rewritten_length": len(rewritten_query),
-                "llm_duration_seconds": llm_duration if 'llm_duration' in locals() else None,
-            },
-        )
 
     return {
         "messages": [HumanMessage(content=rewritten_query)],

@@ -1,13 +1,13 @@
 """Retention and privacy defaults for employee chat: a bounded life for stored Conversations, and no chat text in the
-audit log or Langfuse unless an operator opts in (Langfuse only: the audit log never carries chat text).
+audit log.
 """
 
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
-from src.config import AuthSettings, ChatSettings, Settings
-from src.models import AuditEvent, Conversation, ConversationMessage, MessageFeedback
+from src.config import ChatSettings
+from src.models import AuditEvent, Conversation, ConversationMessage
 from src.services.audit.recorder import sha256_text
 from src.services.chat.retention import purge_expired
 from tests.audit_support import events, opener
@@ -38,29 +38,9 @@ def test_a_chat_audit_record_holds_metadata_never_the_question_or_the_answer_eve
 
 
 # --------------------------------------------------------------------------- #
-# Langfuse: content only on opt-in
-# --------------------------------------------------------------------------- #
-def test_langfuse_traces_of_chat_omit_the_question_and_the_answer_by_default(stack, world):
-    exchange(stack, world, QUESTION)
-
-    sent = stack.tracer.everything_sent()
-    assert sent != "[]"  # the exchange is still traced, as metadata
-    assert "salary" not in sent and "25 days" not in sent and "Employees get" not in sent
-    assert world.apps["Handbook"] in sent
-
-
-def test_an_operator_can_opt_in_to_chat_content_in_traces(stack, world):
-    stack.use_settings(Settings(auth=AuthSettings(mode="jwt"), chat=ChatSettings(trace_content=True)))
-    exchange(stack, world, QUESTION)
-
-    sent = stack.tracer.everything_sent()
-    assert "salary" in sent and "25 days." in sent
-
-
-# --------------------------------------------------------------------------- #
 # Purge
 # --------------------------------------------------------------------------- #
-def aged(world, days_old, subject="alice", with_feedback=False):
+def aged(world, days_old, subject="alice"):
     """A Conversation whose last message was ``days_old`` days before NOW; returns its id."""
     with world.factory() as session:
         conversation = Conversation(
@@ -75,9 +55,6 @@ def aged(world, days_old, subject="alice", with_feedback=False):
         message = ConversationMessage(conversation_id=conversation.id, position=1, role="assistant", content="a")
         session.add(message)
         session.commit()
-        if with_feedback:
-            session.add(MessageFeedback(message_id=message.id, rating="up", shared=True))
-            session.commit()
         return str(conversation.id)
 
 
@@ -114,13 +91,12 @@ def test_the_boundary_is_exact_a_conversation_exactly_at_the_cutoff_stays(world)
 
 
 def test_the_purge_takes_everything_attached_to_an_expired_conversation(world):
-    aged(world, 200, with_feedback=True)
+    aged(world, 200)
 
     purge_expired(opener(world.factory), days=90, now=NOW)
 
     with world.factory() as session:
         assert session.scalars(select(ConversationMessage)).all() == []
-        assert session.scalars(select(MessageFeedback)).all() == []
 
 
 def test_the_purge_is_safe_to_run_repeatedly(world):

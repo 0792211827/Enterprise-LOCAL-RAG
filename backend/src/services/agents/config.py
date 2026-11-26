@@ -16,7 +16,6 @@ class GraphConfig(BaseModel):
     :param temperature: Temperature for LLM generation (0.0 = deterministic)
     :param top_k: Number of documents to retrieve from search
     :param use_hybrid: Whether to use hybrid search (BM25 + vector)
-    :param enable_tracing: Whether to enable Langfuse tracing
     :param knowledge_base_ids: Knowledge bases the retriever may search; None is
         unscoped, [] searches nothing (the caller's retrieval scope)
     :param principal_keys: the caller's Principals, which hide Documents restricted away from them;
@@ -33,6 +32,5 @@ class GraphConfig(BaseModel):
     use_hybrid: bool = True
     knowledge_base_ids: Optional[List[str]] = None
     principal_keys: Optional[List[str]] = None
-    enable_tracing: bool = True
     metadata: Dict[str, Any] = {}
     settings: Settings = Field(default_factory=get_settings)

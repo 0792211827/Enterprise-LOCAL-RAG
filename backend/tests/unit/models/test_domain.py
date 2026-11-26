@@ -11,7 +11,6 @@ from src.models import (
     RAGApplication,
     RAGStrategy,
     RetrievalConfiguration,
-    RetrievalMode,
 )
 
 
@@ -40,7 +39,6 @@ def test_knowledge_base_defaults_are_local():
     # Defaults resolve at flush time; verify column defaults are local-first.
     assert KnowledgeBase.__table__.c.embedding_provider.default.arg == "huggingface"
     assert KnowledgeBase.__table__.c.embedding_model.default.arg == "BAAI/bge-m3"
-    assert KnowledgeBase.__table__.c.retrieval_mode.default.arg == RetrievalMode.HYBRID.value
     assert kb.name == "HR Policies"
 
 

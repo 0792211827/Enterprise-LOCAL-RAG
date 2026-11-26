@@ -191,6 +191,22 @@ class RerankSettings(BaseConfigSettings):
     timeout: float = Field(default=5.0, gt=0)
 
 
+class RetrievalSettings(BaseConfigSettings):
+    """How passages are found for a new Application. Server-controlled: admins cannot change it in the UI or API."""
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILES,
+        env_prefix="RETRIEVAL__",
+        extra="ignore",
+        frozen=True,
+        case_sensitive=False,
+    )
+
+    mode: Literal["hybrid", "bm25", "vector"] = "hybrid"
+    top_k: int = Field(default=8, ge=1, le=100)
+    score_threshold: Optional[float] = None
+
+
 class PDFParserSettings(BaseConfigSettings):
     model_config = SettingsConfigDict(
         env_file=ENV_FILES,
@@ -244,26 +260,6 @@ class OpenSearchSettings(BaseConfigSettings):
     # Hybrid search settings
     rrf_pipeline_name: str = "hybrid-rrf-pipeline"
     hybrid_search_size_multiplier: int = 2  # Get k*multiplier for better recall
-
-
-class LangfuseSettings(BaseConfigSettings):
-    model_config = SettingsConfigDict(
-        env_file=ENV_FILES,
-        env_prefix="LANGFUSE__",
-        extra="ignore",
-        frozen=True,
-        case_sensitive=False,
-    )
-
-    public_key: str = ""
-    secret_key: str = ""
-    host: str = "http://localhost:3000"  # Self-hosted Langfuse URL
-    enabled: bool = True
-    flush_at: int = 15  # Number of events before flushing
-    flush_interval: float = 1.0  # Seconds between flushes
-    max_retries: int = 3
-    timeout: int = 30
-    debug: bool = False
 
 
 class RedisSettings(BaseConfigSettings):
@@ -393,7 +389,7 @@ class ApiKeySettings(BaseConfigSettings):
 class AuditSettings(BaseConfigSettings):
     """Structured audit trail of queries and admin changes (off by default).
 
-    Distinct from Langfuse: this is the record a compliance team queries and
+    This is the record a compliance team queries and
     exports -- who asked what, what was retrieved, what was answered -- kept in
     the platform's own PostgreSQL.
     """
@@ -460,9 +456,6 @@ class ChatSettings(BaseConfigSettings):
     retention_days: int = Field(default=90, ge=0)
     # How many of the latest messages of a Conversation a follow-up question is given as context.
     history_messages: int = Field(default=10, ge=0)
-    # Chat prompts and answers stay out of Langfuse traces unless this is turned on. Audit records never
-    # carry chat text, whatever AUDIT__LEVEL is.
-    trace_content: bool = False
 
     # Per-user limits, so one employee cannot starve the shared GPUs. 0 turns a limit off. They live in Redis
     # (shared by every API worker); if Redis is unreachable each worker keeps its own in-memory count instead,
@@ -508,11 +501,11 @@ class Settings(BaseConfigSettings):
     pdf_parser: PDFParserSettings = Field(default_factory=PDFParserSettings)
     chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)
     opensearch: OpenSearchSettings = Field(default_factory=OpenSearchSettings)
-    langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     vlm: VLMSettings = Field(default_factory=VLMSettings)
+    retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     rerank: RerankSettings = Field(default_factory=RerankSettings)
     ingestion: IngestionSettings = Field(default_factory=IngestionSettings)
     connector: ConnectorSettings = Field(default_factory=ConnectorSettings)

@@ -68,7 +68,7 @@ Not required (kept out): see §5.
 ### 3.3 Docker / Compose: COMPLETE
 
 - **Paths:** `compose.yml`, `compose.localports.yml` (machine-specific override, untracked upstream by design), `compose.hardened.yml`, `Makefile`.
-- **Live:** with `compose.yml` + `compose.localports.yml`, `api`, `postgres`, `opensearch`, `redis` and `ollama` started and `GET /api/v1/health` reported database, OpenSearch and Ollama healthy. The frontend image was not started. The Langfuse stack was not started (`LANGFUSE__ENABLED=false` for the audit).
+- **Live:** with `compose.yml` + `compose.localports.yml`, `api`, `postgres`, `opensearch`, `redis` and `ollama` started and `GET /api/v1/health` reported database, OpenSearch and Ollama healthy. The frontend image was not started.
 - **Static:** `docker compose -f compose.yml -f compose.hardened.yml config -q` exits 0.
 - **BLOCKED:** a clean-clone, from-scratch `make start` of the *full* stack (the existing named volumes and images were reused, deliberately, to avoid deleting the operator's data).
 
@@ -138,7 +138,7 @@ Not required (kept out): see §5.
 
 - **Paths:** `models/audit.py` (`audit_events`), `services/audit/{recorder,events,factory}.py`, `middleware/audit.py`, `routers/audit.py`, `cli/audit_purge.py` (`make audit-purge`), `frontend/src/app/audit`.
 - **Works:** actions `query.answer`, `query.search`, `admin.mutation`, `access.denied`, `audit.export`, `audit.purge`. Events carry actor, roles, groups, auth method, API key and app IDs, IP, route, request ID, requested/permitted/dropped KB IDs, retrieved chunk IDs, and SHA-256 digests of query and answer (text only at `AUDIT__LEVEL=full`). Cursor-paged list, detail, status, NDJSON/CSV export. Retention is a manual purge. `fail_mode=log|deny`. Live: with `metadata` level, the log contained `access.denied`, `admin.mutation`, `audit.export`, `query.answer` and `query.search` after the smoke run, and the auditor could read it.
-- **Gaps:** (1) append-only is by convention only. There is no DB-level protection, no hash chain and no signed export, so a DB admin can alter rows. (2) Default level is `off`. (3) Purge is manual; no scheduler (by design, "nothing is ever purged automatically"). (4) The agentic path builds its own Langfuse traces and does not carry the request ID.
+- **Gaps:** (1) append-only is by convention only. There is no DB-level protection, no hash chain and no signed export, so a DB admin can alter rows. (2) Default level is `off`. (3) Purge is manual; no scheduler (by design, "nothing is ever purged automatically").
 - **Decision:** hardening is optional and depends on the buyer's compliance bar (tamper-evidence); see roadmap Phase 6.
 - **Note:** the live run wrote metadata-level events into the existing dev database (names/IDs only, no secrets). They remain, since audit rows are append-only.
 
@@ -182,7 +182,7 @@ Not required (kept out): see §5.
 
 ### 3.17 Hardened overlay: COMPLETE
 
-- `compose.hardened.yml` removes host ports from data stores and rebinds API/UI/Langfuse to `RAG_BIND_ADDRESS` (default `127.0.0.1`); `make start-hardened`, `make health-hardened`. Config validates. **BLOCKED:** not brought up live in this audit (it would conflict with the port remap used here); the "closed ports" claim is code-verified only. Residual: OpenSearch and Redis run without authentication *inside* the network (documented in the README).
+- `compose.hardened.yml` removes host ports from data stores and rebinds API/UI to `RAG_BIND_ADDRESS` (default `127.0.0.1`); `make start-hardened`, `make health-hardened`. Config validates. **BLOCKED:** not brought up live in this audit (it would conflict with the port remap used here); the "closed ports" claim is code-verified only. Residual: OpenSearch and Redis run without authentication *inside* the network (documented in the README).
 
 ### 3.18 Document-level ACLs (S3a): IMPLEMENTED (Document restrictions, ticket 19)
 

@@ -29,7 +29,6 @@ from src.routers import (
     knowledge_bases,
     ping,
     providers,
-    retrieval,
     system,
 )
 from src.routers.ask import ask_router, stream_router
@@ -40,7 +39,6 @@ from src.services.embeddings.factory import make_embeddings_service
 from src.services.ingestion.factory import make_ingestion_service
 from src.services.ingestion.runner import resume_interrupted
 from src.services.ingestion.url_fetch import make_url_fetcher
-from src.services.langfuse.factory import make_langfuse_tracer
 from src.services.ollama.factory import make_ollama_client
 from src.services.opensearch.dimension_guard import check_index_dimension
 from src.services.opensearch.factory import make_opensearch_client
@@ -139,11 +137,10 @@ async def lifespan(app: FastAPI):
     app.state.reranker = make_reranker(settings)
     app.state.vlm_provider = make_vlm_provider(settings)
     app.state.url_fetcher = make_url_fetcher(settings)
-    app.state.langfuse_tracer = make_langfuse_tracer()
     app.state.cache_client = make_cache_client(settings)
     app.state.chat_limiter = make_chat_limiter(settings)
     logger.info(
-        "Services initialized: PDF parser, OpenSearch, Embeddings (%s), LLM (%s), VLM (%s), Langfuse, Cache",
+        "Services initialized: PDF parser, OpenSearch, Embeddings (%s), LLM (%s), VLM (%s), Cache",
         settings.embedding.provider,
         settings.llm.provider,
         "enabled" if app.state.vlm_provider else "disabled",
@@ -205,7 +202,7 @@ async def audit_write_failed(request: Request, exc: AuditWriteError) -> JSONResp
 # local dev + docker-compose frontend.
 _cors_origins = os.getenv(
     "CORS_ALLOW_ORIGINS",
-    "http://localhost:3001,http://localhost:3000,http://127.0.0.1:3001",
+    "http://localhost:3001,http://localhost:3000,http://127.0.0.1:3001,http://localhost:3003,http://127.0.0.1:3003",
 ).split(",")
 app.add_middleware(
     CORSMiddleware,
@@ -255,7 +252,6 @@ app.include_router(documents.router, dependencies=ADMIN)
 app.include_router(connectors.router, dependencies=ADMIN)
 app.include_router(applications.router, dependencies=ADMIN)
 app.include_router(providers.router, dependencies=ADMIN)
-app.include_router(retrieval.router, dependencies=ADMIN)
 app.include_router(system.router, dependencies=ADMIN)
 app.include_router(api_keys.router, dependencies=ADMIN)
 app.include_router(chat_admin.router, dependencies=ADMIN)

@@ -6,7 +6,7 @@
 #
 #   make            list every target
 #   make install    one-time setup: Python + frontend deps, .env from .env.example
-#   make start      the whole stack in Docker (api, frontend, datastores, Langfuse)
+#   make start      the whole stack in Docker (api, frontend, datastores)
 #   make app        dev mode: datastores in Docker, backend + frontend on the host with reload
 #
 # Kept compatible with the GNU Make 3.81 that ships with macOS: any recipe
@@ -34,7 +34,7 @@ MODEL ?= $(or $(shell sed -n 's/^OLLAMA_MODEL=//p' .env 2>/dev/null | tail -1),l
 # provider endpoints are rewritten just when they still point at the bundled ollama.
 LOCAL_ENV = export POSTGRES_DATABASE_URL=postgresql://rag_user:rag_password@localhost:$(PG_PORT)/rag_db \
 	OPENSEARCH__HOST=http://localhost:9200 OPENSEARCH_HOST=http://localhost:9200 \
-	OLLAMA_HOST=http://localhost:11434 REDIS__HOST=localhost LANGFUSE__HOST=http://localhost:3000 \
+	OLLAMA_HOST=http://localhost:11434 REDIS__HOST=localhost \
 	CORS_ALLOW_ORIGINS=http://localhost:$(UI_PORT),http://127.0.0.1:$(UI_PORT),http://localhost:3001,http://localhost:3000; \
 	for v in LLM__ENDPOINT EMBEDDING__ENDPOINT VLM__ENDPOINT; do \
 	  val=$$(sed -n "s/^$$v=//p" .env | tail -1); \

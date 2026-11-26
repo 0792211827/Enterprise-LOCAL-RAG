@@ -108,9 +108,9 @@ def create_application(payload: ApplicationCreate, session: SessionDep, settings
     retrieval_config = retrieval_repo.create(
         RetrievalConfiguration(
             name=f"{slug}-retrieval-config",
-            mode=payload.retrieval_mode.value,
-            top_k=payload.top_k,
-            score_threshold=payload.score_threshold,
+            mode=settings.retrieval.mode,
+            top_k=settings.retrieval.top_k,
+            score_threshold=settings.retrieval.score_threshold,
         )
     )
 
@@ -193,8 +193,7 @@ async def ask_application(
 ):
     """Answer a question using the application's stored configuration.
 
-    The application's retrieval mode, top-K and model are honoured rather than
-    ignored: configuration drives the request end-to-end.
+    The application's stored retrieval configuration and model drive the request end-to-end.
     """
     repo = ApplicationRepository(session)
     application = repo.get_by_id(application_id)
@@ -221,7 +220,6 @@ async def ask_application(
             opensearch=opensearch,
             embeddings=embeddings,
             llm=provider,
-            top_k_override=payload.top_k,
             scope=scope,
             reranker=reranker,
         )
@@ -238,7 +236,6 @@ async def ask_application(
             locator=h.get("locator"),
             locator_text=locator_label(h.get("locator")),
             source_url=h.get("source_url"),
-            retrieval_method=result.mode,
         )
         for h in result.hits
     ]
@@ -247,6 +244,5 @@ async def ask_application(
         query=payload.query,
         answer=result.answer,
         sources=sources if application.citations_enabled else [],
-        search_mode=result.mode,
         chunks_used=len(result.chunks),
     )

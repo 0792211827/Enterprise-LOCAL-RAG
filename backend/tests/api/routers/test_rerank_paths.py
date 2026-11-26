@@ -108,7 +108,7 @@ def test_the_agentic_service_receives_the_reranker():
     from src.dependencies import get_agentic_rag_service
 
     reranker = reranker_for(FakeEndpoint())
-    service = get_agentic_rag_service(MagicMock(), MagicMock(), MagicMock(), MagicMock(), Settings(), None, None, reranker)
+    service = get_agentic_rag_service(MagicMock(), MagicMock(), MagicMock(), Settings(), None, None, reranker)
     assert service.reranker is reranker
 
 

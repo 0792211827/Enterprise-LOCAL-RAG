@@ -1,8 +1,7 @@
-"""Persistence for employee chat: Conversations, their messages and ratings.
+"""Persistence for employee chat: Conversations and their messages.
 
 Every read or write of a Conversation takes the owner's subject, so "someone else's Conversation" is simply
-not found; nothing here lists or reads content across owners. The only cross-owner reads are counts, the
-ratings listing (identifiers, never text) and exchanges the owner explicitly shared.
+not found; nothing here lists or reads content across owners. The only cross-owner reads are counts.
 """
 
 from datetime import datetime, timezone
@@ -18,7 +17,6 @@ from src.models.chat import (
     Conversation,
     ConversationAttachment,
     ConversationMessage,
-    MessageFeedback,
 )
 
 DELETE_BATCH = 500
@@ -130,23 +128,15 @@ class ConversationRepository:
                 if attempt == attempts - 1:
                     raise
 
-    def get_owned_message(self, conversation: Conversation, message_id: UUID) -> Optional[ConversationMessage]:
-        message = self.session.get(ConversationMessage, message_id)
-        if message is None or message.conversation_id != conversation.id:
-            return None
-        return message
-
     # -- removal ---------------------------------------------------------------------------------------------- #
     def delete_many(self, conversation_ids: Sequence[UUID]) -> int:
         """Delete Conversations and everything attached to them, children first; returns how many Conversations went."""
         ids = list(conversation_ids)
         if not ids:
             return 0
-        message_ids = select(ConversationMessage.id).where(ConversationMessage.conversation_id.in_(ids))
         self.session.execute(delete(AttachmentPartition).where(AttachmentPartition.conversation_id.in_(ids)))
         self.session.execute(delete(AttachmentImage).where(AttachmentImage.conversation_id.in_(ids)))
         self.session.execute(delete(ConversationAttachment).where(ConversationAttachment.conversation_id.in_(ids)))
-        self.session.execute(delete(MessageFeedback).where(MessageFeedback.message_id.in_(message_ids)))
         self.session.execute(delete(ConversationMessage).where(ConversationMessage.conversation_id.in_(ids)))
         result = self.session.execute(delete(Conversation).where(Conversation.id.in_(ids)))
         self.session.commit()
@@ -268,82 +258,3 @@ class AttachmentRepository:
         for attachment in self.session.scalars(stmt):
             grouped.setdefault(attachment.message_id, []).append(attachment)
         return grouped
-
-
-class FeedbackRepository:
-    """Ratings. Written only through the message's owner; read by admins as identifiers and, for shared exchanges, text."""
-
-    def __init__(self, session: Session):
-        self.session = session
-
-    def get(self, message_id: UUID) -> Optional[MessageFeedback]:
-        return self.session.scalar(select(MessageFeedback).where(MessageFeedback.message_id == message_id))
-
-    def for_messages(self, message_ids: Sequence[UUID]) -> Dict[UUID, MessageFeedback]:
-        if not message_ids:
-            return {}
-        stmt = select(MessageFeedback).where(MessageFeedback.message_id.in_(message_ids))
-        return {feedback.message_id: feedback for feedback in self.session.scalars(stmt)}
-
-    def upsert(self, message_id: UUID, rating: str, comment: Optional[str], shared: bool) -> MessageFeedback:
-        feedback = self.get(message_id)
-        if feedback is None:
-            feedback = MessageFeedback(message_id=message_id)
-            self.session.add(feedback)
-        feedback.rating, feedback.comment, feedback.shared = rating, comment, shared
-        feedback.updated_at = datetime.now(timezone.utc)
-        self.session.commit()
-        return feedback
-
-    def clear(self, message_id: UUID) -> None:
-        self.session.execute(delete(MessageFeedback).where(MessageFeedback.message_id == message_id))
-        self.session.commit()
-
-    # -- the admin views: identifiers and ratings; text only for exchanges shared on purpose ------------------- #
-    def ratings(self, application_id: Optional[UUID] = None) -> List[dict]:
-        """Every rating with its message and application ids. Never any message text."""
-        stmt = (
-            select(MessageFeedback, Conversation.application_id)
-            .join(ConversationMessage, ConversationMessage.id == MessageFeedback.message_id)
-            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
-            .order_by(MessageFeedback.updated_at.desc(), MessageFeedback.id)
-        )
-        if application_id is not None:
-            stmt = stmt.where(Conversation.application_id == application_id)
-        return [{"feedback": feedback, "application_id": app_id} for feedback, app_id in self.session.execute(stmt)]
-
-    def summary(self) -> List[dict]:
-        stmt = (
-            select(Conversation.application_id, MessageFeedback.rating, func.count())
-            .select_from(MessageFeedback)
-            .join(ConversationMessage, ConversationMessage.id == MessageFeedback.message_id)
-            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
-            .group_by(Conversation.application_id, MessageFeedback.rating)
-        )
-        totals: Dict[UUID, Dict[str, int]] = {}
-        for app_id, rating, count in self.session.execute(stmt):
-            totals.setdefault(app_id, {"up": 0, "down": 0})[rating] = count
-        return [{"application_id": app_id, **counts} for app_id, counts in totals.items()]
-
-    def shared_exchanges(self, application_id: Optional[UUID] = None) -> List[dict]:
-        """The exchanges whose owners chose to share them: question, answer and rating. Nothing else is returned."""
-        stmt = (
-            select(MessageFeedback, ConversationMessage, Conversation.application_id)
-            .join(ConversationMessage, ConversationMessage.id == MessageFeedback.message_id)
-            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
-            .where(MessageFeedback.shared.is_(True))
-            .order_by(MessageFeedback.updated_at.desc(), MessageFeedback.id)
-        )
-        if application_id is not None:
-            stmt = stmt.where(Conversation.application_id == application_id)
-        exchanges = []
-        for feedback, answer, app_id in self.session.execute(stmt):
-            question = self.session.scalar(
-                select(ConversationMessage.content).where(
-                    ConversationMessage.conversation_id == answer.conversation_id,
-                    ConversationMessage.position == answer.position - 1,
-                    ConversationMessage.role == "user",
-                )
-            )
-            exchanges.append({"feedback": feedback, "answer": answer, "question": question or "", "application_id": app_id})
-        return exchanges

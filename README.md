@@ -16,10 +16,10 @@ LangGraph. Everything runs locally with **no external AI APIs** required.
 - **Agentic RAG** — LangGraph agent with query rewriting, document grading,
   guardrails, and out-of-scope handling.
 - **Admin Control Plane** — Next.js 14 UI to manage knowledge bases, documents,
-  applications, providers, retrieval profiles, and system health.
+  applications, providers, and system health.
 - **Local-first providers** — embeddings (HuggingFace / Ollama /
   OpenAI-compatible), LLM (Ollama / OpenAI-compatible), optional VLM.
-- **Observability** — self-hosted Langfuse tracing and Redis caching.
+- **Caching** — Redis caching of answers.
 - **Access control and audit** — accepts your SSO's identity (JWT or trusted
   proxy headers), role-based routes, per-knowledge-base grants enforced at
   retrieval, and a queryable, exportable audit log. All of it is off by default.
@@ -43,7 +43,6 @@ LangGraph. Everything runs locally with **no external AI APIs** required.
         │ metadata  │ │ hybrid │ │  LLM   │ │  cache   │
         │  (:5432)  │ │(:9200) │ │(:11434)│ │ (:6379)  │
         └───────────┘ └────────┘ └────────┘ └──────────┘
-                          Langfuse observability (:3000)
 ```
 
 ## 🧩 Services & Ports
@@ -53,13 +52,12 @@ LangGraph. Everything runs locally with **no external AI APIs** required.
 | **API** | http://localhost:8000 | FastAPI backend |
 | **API docs** | http://localhost:8000/docs | Interactive OpenAPI UI |
 | **Admin Control Plane** | http://localhost:3001 | Next.js admin frontend |
-| **Langfuse** | http://localhost:3000 | RAG tracing & monitoring |
 | **OpenSearch** | http://localhost:9200 | Hybrid search engine |
 | **OpenSearch Dashboards** | http://localhost:5601 | Search engine UI |
 | **Ollama** | http://localhost:11434 | Local LLM / embeddings runtime |
-| **Grafana** (optional, [Telemetry](#-telemetry)) | http://localhost:3002 | Dashboards and alerts; started only with the `telemetry` profile |
 | **PostgreSQL** | localhost:5432 | Application metadata |
 | **Redis** | localhost:6379 | Response cache |
+| **Grafana** (optional, [Telemetry](#-telemetry)) | http://localhost:3002 | Dashboards and alerts; started only with the `telemetry` profile |
 
 ## 🚀 Quick Start
 
@@ -128,19 +126,18 @@ clients work unmodified.
 | Health | `GET /api/v1/health` |
 | Hybrid search | `/api/v1/hybrid-search` |
 | Ask / Streaming RAG | `/api/v1/ask`, `/api/v1/stream` |
-| Agentic RAG | `/api/v1/ask-agentic`, `/api/v1/feedback` |
+| Agentic RAG | `/api/v1/ask-agentic` |
 | Knowledge bases | `/api/v1/knowledge-bases` |
 | Documents | `/api/v1/documents`, `/api/v1/ingestion-jobs` |
 | Applications | `/api/v1/applications` |
 | Application API keys | `/api/v1/applications/{id}/api-keys` |
 | Providers | `/api/v1/providers` |
-| Retrieval configs | `/api/v1/retrieval-configurations` |
 | System | `/api/v1/system` |
 | Caller identity | `GET /api/v1/auth/me` |
 | Active access controls | `GET /api/v1/system/security` |
 | Audit log (auditor role) | `/api/v1/audit` |
-| Employee chat (querier role) | `/api/v1/chat` (applications, conversations, messages, feedback, documents) |
-| Chat counts, ratings, shared exchanges (admin) | `/api/v1/chat-admin` |
+| Employee chat (querier role) | `/api/v1/chat` (applications, conversations, messages, documents) |
+| Chat conversation counts (admin) | `/api/v1/chat-admin` |
 | OpenAI-compatible chat | `POST /v1/chat/completions` |
 
 Full, interactive documentation is available at `/docs`.
@@ -148,8 +145,8 @@ Full, interactive documentation is available at `/docs`.
 ## 🖥️ Admin Control Plane (Frontend)
 
 A Next.js 14 admin UI (`frontend/`) for managing knowledge bases, document
-ingestion, RAG applications (with a retrieval playground), model providers,
-retrieval profiles, feedback and system health, plus an audit log viewer for auditors.
+ingestion, RAG applications (with a retrieval playground), model providers
+and system health, plus an audit log viewer for auditors.
 
 It is also the employees' chat app. Each role reaches its own surface, enforced
 on the server and mirrored in the UI: `querier` gets **Chat** only, `admin` the
@@ -235,6 +232,7 @@ documented list. Key groups:
   [`docs/deployment/inference-backends.md`](docs/deployment/inference-backends.md#reranking).
 - **OpenSearch** (`OPENSEARCH__*`) — index and hybrid-search settings.
 - **Chunking** (`CHUNKING__*`) — chunk size, overlap, section-based mode.
+- **Retrieval** (`RETRIEVAL__*`) — how new Applications find passages (`MODE`, `TOP_K`, `SCORE_THRESHOLD`). Server-controlled: the admin UI and API neither show nor accept it, and a request that sends `retrieval_mode`, `top_k`, `score_threshold` or `default_top_k` gets `422`.
 - **Uploads** (`INGESTION__*`) — document upload size cap (`MAX_UPLOAD_MB`, default
   50; larger uploads get `413`), the upload directory, and an opt-in retention for
   stale files (`make uploads-cleanup`). Stored files are named by content hash;
@@ -242,13 +240,11 @@ documented list. Key groups:
   described per Document (`MAX_IMAGES_PER_DOCUMENT`, default 200) and the host
   allowlist for web pages (`URL_ALLOWED_HOSTS`, empty = adding a URL is refused);
   see [`docs/document-ingestion.md`](docs/document-ingestion.md).
-- **Redis** (`REDIS__*`) and **Langfuse** client (`LANGFUSE__*` — note the
-- **Telemetry** (`OTEL__*`, plus `GRAFANA_ADMIN_PASSWORD` and the retention
-  settings) — see [Telemetry](#-telemetry). Off by default.
-  double underscore; single-underscore `LANGFUSE_*` names configure the
-  self-hosted Langfuse server in compose, not the backend).
+- **Redis** (`REDIS__*`).
 - **Authentication** (`AUTH__*`) — see below. Off by default.
 - **Audit log** (`AUDIT__*`) — see [Audit logging](#-audit-logging). Off by default.
+- **Telemetry** (`OTEL__*`, plus `GRAFANA_ADMIN_PASSWORD` and the retention
+  settings) — see [Telemetry](#-telemetry). Off by default.
 
 ## 🔐 Authentication
 
@@ -270,7 +266,7 @@ the same IdP gets nothing.
 | Role | Can use |
 |------|---------|
 | `admin` | The control plane: knowledge bases, documents and ingestion jobs, applications (including the playground), providers, retrieval configs, API keys, `/api/v1/system/*`. Also holds `querier`, and holds `auditor` unless `AUTH__ADMIN_CAN_READ_AUDIT=false`. |
-| `querier` | The employee chat (`/api/v1/chat`: the Applications they may use, streamed answers with citations, source Documents), `/api/v1/ask`, `/stream`, `/ask-agentic`, `/feedback`, `/hybrid-search`, and `/v1/chat/completions` |
+| `querier` | The employee chat (`/api/v1/chat`: the Applications they may use, streamed answers with citations, source Documents), `/api/v1/ask`, `/stream`, `/ask-agentic`, `/hybrid-search`, and `/v1/chat/completions` |
 | `auditor` | The audit log |
 
 Only `GET /api/v1/health` is public. The policy is applied once per router in
@@ -426,8 +422,7 @@ sidebar shows the signed-in subject and roles. An expired session raises a
 `AUDIT__LEVEL` turns on a structured audit trail in the platform's own
 PostgreSQL (`audit_events`). It's a record a compliance team can query and
 export: who asked what, which knowledge they were allowed to search, what was
-retrieved, and what was answered. It is separate from Langfuse, which remains
-the optional debugging and observability layer.
+retrieved, and what was answered.
 
 | Level | Recorded |
 |-------|----------|
@@ -490,6 +485,11 @@ ALTER TABLE audit_events OWNER TO rag_owner;
 GRANT SELECT, INSERT ON audit_events TO rag_app;
 GRANT SELECT, INSERT, DELETE ON audit_events TO rag_retention;  -- purge job only
 ```
+
+**Limits.** Reads of the audit log itself are not recorded; exports are. For
+`admin.mutation` events on create endpoints, `resource_id` is empty because the
+new ID is only in the response body. A tamper-evidence hash chain is a planned
+follow-up.
 
 ## 📈 Telemetry
 
@@ -577,11 +577,6 @@ bug report, say), the TraceQL search finds the trace.
 `failing` (the collector is unreachable or refusing data). `failing` does not
 make the platform report unhealthy: telemetry fails open.
 
-**Limits.** Reads of the audit log itself are not recorded; exports are. For
-`admin.mutation` events on create endpoints, `resource_id` is empty because the
-new ID is only in the response body. A tamper-evidence hash chain is a planned
-follow-up.
-
 ## 💬 Employee chat
 
 Employees sign in with the company identity and chat with the Applications they
@@ -589,21 +584,16 @@ may use (those whose every Knowledge Base they hold a Grant on). Answers stream,
 with citations that open the source Document and passage.
 
 - **Conversations** are stored per employee (new tables `chat_conversations`,
-  `chat_messages`, `chat_message_feedback`), keyed by the IdP subject. They can be
+  `chat_messages`), keyed by the IdP subject. They can be
   listed, resumed, renamed and deleted by their owner. Nobody else can read one,
   admins included: another user's Conversation is a `404`. Follow-up questions are
   given the latest `CHAT__HISTORY_MESSAGES` messages as context, and retrieval also
   searches with the question they follow (an agentic Application receives that combined
   question but not the earlier answers).
-- **Admins see counts and ratings, never text.** `GET /api/v1/chat-admin/conversation-counts`,
-  `/ratings`, and `/ratings/summary` carry identifiers and the user's own comment.
-  The one exception is an exchange an employee explicitly **shares with admins**
-  when rating an answer: only then does `/shared-exchanges` show that one question
-  and answer, and `/shared-exchanges/export?application_id=` writes them as Golden
-  set candidates for the [eval harness](docs/evaluation.md). Withdrawing the share
-  or deleting the Conversation takes the exchange back.
+- **Admins see counts, never text.** `GET /api/v1/chat-admin/conversation-counts`
+  carries identifiers and counts only.
 - **Retention.** Conversations are purged `CHAT__RETENTION_DAYS` (default 90; 0 keeps
-  forever) after their last message, together with their messages and ratings. The
+  forever) after their last message, together with their messages. The
   API runs the purge daily; `make chat-purge` runs it on demand. A purge that deletes
   something leaves a `chat.purge` audit event with counts only.
 - **Document Attachments.** An employee can attach PDF, DOCX, PPTX, XLSX, TXT, MD or CSV
@@ -653,8 +643,12 @@ with citations that open the source Document and passage.
   is unreachable the limits do not switch off**: each API worker counts in its own memory
   (so across several workers the effective limit is looser) and tries Redis again after 15 seconds.
 - **Privacy defaults.** Chat audit records hold metadata and SHA-256 digests, never
-  the question or answer, even at `AUDIT__LEVEL=full`. Chat questions and answers stay
-  out of Langfuse traces (which carry metadata only) unless `CHAT__TRACE_CONTENT=true`.
+  the question or answer, even at `AUDIT__LEVEL=full`.
+
+**Upgrading a database that predates the removal of ratings.** Tables are created
+with `create_all` and there are no migrations, so an existing database keeps an
+orphaned, unused `chat_message_feedback` table. It is harmless; to reclaim it, run
+`DROP TABLE chat_message_feedback;` manually.
 
 The role-to-surface split is enforced on the server: `querier` reaches chat only,
 `admin` the control plane, `auditor` the audit log; a user with several roles gets each.
@@ -778,23 +772,21 @@ convenient on a laptop and wrong anywhere else. The opt-in
 `compose.hardened.yml` overlay removes that:
 
 ```bash
-| API, admin UI | `0.0.0.0` | `127.0.0.1` only. Put your reverse proxy or ingress in front. |
-| PostgreSQL, Redis, OpenSearch (+ Dashboards), Ollama | `0.0.0.0` | Not published. Reachable only by the other containers on `rag-network`. |
-| Telemetry profile: Collector, Prometheus, Tempo | `127.0.0.1` | Not published. |
-| Telemetry profile: Grafana | `127.0.0.1` | `RAG_BIND_ADDRESS` (loopback by default), still with a required admin password and no anonymous access. |
 make start-hardened   # docker compose -f compose.yml -f compose.hardened.yml up --build -d
 make health-hardened
 ```
 
 | Service | Default stack | Hardened |
 |---------|---------------|----------|
-| API, admin UI, Langfuse UI | `0.0.0.0` | `127.0.0.1` only. Put your reverse proxy or ingress in front. |
-| PostgreSQL, Redis, OpenSearch (+ Dashboards), Ollama, ClickHouse, Langfuse's Postgres/Redis/MinIO/worker | `0.0.0.0` | Not published. Reachable only by the other containers on `rag-network`. |
+| API, admin UI | `0.0.0.0` | `127.0.0.1` only. Put your reverse proxy or ingress in front. |
+| PostgreSQL, Redis, OpenSearch (+ Dashboards), Ollama | `0.0.0.0` | Not published. Reachable only by the other containers on `rag-network`. |
+| Telemetry profile: Collector, Prometheus, Tempo | `127.0.0.1` | Not published. |
+| Telemetry profile: Grafana | `127.0.0.1` | `RAG_BIND_ADDRESS` (loopback by default), still with a required admin password and no anonymous access. |
 
 The containers talk to each other exactly as before (`postgres:5432`,
 `opensearch:9200`, …), so nothing else changes. Optional variables:
 `RAG_BIND_ADDRESS` publishes on a specific internal interface instead of
-loopback, and `RAG_API_PORT`, `RAG_FRONTEND_PORT` and `RAG_LANGFUSE_PORT`
+loopback, and `RAG_API_PORT` and `RAG_FRONTEND_PORT`
 change the host ports. The admin UI calls the API from the browser at
 `NEXT_PUBLIC_API_URL`, which is baked in at build time. Set it to the URL your
 proxy serves the API on. It stacks with other overlays; put it last:
@@ -812,15 +804,11 @@ health-hardened` checks them from inside the network instead.
   reachable only through the proxy that sets the headers.
 - Turn on the audit log: `AUDIT__LEVEL=metadata` or `full`.
 - Change the default credentials. PostgreSQL's `rag_password` is in
-  `compose.yml` and `POSTGRES_DATABASE_URL`. Regenerate the Langfuse secrets
-  in `.env` (see `.env.example`).
+  `compose.yml` and `POSTGRES_DATABASE_URL`.
 - Know what is still unauthenticated *inside* `rag-network`: OpenSearch runs
   with its security plugin disabled, and Redis has no password by default.
   Anything that can join the network can read the index and the answer cache.
   Enabling OpenSearch TLS and credentials is a planned follow-up.
-- The overlay also closes Langfuse's browser media-upload endpoint (MinIO on
-  `:9090`). It's used only for multimodal trace attachments, which this
-  platform never sends.
 
 Roll back by starting without the overlay (`make start`).
 
@@ -846,7 +834,7 @@ Or from the repo root: `make test`, `make frontend-build`.
 
 ```
 .
-├── compose.yml              # Full local stack (API, frontend, datastores, Langfuse)
+├── compose.yml              # Full local stack (API, frontend, datastores)
 ├── compose.hardened.yml     # Opt-in overlay: publish only the API/UIs, on 127.0.0.1
 ├── Makefile                 # Common developer commands
 ├── .env / .env.example      # Shared config for compose and the backend

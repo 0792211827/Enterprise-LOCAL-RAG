@@ -15,8 +15,6 @@ export function SettingsTab({ kb }: { kb: KnowledgeBase }) {
   const [form, setForm] = useState<KnowledgeBaseForm>({
     name: kb.name,
     description: kb.description ?? "",
-    retrieval_mode: kb.retrieval_mode as KnowledgeBaseForm["retrieval_mode"],
-    default_top_k: kb.default_top_k,
   });
   const [deleting, setDeleting] = useState(false);
 

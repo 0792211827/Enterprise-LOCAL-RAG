@@ -11,13 +11,11 @@ import { DeleteApplicationModal, applicationStatus } from "../DeleteApplication"
 import { ApiAccessTab } from "./ApiAccessTab";
 import { KnowledgeBasesTab } from "./KnowledgeBasesTab";
 import { OverviewTab } from "./OverviewTab";
-import { RetrievalTab } from "./RetrievalTab";
 import { TestTab } from "./TestTab";
 
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "knowledge-bases", label: "Knowledge Bases" },
-  { id: "retrieval", label: "Retrieval" },
   { id: "test", label: "Test" },
   { id: "api", label: "API access" },
 ];
@@ -72,7 +70,6 @@ function ApplicationDetail({ app }: { app: Application }) {
       <div role="tabpanel" aria-labelledby={`tab-${tab}`}>
         {tab === "overview" && <OverviewTab app={app} onDelete={() => setDeleting(true)} />}
         {tab === "knowledge-bases" && <KnowledgeBasesTab app={app} />}
-        {tab === "retrieval" && <RetrievalTab app={app} />}
         {tab === "test" && <TestTab app={app} />}
         {tab === "api" && <ApiAccessTab app={app} />}
       </div>

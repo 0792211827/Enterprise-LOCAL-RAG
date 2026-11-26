@@ -1,5 +1,4 @@
 import logging
-import time
 from typing import Dict, Union
 
 from langchain_core.messages import AIMessage
@@ -26,7 +25,6 @@ async def ainvoke_retrieve_step(
     :returns: Dictionary with updated state (retrieval_attempts, messages, original_query)
     """
     logger.info("NODE: retrieve")
-    start_time = time.time()
 
     messages = state["messages"]
     question = get_latest_query(messages)
@@ -41,27 +39,6 @@ async def ainvoke_retrieve_step(
         updates["original_query"] = question
         logger.debug(f"Stored original query: {question[:100]}...")
 
-    # Create span for retrieval initiation
-    span = None
-    if runtime.context.langfuse_enabled and runtime.context.trace:
-        try:
-            span = runtime.context.langfuse_tracer.create_span(
-                trace=runtime.context.trace,
-                name="document_retrieval_initiation",
-                input_data={
-                    "query": question,
-                    "attempt": current_attempts + 1,
-                    "max_attempts": max_attempts,
-                },
-                metadata={
-                    "node": "retrieve",
-                    "top_k": runtime.context.top_k,
-                },
-            )
-            logger.debug(f"Created Langfuse span for retrieval attempt {current_attempts + 1}")
-        except Exception as e:
-            logger.warning(f"Failed to create span for retrieve node: {e}")
-
     # Check if max attempts reached
     if current_attempts >= max_attempts:
         logger.warning(f"Max retrieval attempts ({max_attempts}) reached")
@@ -72,15 +49,6 @@ async def ainvoke_retrieve_step(
             "2. The query terms don't match the indexed content\n\n"
             "Please try rephrasing your question with more specific technical terms."
         )
-
-        # Update span with max attempts reached
-        if span:
-            execution_time = (time.time() - start_time) * 1000
-            runtime.context.langfuse_tracer.end_span(
-                span,
-                output={"status": "max_attempts_reached", "fallback": True},
-                metadata={"execution_time_ms": execution_time},
-            )
 
         return {**updates, "messages": [AIMessage(content=fallback_msg)]}
 
@@ -104,18 +72,5 @@ async def ainvoke_retrieve_step(
     ]
 
     logger.debug(f"Created tool call for query: {question[:100]}...")
-
-    # Update span with successful tool call creation
-    if span:
-        execution_time = (time.time() - start_time) * 1000
-        runtime.context.langfuse_tracer.end_span(
-            span,
-            output={
-                "status": "tool_call_created",
-                "query": question,
-                "attempt": new_attempt_count,
-            },
-            metadata={"execution_time_ms": execution_time},
-        )
 
     return updates

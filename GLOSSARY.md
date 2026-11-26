@@ -17,7 +17,7 @@ Text a vision model writes about an image inside a Document, together with the p
 _Avoid_: Caption, alt text, OCR
 
 **Application**:
-A named, admin-configured way of answering questions: it attaches Knowledge Bases to a prompt, a model choice and a retrieval profile.
+A named, admin-configured way of answering questions: it attaches Knowledge Bases to a prompt, a model choice and the platform's retrieval settings (set by the operator, not by admins).
 _Avoid_: Bot, assistant, agent, app
 
 **Grant**:
@@ -59,12 +59,6 @@ _Avoid_: Operator, superuser
 **Inference endpoint**:
 A network address serving a chat, embedding or reranking model, which can be swapped without changing the platform.
 _Avoid_: Backend, provider URL
-
-**Rating**:
-A thumbs up or down, with an optional comment, that an End user gives one answer in a Conversation. Admins see ratings without any Conversation text.
-
-**Shared exchange**:
-One question and its answer that an End user explicitly chose to share with admins when rating it; the only Conversation text an admin can read, and exportable as Golden set candidates.
 
 **Citation**:
 A numbered pointer from an answer to the passage of a Document, or of an Attachment, that it drew on. The reader can open it to see the passage in its source.

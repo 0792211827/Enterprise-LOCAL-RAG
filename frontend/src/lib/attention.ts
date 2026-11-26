@@ -1,5 +1,5 @@
 import { connectorHealth, lastError } from "@/app/knowledge-bases/[id]/connectors";
-import type { Application, ApplicationRatings, ComponentHealth, Connector, IngestionJob } from "@/lib/api/types";
+import type { Application, ComponentHealth, Connector, IngestionJob } from "@/lib/api/types";
 
 // What needs an Admin, worked out from what the API already reports. A signal the API does not expose is
 // not guessed at: with no data for a check, that check contributes nothing and the Dashboard says so.
@@ -19,7 +19,6 @@ export interface Signals {
   jobs?: IngestionJob[];
   connectors?: Connector[];
   applications?: Application[];
-  ratings?: ApplicationRatings[];
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -35,10 +34,7 @@ export function latestJobs(jobs: IngestionJob[]): IngestionJob[] {
   return [...latest.values()];
 }
 
-/** A rating signal worth a look: thumbs-down at least as common as thumbs-up. */
-export const lowRated = (r: ApplicationRatings) => r.down > 0 && r.down >= r.up;
-
-export function attentionItems({ services, jobs, connectors, applications, ratings }: Signals): AttentionItem[] {
+export function attentionItems({ services, jobs, connectors, applications }: Signals): AttentionItem[] {
   const items: AttentionItem[] = [];
 
   for (const c of services ?? []) {
@@ -89,18 +85,6 @@ export function attentionItems({ services, jobs, connectors, applications, ratin
       detail: "It has nothing to answer from until one is attached.",
       href: `/applications/${a.id}?tab=knowledge-bases`,
       action: "Attach a Knowledge Base",
-    });
-  }
-
-  for (const r of ratings ?? []) {
-    if (!lowRated(r)) continue;
-    items.push({
-      id: `rating-${r.application_id}`,
-      tone: "warn",
-      title: `${r.application_name} has ${plural(r.down, "low-rated answer")}`,
-      detail: `${r.down} marked unhelpful, ${r.up} helpful.`,
-      href: "/feedback",
-      action: "Review feedback",
     });
   }
 

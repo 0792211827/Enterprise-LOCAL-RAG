@@ -7,7 +7,7 @@ Owned by the caller's IdP subject and readable only by them -- no admin surface 
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from src.db.interfaces.postgresql import Base
 from src.db.types import GUID
 
@@ -40,24 +40,6 @@ class ConversationMessage(Base):
     content = Column(Text, nullable=False)
     citations = Column(JSON, nullable=True)  # assistant messages: the passages the answer drew on
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
-
-
-class MessageFeedback(Base):
-    """A thumbs up/down on one assistant message, with an optional comment.
-
-    ``shared`` is the owner's explicit choice to let admins see that one exchange; without it admins see only
-    the rating. Removed with the message, and so with its Conversation.
-    """
-
-    __tablename__ = "chat_message_feedback"
-
-    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
-    message_id = Column(GUID(), ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False, unique=True)
-    rating = Column(String, nullable=False)  # "up" or "down"
-    comment = Column(Text, nullable=True)
-    shared = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
 
 class ConversationAttachment(Base):

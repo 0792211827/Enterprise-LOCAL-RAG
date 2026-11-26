@@ -4,10 +4,8 @@ import {
   FileText,
   LayoutDashboard,
   Library,
-  MessageSquareText,
   ScrollText,
   Server,
-  SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "./surfaces";
@@ -31,11 +29,9 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/applications", label: "Applications", icon: AppWindow, group: "Build", role: "admin" },
   { href: "/knowledge-bases", label: "Knowledge Bases", icon: Library, group: "Build", role: "admin" },
   { href: "/documents", label: "Documents", icon: FileText, group: "Build", role: "admin" },
-  { href: "/retrieval", label: "Retrieval", icon: SlidersHorizontal, group: "Build", role: "admin" },
   { href: "/", label: "Dashboard", icon: LayoutDashboard, group: "Operate", role: "admin" },
   { href: "/providers", label: "Models & Providers", icon: Cpu, group: "Operate", role: "admin" },
   { href: "/system", label: "System", icon: Server, group: "Operate", role: "admin" },
-  { href: "/feedback", label: "Feedback", icon: MessageSquareText, group: "Review", role: "admin" },
   { href: "/audit", label: "Audit Log", icon: ScrollText, group: "Review", role: "auditor" },
 ];
 

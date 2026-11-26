@@ -218,7 +218,6 @@ export default function ChatPage() {
               onCite={openSource}
               onRetry={chat.retry}
               onDetach={chat.detach}
-              onRated={chat.setFeedback}
             />
             <Composer
               placeholder={application ? `Ask ${application.name} a question…` : "Ask a question…"}

@@ -19,7 +19,7 @@ import {
   THead,
   Tr,
 } from "@/components/ui";
-import { chatAdminApi, applicationsApi, connectorsApi, documentsApi, systemApi } from "@/lib/api/resources";
+import { applicationsApi, connectorsApi, documentsApi, systemApi } from "@/lib/api/resources";
 import { attentionItems } from "@/lib/attention";
 import { timeAgo } from "@/lib/format";
 import { titleCase } from "./knowledge-bases/ingestion";
@@ -35,14 +35,12 @@ export default function DashboardPage() {
   const jobs = useQuery({ queryKey: ["dashboard", "jobs"], queryFn: () => documentsApi.jobsUpTo(DASHBOARD_LIMIT), refetchInterval: REFRESH });
   const connectors = useQuery({ queryKey: ["connectors"], queryFn: connectorsApi.list, refetchInterval: REFRESH });
   const applications = useQuery({ queryKey: ["dashboard", "applications"], queryFn: () => applicationsApi.listUpTo(DASHBOARD_LIMIT), refetchInterval: REFRESH });
-  const ratings = useQuery({ queryKey: ["chat-admin", "summary"], queryFn: chatAdminApi.summary, refetchInterval: REFRESH });
 
   const checks = [
     { name: "service health", q: health },
     { name: "ingestion jobs", q: jobs },
     { name: "Connectors", q: connectors },
     { name: "Applications", q: applications },
-    { name: "ratings", q: ratings },
   ];
   const loading = checks.some((c) => c.q.isLoading);
   const unavailable = checks.filter((c) => c.q.isError).map((c) => c.name);
@@ -52,7 +50,6 @@ export default function DashboardPage() {
     jobs: jobs.data,
     connectors: connectors.data,
     applications: applications.data,
-    ratings: ratings.data,
   });
 
   return (
@@ -101,12 +98,11 @@ export default function DashboardPage() {
         {stats.isLoading && <Skeleton className="h-24 w-full" />}
         {stats.isError && <ErrorState title="Could not load the counts" message={(stats.error as Error).message} onRetry={() => stats.refetch()} />}
         {stats.data && (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <MetricCard label="Knowledge Bases" value={stats.data.knowledge_bases} />
             <MetricCard label="Documents" value={stats.data.documents} />
             <MetricCard label="Applications" value={stats.data.applications} />
             <MetricCard label="Inference endpoints" value={stats.data.providers} />
-            <MetricCard label="Indexed passages" value={stats.data.chunks.toLocaleString()} />
           </div>
         )}
       </section>

@@ -8,7 +8,6 @@ import type {
   ChatCitation,
   ChatConfig,
   ConversationSummary,
-  MessageFeedback,
 } from "@/lib/api/types";
 import { checkFile, uploadError } from "./attachments";
 
@@ -17,7 +16,6 @@ export interface Turn {
   role: "user" | "assistant";
   text: string;
   citations: ChatCitation[];
-  feedback?: MessageFeedback | null;
   attachments?: ChatAttachment[];
   error?: string;
   streaming?: boolean;
@@ -96,7 +94,6 @@ export function useConversation({
             role: m.role,
             text: m.content,
             citations: m.citations,
-            feedback: m.feedback,
             attachments: m.attachments,
           })),
         );
@@ -252,10 +249,6 @@ export function useConversation({
     }
   }, []);
 
-  const setFeedback = useCallback((messageId: string, feedback: MessageFeedback | null) => {
-    setTurns((all) => all.map((t) => (t.id === messageId ? { ...t, feedback } : t)));
-  }, []);
-
   return {
     view,
     conversationId,
@@ -272,6 +265,5 @@ export function useConversation({
     retry,
     attach,
     detach,
-    setFeedback,
   };
 }

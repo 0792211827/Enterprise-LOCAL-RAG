@@ -26,7 +26,7 @@ test.describe("the Knowledge Bases list", () => {
     const table = page.getByRole("table", { name: "Knowledge Bases" });
     const row = table.getByRole("row", { name: /Finance rules/ });
     await expect(row).toContainText("5");
-    await expect(row).toContainText("210 chunks");
+    await expect(row).not.toContainText("chunks");
     await expect(row).toContainText(/ago|just now|\d{4}/);
     await captureAll(page, "knowledge-bases-list");
   });
@@ -46,7 +46,9 @@ test.describe("the Knowledge Bases list", () => {
     await page.getByLabel("Name", { exact: true }).fill("Legal");
     await page.getByRole("button", { name: "Create Knowledge Base" }).click();
     await expect(page.getByRole("heading", { name: "Legal" })).toBeVisible();
-    expect(posted).toMatchObject({ name: "Legal", retrieval_mode: "hybrid" });
+    expect(posted).toMatchObject({ name: "Legal" });
+    expect(posted).not.toHaveProperty("retrieval_mode");
+    expect(posted).not.toHaveProperty("default_top_k");
     await expect(page.getByText("No Documents yet")).toBeVisible();
   });
 
@@ -103,10 +105,13 @@ test.describe("a Knowledge Base's detail page", () => {
       }),
     );
     await page.getByLabel("Name", { exact: true }).fill("People handbook");
-    await page.getByLabel("Default passages (top K)").fill("12");
+    await expect(page.getByLabel("Retrieval mode")).toHaveCount(0);
+    await expect(page.getByLabel("Default passages (top K)")).toHaveCount(0);
     await page.getByRole("button", { name: "Save changes" }).click();
     await expect(page.getByText("Knowledge Base saved")).toBeVisible();
-    expect(patched).toMatchObject({ name: "People handbook", default_top_k: 12 });
+    expect(patched).toMatchObject({ name: "People handbook" });
+    expect(patched).not.toHaveProperty("retrieval_mode");
+    expect(patched).not.toHaveProperty("default_top_k");
     await captureAll(page, "knowledge-base-settings");
   });
 
@@ -143,7 +148,6 @@ test.describe("a Knowledge Base's detail page", () => {
     phase = "done";
     await expect(row).toContainText("Completed", { timeout: 15_000 });
     await expect(row).toContainText("Done");
-    await expect(row).toContainText("18");
   });
 
   test("shows a failed Document's error, and refusals from the upload", async ({ page }) => {

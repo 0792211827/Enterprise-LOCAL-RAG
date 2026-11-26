@@ -89,9 +89,8 @@ function KnowledgeBaseDetail({ kb }: { kb: KnowledgeBase }) {
         }
       />
 
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <MetricCard label="Documents" value={kb.document_count} />
-        <MetricCard label="Size" value={`${kb.chunk_count.toLocaleString()} chunks`} />
         <MetricCard label="Last updated" value={timeAgo(kb.updated_at ?? kb.created_at)} />
       </div>
 

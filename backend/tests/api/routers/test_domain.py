@@ -34,7 +34,6 @@ from src.routers import (
     documents,
     knowledge_bases,
     providers,
-    retrieval,
     system,
 )
 
@@ -58,7 +57,6 @@ def app(session_factory):
         documents,
         applications,
         providers,
-        retrieval,
         system,
         api_keys,
         chat_completions,
@@ -106,8 +104,9 @@ def test_knowledge_base_crud(client):
     assert client.get(f"/api/v1/knowledge-bases/{kb_id}").json()["name"] == "HR Policies"
 
     # update
-    updated = client.patch(f"/api/v1/knowledge-bases/{kb_id}", json={"default_top_k": 5})
-    assert updated.json()["default_top_k"] == 5
+    updated = client.patch(f"/api/v1/knowledge-bases/{kb_id}", json={"description": "People policies"})
+    assert updated.json()["description"] == "People policies"
+    assert "retrieval_mode" not in updated.json() and "default_top_k" not in updated.json()
 
     # delete
     assert client.delete(f"/api/v1/knowledge-bases/{kb_id}").status_code == 204
@@ -143,21 +142,6 @@ def test_provider_crud(client):
 
 
 # --------------------------------------------------------------------------- #
-# Retrieval configurations
-# --------------------------------------------------------------------------- #
-def test_retrieval_config_crud(client):
-    resp = client.post(
-        "/api/v1/retrieval-configurations",
-        json={"name": "hybrid-default", "mode": "hybrid", "top_k": 8},
-    )
-    assert resp.status_code == 201, resp.text
-    cid = resp.json()["id"]
-    assert resp.json()["mode"] == "hybrid"
-    assert client.get(f"/api/v1/retrieval-configurations/{cid}").status_code == 200
-    assert client.delete(f"/api/v1/retrieval-configurations/{cid}").status_code == 204
-
-
-# --------------------------------------------------------------------------- #
 # Applications
 # --------------------------------------------------------------------------- #
 def test_application_crud_with_knowledge_base(client):
@@ -168,8 +152,6 @@ def test_application_crud_with_knowledge_base(client):
         "description": "Answers HR questions",
         "knowledge_base_ids": [kb_id],
         "llm_model": "qwen2.5:7b",
-        "retrieval_mode": "hybrid",
-        "top_k": 8,
         "system_prompt": "You are helpful.",
     }
     resp = client.post("/api/v1/applications", json=payload)
@@ -178,7 +160,7 @@ def test_application_crud_with_knowledge_base(client):
     assert app_json["slug"] == "hr-assistant"
     # Configuration is persisted, not ignored.
     assert app_json["model_configuration"]["llm_model"] == "qwen2.5:7b"
-    assert app_json["retrieval_configuration"]["top_k"] == 8
+    assert "retrieval_configuration" not in app_json
     assert len(app_json["knowledge_bases"]) == 1
 
     app_id = app_json["id"]
@@ -197,8 +179,6 @@ def test_application_ask_respects_configuration(client, app, session_factory):
             "name": "Bot",
             "knowledge_base_ids": [kb_id],
             "llm_model": "qwen2.5:7b",
-            "retrieval_mode": "hybrid",
-            "top_k": 8,
         },
     ).json()["id"]
 
@@ -229,12 +209,11 @@ def test_application_ask_respects_configuration(client, app, session_factory):
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["answer"] == "25 days of leave."
-    assert data["search_mode"] == "hybrid"
     assert data["chunks_used"] == 1
     assert data["sources"][0]["document_title"] == "Handbook"
     assert data["sources"][0]["locator_text"] == "slide 7"
 
-    # Configured top_k=8 and model must be passed through.
+    # The server's default top_k (8) and the configured model must be passed through.
     assert mock_os.search_unified.call_args.kwargs["size"] == 8
     assert mock_llm.generate_rag_answer.call_args.kwargs["model"] == "qwen2.5:7b"
 
@@ -884,3 +863,41 @@ def test_reprocessing_clears_the_old_chunks_from_the_index_first(client, uploads
     assert client.post(f"/api/v1/documents/{document.id}/reprocess").status_code == 202
 
     uploads.opensearch.purge_document_chunks.assert_called_once_with(str(document.id))
+
+
+# --------------------------------------------------------------------------- #
+# Retrieval strategy is server-controlled
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "path, body",
+    [
+        ("/api/v1/knowledge-bases", {"name": "KB", "retrieval_mode": "bm25"}),
+        ("/api/v1/knowledge-bases", {"name": "KB", "default_top_k": 5}),
+        ("/api/v1/applications", {"name": "Bot", "top_k": 5}),
+        ("/api/v1/applications", {"name": "Bot", "retrieval_mode": "bm25"}),
+        ("/api/v1/applications", {"name": "Bot", "score_threshold": 0.5}),
+    ],
+)
+def test_retrieval_settings_are_rejected_on_create(client, path, body):
+    resp = client.post(path, json=body)
+    assert resp.status_code == 422
+    assert "server controls it" in resp.text
+
+
+def test_retrieval_settings_are_rejected_on_update_and_ask(client, app):
+    app.dependency_overrides[get_embeddings_service] = lambda: AsyncMock()
+    app.dependency_overrides[get_llm_provider] = lambda: AsyncMock()
+    kb_id = client.post("/api/v1/knowledge-bases", json={"name": "KB"}).json()["id"]
+    assert client.patch(f"/api/v1/knowledge-bases/{kb_id}", json={"default_top_k": 5}).status_code == 422
+    app_id = client.post("/api/v1/applications", json={"name": "Bot", "knowledge_base_ids": [kb_id]}).json()["id"]
+    assert client.post(f"/api/v1/applications/{app_id}/ask", json={"query": "q", "top_k": 3}).status_code == 422
+
+
+def test_new_application_gets_the_server_retrieval_defaults(client, session_factory):
+    from src.models.application import RAGApplication
+
+    app_id = client.post("/api/v1/applications", json={"name": "Defaults"}).json()["id"]
+    with session_factory() as session:
+        config = session.get(RAGApplication, uuid.UUID(app_id)).retrieval_configuration
+        assert (config.mode, config.top_k, config.score_threshold) == ("hybrid", 8, None)
+

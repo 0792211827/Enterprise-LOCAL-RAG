@@ -8,7 +8,7 @@ const STAGE_LABEL: Record<string, string> = {
   fetch: "Fetching",
   parse: "Parsing",
   extract: "Extracting",
-  chunk: "Chunking",
+  chunk: "Preparing",
   embed: "Embedding",
   index: "Indexing",
 };

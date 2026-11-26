@@ -11,8 +11,6 @@ export const kb = (over: Record<string, unknown> = {}) => ({
   embedding_provider: "ollama",
   embedding_model: "nomic-embed-text",
   embedding_dimension: 768,
-  retrieval_mode: "hybrid",
-  default_top_k: 8,
   document_count: 3,
   chunk_count: 120,
   created_at: NOW,
@@ -42,16 +40,6 @@ export const application = (over: Record<string, unknown> = {}) => ({
     vlm_provider: null,
     vlm_model: null,
     generation_params: { temperature: 0, max_tokens: 1024 },
-  },
-  retrieval_configuration: {
-    id: "rc-1",
-    name: "app-policies",
-    mode: "hybrid",
-    top_k: 8,
-    hybrid_size_multiplier: 2,
-    rrf_rank_constant: 60,
-    score_threshold: null,
-    filters: null,
   },
   created_at: NOW,
   updated_at: NOW,
@@ -151,17 +139,5 @@ export const provider = (over: Record<string, unknown> = {}) => ({
   enabled: true,
   created_at: NOW,
   updated_at: NOW,
-  ...over,
-});
-
-export const retrievalProfile = (over: Record<string, unknown> = {}) => ({
-  id: "rc-1",
-  name: "Careful search",
-  mode: "hybrid",
-  top_k: 8,
-  hybrid_size_multiplier: 2,
-  rrf_rank_constant: 60,
-  score_threshold: null,
-  filters: null,
   ...over,
 });

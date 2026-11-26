@@ -127,7 +127,7 @@ export function DocumentsTab({
       >
         <Icon icon={Upload} size="lg" className="text-subtle" />
         <p className="text-sm font-medium text-fg">Drop files here to add them to this Knowledge Base</p>
-        <p className="text-xs text-muted">PDF, Word, PowerPoint, Excel, CSV, HTML, plain text or Markdown. They are parsed, split and indexed in turn.</p>
+        <p className="text-xs text-muted">PDF, Word, PowerPoint, Excel, CSV, HTML, plain text or Markdown. Each one is processed and indexed so it can answer questions.</p>
         <input
           ref={fileRef}
           type="file"
@@ -211,7 +211,7 @@ export function DocumentsTab({
         </Callout>
       )}
 
-      {docs.isLoading && <TableSkeleton columns={6} label="Loading Documents" />}
+      {docs.isLoading && <TableSkeleton columns={7} label="Loading Documents" />}
       {docs.isError && <ErrorState title="Could not load Documents" message={(docs.error as Error).message} onRetry={() => docs.refetch()} />}
       {docs.data && docs.data.length === 0 && (
         <EmptyState icon={FileText} title="No Documents yet" description="Upload files above, or connect a folder on the Connectors tab to keep this Knowledge Base in sync." />
@@ -224,7 +224,6 @@ export function DocumentsTab({
               <Th>Type</Th>
               <Th>Ingestion stage</Th>
               <Th>Status</Th>
-              <Th align="right">Chunks</Th>
               <Th align="right">Size</Th>
               <Th>Updated</Th>
               <Th />
@@ -284,7 +283,6 @@ export function DocumentsTab({
                       </p>
                     ))}
                   </Td>
-                  <Td align="right">{d.chunk_count}</Td>
                   <Td align="right">{formatBytes(d.file_size_bytes)}</Td>
                   <Td>{timeAgo(d.updated_at ?? d.created_at)}</Td>
                   <Td align="right">
@@ -333,7 +331,7 @@ export function DocumentsTab({
                 </Tr>
                 {restrictingId === d.id && (
                   <tr className="bg-sunken/40">
-                    <td colSpan={8} className="px-5 py-4">
+                    <td colSpan={7} className="px-5 py-4">
                       <RestrictionEditor kbId={kbId} documentId={d.id} />
                     </td>
                   </tr>

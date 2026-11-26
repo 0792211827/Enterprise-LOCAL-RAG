@@ -24,7 +24,6 @@ def test_service(mock_opensearch_client, mock_ollama_client, mock_jina_embedding
         opensearch_client=mock_opensearch_client,
         ollama_client=mock_ollama_client,
         embeddings_client=mock_jina_embeddings_client,
-        langfuse_tracer=None,
         graph_config=config,
     )
 

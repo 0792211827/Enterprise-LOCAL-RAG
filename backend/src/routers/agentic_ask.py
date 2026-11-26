@@ -1,9 +1,9 @@
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from src.dependencies import AgenticRAGDep, AuditDep, LangfuseDep, PrincipalDep, ScopeDep, TelemetryDep
+from src.dependencies import AgenticRAGDep, AuditDep, PrincipalDep, ScopeDep, TelemetryDep
 from src.models import AuditAction
-from src.schemas.api.ask import AgenticAskResponse, AskRequest, FeedbackRequest, FeedbackResponse
+from src.schemas.api.ask import AgenticAskResponse, AskRequest
 from src.services.access import NO_ACCESSIBLE_KNOWLEDGE_MESSAGE
 from src.services.audit import AuditContext, audited_query
 
@@ -108,7 +108,6 @@ async def _run_agent(request, agentic_rag, principal, decision) -> tuple[Agentic
             reasoning_steps=result.get("reasoning_steps", []),
             retrieval_attempts=result.get("retrieval_attempts", 0),
             rewritten_query=result.get("rewritten_query"),
-            trace_id=result.get("trace_id"),
         )
         return response, sources, result.get("rerank")
 
@@ -116,60 +115,3 @@ async def _run_agent(request, agentic_rag, principal, decision) -> tuple[Agentic
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
-
-
-@router.post("/feedback", response_model=FeedbackResponse)
-async def submit_feedback(
-    request: FeedbackRequest,
-    langfuse_tracer: LangfuseDep,
-) -> FeedbackResponse:
-    """
-    Submit user feedback for an agentic RAG response.
-
-    This endpoint allows users to rate the quality of answers and provide
-    optional comments. Feedback is tracked in Langfuse for continuous improvement.
-
-    Args:
-        request: Feedback data including trace_id, score, and optional comment
-        langfuse_tracer: Injected Langfuse tracer service
-
-    Returns:
-        FeedbackResponse indicating success or failure
-
-    Raises:
-        HTTPException: If feedback submission fails
-    """
-    try:
-        if not langfuse_tracer:
-            raise HTTPException(
-                status_code=503,
-                detail="Langfuse tracing is disabled. Cannot submit feedback."
-            )
-
-        success = langfuse_tracer.submit_feedback(
-            trace_id=request.trace_id,
-            score=request.score,
-            comment=request.comment,
-        )
-
-        if success:
-            # Flush to ensure feedback is sent immediately
-            langfuse_tracer.flush()
-
-            return FeedbackResponse(
-                success=True,
-                message="Feedback recorded successfully"
-            )
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to submit feedback to Langfuse"
-            )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error submitting feedback: {str(e)}"
-        )

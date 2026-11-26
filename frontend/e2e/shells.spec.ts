@@ -28,14 +28,15 @@ test.describe("the User shell", () => {
 });
 
 test.describe("the Admin shell", () => {
-  test("an Admin lands on the Dashboard with a sidebar grouped Build, Operate and Review", async ({ page }) => {
+  test("an Admin lands on the Dashboard with a sidebar grouped Build and Operate", async ({ page }) => {
     await stubApi(page, "admin");
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
     const nav = adminNav(page);
     await expect(nav).toBeVisible();
-    for (const group of ["Build", "Operate", "Review"]) await expect(nav.getByText(group, { exact: true })).toBeVisible();
-    for (const link of ["Applications", "Knowledge Bases", "Retrieval", "Dashboard", "Models & Providers", "System", "Feedback"]) {
+    for (const group of ["Build", "Operate"]) await expect(nav.getByText(group, { exact: true })).toBeVisible();
+    await expect(nav.getByText("Review", { exact: true })).toHaveCount(0);
+    for (const link of ["Applications", "Knowledge Bases", "Dashboard", "Models & Providers", "System"]) {
       await expect(nav.getByRole("link", { name: link })).toBeVisible();
     }
     await expect(page.getByText("Assistants")).toHaveCount(0);

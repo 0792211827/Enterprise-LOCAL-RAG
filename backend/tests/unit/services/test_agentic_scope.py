@@ -29,12 +29,12 @@ from src.services.agents.tools import create_retriever_tool
 class TestAgenticService:
     def test_dependency_passes_permitted_ids_to_the_graph(self):
         scope = RetrievalScope(kb_ids=frozenset({"kb-b", "kb-a"}), reason="grants")
-        service = get_agentic_rag_service(MagicMock(), MagicMock(), MagicMock(), MagicMock(), Settings(), scope)
+        service = get_agentic_rag_service(MagicMock(), MagicMock(), MagicMock(), Settings(), scope)
         assert service.graph_config.knowledge_base_ids == ["kb-a", "kb-b"]
 
     def test_unrestricted_scope_leaves_the_retriever_unscoped(self):
         scope = RetrievalScope.unrestricted("authentication disabled")
-        service = get_agentic_rag_service(MagicMock(), MagicMock(), MagicMock(), MagicMock(), Settings(), scope)
+        service = get_agentic_rag_service(MagicMock(), MagicMock(), MagicMock(), Settings(), scope)
         assert service.graph_config.knowledge_base_ids is None
 
     async def test_retriever_tool_scopes_its_search(self):

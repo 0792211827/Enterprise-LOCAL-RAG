@@ -18,8 +18,6 @@ from src.dependencies import get_agentic_rag_service
 from src.schemas.indexing.elements import Locator
 from src.services.agents.factory import make_agentic_rag_service
 from src.services.indexing.text_chunker import TextChunker
-from src.services.langfuse.client import LangfuseTracer
-from src.services.langfuse.tracer import RAGTracer
 from src.services.ollama.client import OllamaClient
 from src.services.providers.embeddings.huggingface_provider import HuggingFaceEmbeddingProvider
 
@@ -32,7 +30,6 @@ class TestAgenticServiceWiring:
             opensearch_client=MagicMock(),
             ollama_client=MagicMock(),
             embeddings_client=MagicMock(),
-            langfuse_tracer=None,
             model="llama3.2:1b",
         )
         assert service.graph_config.model == "llama3.2:1b"
@@ -48,7 +45,7 @@ class TestAgenticServiceWiring:
     def test_dependency_provider_constructs_service(self):
         """The provider passes ``model=``; the factory must accept it."""
         settings = Settings()
-        service = get_agentic_rag_service(MagicMock(), MagicMock(), MagicMock(), MagicMock(), settings)
+        service = get_agentic_rag_service(MagicMock(), MagicMock(), MagicMock(), settings)
         assert service.graph_config.model == settings.ollama_model
 
 
@@ -94,39 +91,6 @@ class TestShortDocumentChunking:
 
     def test_empty_text_returns_no_chunks(self, chunker):
         assert chunker.chunk_text("   ", "doc-1") == []
-
-
-class TestLangfuseTracerContract:
-    """`RAGTracer` and the agent nodes call these methods on ``LangfuseTracer``."""
-
-    @pytest.fixture
-    def tracer(self):
-        # No credentials -> client is None -> every method takes its no-op path.
-        return LangfuseTracer(Settings())
-
-    @pytest.mark.parametrize("method", ["trace_rag_request", "create_span", "end_span", "update_span", "flush"])
-    def test_required_methods_exist(self, tracer, method):
-        assert hasattr(tracer, method)
-
-    def test_create_and_end_span_are_safe_when_disabled(self, tracer):
-        span = tracer.create_span(name="retrieval", trace=None, input_data={"q": "x"}, metadata={})
-        assert span is None
-        tracer.end_span(span, output={"status": "ok"})  # must not raise
-
-    def test_rag_tracer_full_request_path(self, tracer):
-        """Exercises the exact sequence `/api/v1/ask` runs per request."""
-        rag_tracer = RAGTracer(tracer)
-
-        with rag_tracer.trace_request("api_user", "what is rag?") as trace:
-            with rag_tracer.trace_embedding(trace, "what is rag?"):
-                pass
-            with rag_tracer.trace_search(trace, "what is rag?", 3) as span:
-                rag_tracer.end_search(span, [], [], 0)
-            with rag_tracer.trace_prompt_construction(trace, []) as span:
-                rag_tracer.end_prompt(span, "prompt")
-            with rag_tracer.trace_generation(trace, "llama3.2:1b", "prompt") as span:
-                rag_tracer.end_generation(span, "answer", "llama3.2:1b")
-            rag_tracer.end_request(trace, "answer", 1.0)
 
 
 class TestEmbeddingModelLoadIsSerialised:
@@ -227,26 +191,6 @@ class TestIndexPayloadMatchesMapping:
         assert list(inspect.signature(UrlFetcher.check).parameters)[1:] == ["url"]
         assert list(inspect.signature(UrlFetcher.fetch).parameters)[1:] == ["url"]
         assert list(inspect.signature(TextChunker.chunk_elements).parameters)[1:] == ["elements", "document_id"]
-
-
-class TestTraceCarriesRequestId:
-    """Langfuse traces carry the X-Request-ID so they join to audit events."""
-
-    def _metadata(self, request_id):
-        from unittest.mock import MagicMock
-
-        from src.services.langfuse.tracer import RAGTracer
-
-        tracer = MagicMock()
-        with RAGTracer(tracer).trace_request("alice", "q", request_id):
-            pass
-        return tracer.trace_rag_request.call_args.kwargs["metadata"]
-
-    def test_request_id_is_attached(self):
-        assert self._metadata("rid-1") == {"simplified_tracing": True, "request_id": "rid-1"}
-
-    def test_metadata_unchanged_without_one(self):
-        assert self._metadata(None) == {"simplified_tracing": True}
 
 
 class TestProviderRegistryWiring:
@@ -355,17 +299,6 @@ class TestConnectorCollaborators:
 
 class TestChatCollaborators:
     """Chat leans on collaborators whose real signatures a mock would hide."""
-
-    def test_chat_tracing_is_a_no_op_on_a_real_tracer_without_credentials(self):
-        from src.services.chat import trace_chat_exchange
-
-        trace_chat_exchange(LangfuseTracer(Settings()), {"application_id": "a"}, question="q", answer="a")
-
-    def test_chat_tracing_survives_a_langfuse_that_raises(self):
-        from src.services.chat import trace_chat_exchange
-
-        tracer = SimpleNamespace(client=SimpleNamespace(start_span=MagicMock(side_effect=RuntimeError("down"))), flush=MagicMock())
-        trace_chat_exchange(tracer, {})  # tracing must never break an answer
 
     def test_both_real_providers_accept_conversation_history(self):
         import inspect

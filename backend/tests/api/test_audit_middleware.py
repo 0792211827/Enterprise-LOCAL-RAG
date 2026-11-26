@@ -28,7 +28,6 @@ class TestClassify:
             ("POST", "/api/v1/ask", 200, None),  # recorded by the handler
             ("POST", "/api/v1/ask", 403, ("access.denied", "denied")),  # the handler never ran
             ("POST", "/v1/chat/completions", 401, ("access.denied", "denied")),
-            ("POST", "/api/v1/feedback", 200, None),
             ("POST", None, 404, None),  # no route matched
         ],
     )

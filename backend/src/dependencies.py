@@ -23,7 +23,6 @@ from src.services.audit import AuditRecorder, NoopAuditRecorder
 from src.services.cache.client import CacheClient
 from src.services.chat.limits import ChatLimiter
 from src.services.ingestion.url_fetch import UrlFetcher
-from src.services.langfuse.client import LangfuseTracer
 from src.services.ollama.client import OllamaClient
 from src.services.opensearch.client import OpenSearchClient
 from src.services.pdf_parser.parser import PDFParserService
@@ -107,11 +106,6 @@ def get_ollama_client(request: Request) -> OllamaClient:
     return request.app.state.ollama_client
 
 
-def get_langfuse_tracer(request: Request) -> LangfuseTracer:
-    """Get Langfuse tracer from the request state."""
-    return request.app.state.langfuse_tracer
-
-
 def get_llm_provider(request: Request) -> LLMProvider:
     """Get the configured LLM provider from the request state."""
     return request.app.state.llm_provider
@@ -169,7 +163,6 @@ EmbeddingsDep = Annotated[EmbeddingProvider, Depends(get_embeddings_service)]
 VLMDep = Annotated[Optional[VLMProvider], Depends(get_vlm_provider)]
 UrlFetcherDep = Annotated[Optional[UrlFetcher], Depends(get_url_fetcher)]
 OllamaDep = Annotated[OllamaClient, Depends(get_ollama_client)]
-LangfuseDep = Annotated[LangfuseTracer, Depends(get_langfuse_tracer)]
 CacheDep = Annotated[CacheClient | None, Depends(get_cache_client)]
 LLMProviderDep = Annotated[LLMProvider, Depends(get_llm_provider)]
 RerankerDep = Annotated[Optional[Reranker], Depends(get_reranker)]
@@ -229,7 +222,6 @@ def get_agentic_rag_service(
     opensearch: OpenSearchDep,
     ollama: OllamaDep,
     embeddings: EmbeddingsDep,
-    langfuse: LangfuseDep,
     settings: Annotated[Settings, Depends(get_settings)],
     scope: Annotated[Optional[RetrievalScope], Depends(get_retrieval_scope)] = None,
     llm: Annotated[Optional[LLMProvider], Depends(get_llm_provider)] = None,
@@ -246,7 +238,6 @@ def get_agentic_rag_service(
         opensearch_client=opensearch,
         ollama_client=ollama,
         embeddings_client=embeddings,
-        langfuse_tracer=langfuse,
         model=settings.default_llm_model,
         knowledge_base_ids=decision.permitted if decision is not None else None,
         principal_keys=None if decision is None or decision.principal_keys is None else sorted(decision.principal_keys),

@@ -291,10 +291,11 @@ class TestRerank:
 
         with_reranker(FakeEndpoint())
         assistant, _ = _assistant(client)
-        response = client.post(f"/api/v1/applications/{assistant['id']}/ask", json={"query": "q", "top_k": 2})
+        response = client.post(f"/api/v1/applications/{assistant['id']}/ask", json={"query": "q"})
 
-        assert [s["document_title"] for s in response.json()["sources"]] == ["echo", "charlie"]
-        assert [c["chunk_text"] for c in llm.generate_rag_answer.call_args.kwargs["chunks"]] == ["echo", "charlie"]
+        reranked = ["echo", "charlie", "alpha", "bravo", "delta"]
+        assert [s["document_title"] for s in response.json()["sources"]] == reranked
+        assert [c["chunk_text"] for c in llm.generate_rag_answer.call_args.kwargs["chunks"]] == reranked
         assert _queries(factory)[0].details == {"reranked": True}
 
     def test_completions_flag_a_degraded_rerank_and_still_answer(self, client, factory, llm, with_reranker):
